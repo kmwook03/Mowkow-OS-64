@@ -1,36 +1,34 @@
+#include <asmfunc64.h>
 #include <bootinfo64.h>
+#include <console64.h>
 #include <dsctbl64.h>
+#include <fifo64.h>
+#include <int64.h>
+#include <keyboard64.h>
 #include <stdint.h>
+#include <timer64.h>
 
-static void out8(uint16_t port, uint8_t value)
-{
-	__asm__ __volatile__("outb %0, %1" : : "a"(value), "Nd"(port));
-}
+#define EVENT_BUF_SIZE 128
 
-static uint8_t in8(uint16_t port)
-{
-	uint8_t value;
-
-	__asm__ __volatile__("inb %1, %0" : "=a"(value) : "Nd"(port));
-	return value;
-}
+static struct FIFO64 event_fifo;
+static struct EVENT64 event_buf[EVENT_BUF_SIZE];
 
 static void serial_init(void)
 {
-	out8(0x3f8 + 1, 0x00);
-	out8(0x3f8 + 3, 0x80);
-	out8(0x3f8 + 0, 0x03);
-	out8(0x3f8 + 1, 0x00);
-	out8(0x3f8 + 3, 0x03);
-	out8(0x3f8 + 2, 0xc7);
-	out8(0x3f8 + 4, 0x0b);
+	io_out8(0x3f8 + 1, 0x00);
+	io_out8(0x3f8 + 3, 0x80);
+	io_out8(0x3f8 + 0, 0x03);
+	io_out8(0x3f8 + 1, 0x00);
+	io_out8(0x3f8 + 3, 0x03);
+	io_out8(0x3f8 + 2, 0xc7);
+	io_out8(0x3f8 + 4, 0x0b);
 }
 
 static void serial_putc(char c)
 {
-	while ((in8(0x3f8 + 5) & 0x20) == 0) {
+	while ((io_in8(0x3f8 + 5) & 0x20) == 0) {
 	}
-	out8(0x3f8, (uint8_t) c);
+	io_out8(0x3f8, (uint8_t) c);
 }
 
 static void serial_print(const char *s)
@@ -40,21 +38,37 @@ static void serial_print(const char *s)
 	}
 }
 
+static void process_event64(const struct EVENT64 *event)
+{
+	if (event->type == EVENT64_TIMER) {
+		return;
+	}
+	if (event->type == EVENT64_KEYBOARD) {
+		console64_process_key((uint8_t) event->data);
+	}
+}
+
 void kernel64_main(const struct BOOTINFO64 *boot_info)
 {
-	volatile uint16_t *vga = (volatile uint16_t *) boot_info->vram;
-	const char *message = "Mowkow OS x86_64";
-	uint16_t i;
+	struct EVENT64 event;
 
 	serial_init();
-	init_gdtidt64();
 	serial_print("Mowkow OS x86_64 kernel64_main\r\n");
-
-	for (i = 0; message[i] != '\0'; i++) {
-		vga[i] = (uint16_t) message[i] | 0x0f00;
-	}
+	init_gdtidt64();
+	console64_init(boot_info->vram, boot_info->scrnx, boot_info->scrny);
+	fifo64_init(&event_fifo, EVENT_BUF_SIZE, event_buf);
+	init_pit64(&event_fifo);
+	init_keyboard64(&event_fifo);
+	init_pic64();
+	io_sti();
 
 	for (;;) {
-		__asm__ __volatile__("hlt");
+		io_cli();
+		if (fifo64_get(&event_fifo, &event) == 0) {
+			io_sti();
+			process_event64(&event);
+		} else {
+			io_stihlt();
+		}
 	}
 }

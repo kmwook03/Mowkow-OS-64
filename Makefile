@@ -57,9 +57,9 @@ FONT_OBJ = $(BUILD_DIR)/graphics/font/hankaku.obj
 
 ALL_OBJS = $(KERNEL_OBJS) $(DRIVERS_OBJS) $(LIB_OBJS) $(NASKFUNC_OBJ) $(FONT_OBJ)
 
-KERNEL64_C_SRCS = $(wildcard $(SRC64_DIR)/kernel/*.c)
+KERNEL64_C_SRCS = $(wildcard $(SRC64_DIR)/kernel/*.c) $(wildcard $(SRC64_DIR)/drivers/*.c) $(wildcard $(SRC64_DIR)/lib/*.c)
 KERNEL64_ASM_SRCS = $(wildcard $(SRC64_DIR)/kernel/*.asm)
-KERNEL64_C_OBJS = $(patsubst $(SRC64_DIR)/kernel/%.c, $(BUILD64_DIR)/kernel/%.o, $(KERNEL64_C_SRCS))
+KERNEL64_C_OBJS = $(patsubst $(SRC64_DIR)/%.c, $(BUILD64_DIR)/%.o, $(KERNEL64_C_SRCS))
 KERNEL64_ASM_OBJS = $(patsubst $(SRC64_DIR)/kernel/%.asm, $(BUILD64_DIR)/kernel/%.o, $(KERNEL64_ASM_SRCS))
 KERNEL64_OBJS = $(KERNEL64_ASM_OBJS) $(KERNEL64_C_OBJS)
 KERNEL64_ELF = $(BUILD64_DIR)/kernel/kernel64.elf
@@ -173,7 +173,7 @@ $(BUILD64_DIR)/boot/loader64.bin : $(SRC64_DIR)/boot/loader64.asm
 	@$(MKDIR) $(dir $@)
 	$(X64_ASM) $(X64_BOOT_ASMFLAGS) -DKERNEL_LBA=$(KERNEL64_LBA) -DKERNEL_SECTORS=$(KERNEL64_SECTORS) $< -o $@
 
-$(BUILD64_DIR)/kernel/%.o : $(SRC64_DIR)/kernel/%.c
+$(BUILD64_DIR)/%.o : $(SRC64_DIR)/%.c
 	@$(MKDIR) $(dir $@)
 	$(X64_CC) $(X64_CFLAGS) -c $< -o $@
 

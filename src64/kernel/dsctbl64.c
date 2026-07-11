@@ -1,7 +1,10 @@
 #include <asmfunc64.h>
 #include <dsctbl64.h>
+#include <interrupt64.h>
+#include <keyboard64.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <timer64.h>
 
 #define GDT64_ENTRIES 5
 #define IDT64_ENTRIES 256
@@ -53,6 +56,8 @@ extern void asm_exception28(void);
 extern void asm_exception29(void);
 extern void asm_exception30(void);
 extern void asm_exception31(void);
+extern void asm_irq20(void);
+extern void asm_irq21(void);
 
 static void (*const exception_stubs[32])(void) = {
 	asm_exception00, asm_exception01, asm_exception02, asm_exception03,
@@ -89,15 +94,27 @@ static void serial_print_hex64(uint64_t value)
 	}
 }
 
-void exception_handler64(uint64_t vector, uint64_t error, uint64_t rip)
+void exception_handler64(const struct INTERRUPT_FRAME64 *frame)
 {
 	serial_print("EXC vector=");
-	serial_print_hex64(vector);
+	serial_print_hex64(frame->vector);
 	serial_print(" error=");
-	serial_print_hex64(error);
+	serial_print_hex64(frame->error);
 	serial_print(" rip=");
-	serial_print_hex64(rip);
+	serial_print_hex64(frame->rip);
 	serial_print("\r\n");
+}
+
+void irq_handler64(const struct INTERRUPT_FRAME64 *frame)
+{
+	if (frame->vector == 0x20) {
+		inthandler20_64();
+		return;
+	}
+	if (frame->vector == 0x21) {
+		inthandler21_64();
+		return;
+	}
 }
 
 void set_gdt64_desc(struct GDT64_DESCRIPTOR *sd, uint32_t limit, uint32_t base, uint8_t access, uint8_t flags)
@@ -154,6 +171,8 @@ void init_gdtidt64(void)
 	for (i = 0; i < 32; i++) {
 		set_idt64_gate(&idt64[i], (uintptr_t) exception_stubs[i], GDT64_KERNEL_CODE, 0, AR64_INT_GATE);
 	}
+	set_idt64_gate(&idt64[0x20], (uintptr_t) asm_irq20, GDT64_KERNEL_CODE, 0, AR64_INT_GATE);
+	set_idt64_gate(&idt64[0x21], (uintptr_t) asm_irq21, GDT64_KERNEL_CODE, 0, AR64_INT_GATE);
 
 	load_gdtr64(sizeof(gdt64) - 1, (uintptr_t) &gdt64);
 	reload_segments64(GDT64_KERNEL_CODE, GDT64_KERNEL_DATA);

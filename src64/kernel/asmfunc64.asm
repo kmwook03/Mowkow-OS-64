@@ -4,8 +4,11 @@ global _start
 global io_hlt
 global io_cli
 global io_sti
+global io_stihlt
 global io_out8
 global io_in8
+global io_load_rflags
+global io_store_rflags
 global load_gdtr64
 global load_idtr64
 global load_tr64
@@ -43,8 +46,11 @@ global asm_exception28
 global asm_exception29
 global asm_exception30
 global asm_exception31
+global asm_irq20
+global asm_irq21
 extern kernel64_main
 extern exception_handler64
+extern irq_handler64
 
 section .text
 _start:
@@ -68,6 +74,11 @@ io_sti:
 	sti
 	ret
 
+io_stihlt:
+	sti
+	hlt
+	ret
+
 io_out8:
 	mov dx, di
 	mov al, sil
@@ -78,6 +89,16 @@ io_in8:
 	mov dx, di
 	xor eax, eax
 	in al, dx
+	ret
+
+io_load_rflags:
+	pushfq
+	pop rax
+	ret
+
+io_store_rflags:
+	push rdi
+	popfq
 	ret
 
 load_gdtr64:
@@ -163,6 +184,16 @@ EXCEPTION_ERR   29, 29
 EXCEPTION_ERR   30, 30
 EXCEPTION_NOERR 31, 31
 
+%macro IRQ_STUB 2
+asm_irq%1:
+	push qword 0
+	push qword %2
+	jmp irq_common
+%endmacro
+
+IRQ_STUB 20, 0x20
+IRQ_STUB 21, 0x21
+
 exception_common:
 	push rax
 	push rbx
@@ -180,10 +211,46 @@ exception_common:
 	push r14
 	push r15
 
-	mov rdi, [rsp + 120]
-	mov rsi, [rsp + 128]
-	mov rdx, [rsp + 136]
+	mov rdi, rsp
 	call exception_handler64
+
+	pop r15
+	pop r14
+	pop r13
+	pop r12
+	pop r11
+	pop r10
+	pop r9
+	pop r8
+	pop rdi
+	pop rsi
+	pop rbp
+	pop rdx
+	pop rcx
+	pop rbx
+	pop rax
+	add rsp, 16
+	iretq
+
+irq_common:
+	push rax
+	push rbx
+	push rcx
+	push rdx
+	push rbp
+	push rsi
+	push rdi
+	push r8
+	push r9
+	push r10
+	push r11
+	push r12
+	push r13
+	push r14
+	push r15
+
+	mov rdi, rsp
+	call irq_handler64
 
 	pop r15
 	pop r14
