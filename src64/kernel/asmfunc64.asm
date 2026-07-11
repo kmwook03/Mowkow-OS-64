@@ -1,0 +1,212 @@
+bits 64
+
+global _start
+global io_hlt
+global io_cli
+global io_sti
+global io_out8
+global io_in8
+global load_gdtr64
+global load_idtr64
+global load_tr64
+global reload_segments64
+global asm_exception_default
+global asm_exception00
+global asm_exception01
+global asm_exception02
+global asm_exception03
+global asm_exception04
+global asm_exception05
+global asm_exception06
+global asm_exception07
+global asm_exception08
+global asm_exception09
+global asm_exception10
+global asm_exception11
+global asm_exception12
+global asm_exception13
+global asm_exception14
+global asm_exception15
+global asm_exception16
+global asm_exception17
+global asm_exception18
+global asm_exception19
+global asm_exception20
+global asm_exception21
+global asm_exception22
+global asm_exception23
+global asm_exception24
+global asm_exception25
+global asm_exception26
+global asm_exception27
+global asm_exception28
+global asm_exception29
+global asm_exception30
+global asm_exception31
+extern kernel64_main
+extern exception_handler64
+
+section .text
+_start:
+	cli
+	mov rsp, stack_top
+	call kernel64_main
+
+.halt:
+	hlt
+	jmp .halt
+
+io_hlt:
+	hlt
+	ret
+
+io_cli:
+	cli
+	ret
+
+io_sti:
+	sti
+	ret
+
+io_out8:
+	mov dx, di
+	mov al, sil
+	out dx, al
+	ret
+
+io_in8:
+	mov dx, di
+	xor eax, eax
+	in al, dx
+	ret
+
+load_gdtr64:
+	sub rsp, 16
+	mov [rsp], di
+	mov [rsp + 2], rsi
+	lgdt [rsp]
+	add rsp, 16
+	ret
+
+load_idtr64:
+	sub rsp, 16
+	mov [rsp], di
+	mov [rsp + 2], rsi
+	lidt [rsp]
+	add rsp, 16
+	ret
+
+load_tr64:
+	ltr di
+	ret
+
+reload_segments64:
+	push rdi
+	lea rax, [rel .reload_cs]
+	push rax
+	retfq
+.reload_cs:
+	mov ax, si
+	mov ds, ax
+	mov es, ax
+	mov ss, ax
+	mov fs, ax
+	mov gs, ax
+	ret
+
+asm_exception_default:
+	iretq
+
+%macro EXCEPTION_NOERR 2
+asm_exception%1:
+	push qword 0
+	push qword %2
+	jmp exception_common
+%endmacro
+
+%macro EXCEPTION_ERR 2
+asm_exception%1:
+	push qword %2
+	jmp exception_common
+%endmacro
+
+EXCEPTION_NOERR 00, 0
+EXCEPTION_NOERR 01, 1
+EXCEPTION_NOERR 02, 2
+EXCEPTION_NOERR 03, 3
+EXCEPTION_NOERR 04, 4
+EXCEPTION_NOERR 05, 5
+EXCEPTION_NOERR 06, 6
+EXCEPTION_NOERR 07, 7
+EXCEPTION_ERR   08, 8
+EXCEPTION_NOERR 09, 9
+EXCEPTION_ERR   10, 10
+EXCEPTION_ERR   11, 11
+EXCEPTION_ERR   12, 12
+EXCEPTION_ERR   13, 13
+EXCEPTION_ERR   14, 14
+EXCEPTION_NOERR 15, 15
+EXCEPTION_NOERR 16, 16
+EXCEPTION_ERR   17, 17
+EXCEPTION_NOERR 18, 18
+EXCEPTION_NOERR 19, 19
+EXCEPTION_NOERR 20, 20
+EXCEPTION_ERR   21, 21
+EXCEPTION_NOERR 22, 22
+EXCEPTION_NOERR 23, 23
+EXCEPTION_NOERR 24, 24
+EXCEPTION_NOERR 25, 25
+EXCEPTION_NOERR 26, 26
+EXCEPTION_NOERR 27, 27
+EXCEPTION_NOERR 28, 28
+EXCEPTION_ERR   29, 29
+EXCEPTION_ERR   30, 30
+EXCEPTION_NOERR 31, 31
+
+exception_common:
+	push rax
+	push rbx
+	push rcx
+	push rdx
+	push rbp
+	push rsi
+	push rdi
+	push r8
+	push r9
+	push r10
+	push r11
+	push r12
+	push r13
+	push r14
+	push r15
+
+	mov rdi, [rsp + 120]
+	mov rsi, [rsp + 128]
+	mov rdx, [rsp + 136]
+	call exception_handler64
+
+	pop r15
+	pop r14
+	pop r13
+	pop r12
+	pop r11
+	pop r10
+	pop r9
+	pop r8
+	pop rdi
+	pop rsi
+	pop rbp
+	pop rdx
+	pop rcx
+	pop rbx
+	pop rax
+	add rsp, 16
+	iretq
+
+section .bss
+align 16
+stack_bottom:
+	resb 16384
+stack_top:
+
+section .note.GNU-stack noalloc noexec nowrite progbits

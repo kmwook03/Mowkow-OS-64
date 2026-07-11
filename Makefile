@@ -5,6 +5,9 @@ SRC_DIR = src
 BUILD_DIR = build
 IMG_DIR = img
 APP_DIR = app
+SRC64_DIR = src64
+BUILD64_DIR = build64
+IMG64_DIR = img64
 
 FONT_DIR = src/graphics/font
 
@@ -24,6 +27,18 @@ GOLIB = $(TOOLPATH)/golib00
 
 QEMU = qemu-system-x86_64
 
+X64_CC ?= x86_64-elf-gcc
+X64_ASM ?= nasm
+X64_LD ?= x86_64-elf-ld
+X64_OBJCOPY ?= x86_64-elf-objcopy
+X64_CFLAGS = -ffreestanding -mno-red-zone -fno-pic -fno-stack-protector -Wall -Wextra -Wa,--noexecstack -I$(SRC64_DIR)/include
+X64_ASMFLAGS = -f elf64
+X64_BOOT_ASMFLAGS = -f bin
+X64_LDFLAGS = -nostdlib -T $(SRC64_DIR)/kernel/kernel64.ld
+STAGE2_64_SECTORS = 16
+KERNEL64_SECTORS = 64
+KERNEL64_LBA = $(shell expr 1 + $(STAGE2_64_SECTORS))
+
 COPY = cp
 DEL = rm -rf
 MKDIR = mkdir -p
@@ -42,6 +57,17 @@ FONT_OBJ = $(BUILD_DIR)/graphics/font/hankaku.obj
 
 ALL_OBJS = $(KERNEL_OBJS) $(DRIVERS_OBJS) $(LIB_OBJS) $(NASKFUNC_OBJ) $(FONT_OBJ)
 
+KERNEL64_C_SRCS = $(wildcard $(SRC64_DIR)/kernel/*.c)
+KERNEL64_ASM_SRCS = $(wildcard $(SRC64_DIR)/kernel/*.asm)
+KERNEL64_C_OBJS = $(patsubst $(SRC64_DIR)/kernel/%.c, $(BUILD64_DIR)/kernel/%.o, $(KERNEL64_C_SRCS))
+KERNEL64_ASM_OBJS = $(patsubst $(SRC64_DIR)/kernel/%.asm, $(BUILD64_DIR)/kernel/%.o, $(KERNEL64_ASM_SRCS))
+KERNEL64_OBJS = $(KERNEL64_ASM_OBJS) $(KERNEL64_C_OBJS)
+KERNEL64_ELF = $(BUILD64_DIR)/kernel/kernel64.elf
+KERNEL64_BIN = $(BUILD64_DIR)/kernel/kernel64.bin
+BOOT64_BIN = $(BUILD64_DIR)/boot/boot64.bin
+LOADER64_BIN = $(BUILD64_DIR)/boot/loader64.bin
+IMG64_FILE = $(IMG64_DIR)/mowkow64.img
+
 # -- Application Discovery --
 APP_DIRS = $(wildcard $(APP_DIR)/*/)
 APP_NAMES = $(notdir $(patsubst %/,%,$(APP_DIRS)))
@@ -51,7 +77,7 @@ API_LIB = $(BUILD_DIR)/app/api/apilib.lib
 APP_TARGETS = $(foreach app, $(APPS), $(BUILD_DIR)/app/$(app)/$(app).hrb)
 
 # -- Build Rule --
-.PHONY : default clean run info
+.PHONY : default clean run info x86_64 run64 clean64
 
 default : $(IMG_DIR)/haribote.img
 
@@ -137,6 +163,44 @@ $(IMG_DIR)/haribote.img : $(BUILD_DIR)/boot/ipl.bin $(BUILD_DIR)/haribote.sys $(
 		imgout:$@
 
 # Commands
+x86_64: $(IMG64_FILE)
+
+$(BUILD64_DIR)/boot/boot64.bin : $(SRC64_DIR)/boot/boot64.asm
+	@$(MKDIR) $(dir $@)
+	$(X64_ASM) $(X64_BOOT_ASMFLAGS) -DSTAGE2_SECTORS=$(STAGE2_64_SECTORS) $< -o $@
+
+$(BUILD64_DIR)/boot/loader64.bin : $(SRC64_DIR)/boot/loader64.asm
+	@$(MKDIR) $(dir $@)
+	$(X64_ASM) $(X64_BOOT_ASMFLAGS) -DKERNEL_LBA=$(KERNEL64_LBA) -DKERNEL_SECTORS=$(KERNEL64_SECTORS) $< -o $@
+
+$(BUILD64_DIR)/kernel/%.o : $(SRC64_DIR)/kernel/%.c
+	@$(MKDIR) $(dir $@)
+	$(X64_CC) $(X64_CFLAGS) -c $< -o $@
+
+$(BUILD64_DIR)/kernel/%.o : $(SRC64_DIR)/kernel/%.asm
+	@$(MKDIR) $(dir $@)
+	$(X64_ASM) $(X64_ASMFLAGS) $< -o $@
+
+$(KERNEL64_ELF) : $(KERNEL64_OBJS) $(SRC64_DIR)/kernel/kernel64.ld
+	@$(MKDIR) $(dir $@)
+	$(X64_LD) $(X64_LDFLAGS) -o $@ $(KERNEL64_OBJS)
+
+$(KERNEL64_BIN) : $(KERNEL64_ELF)
+	$(X64_OBJCOPY) -O binary $< $@
+
+$(IMG64_FILE) : $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN)
+	@$(MKDIR) $(IMG64_DIR)
+	dd if=/dev/zero of=$@ bs=512 count=2880
+	dd if=$(BOOT64_BIN) of=$@ bs=512 count=1 conv=notrunc
+	dd if=$(LOADER64_BIN) of=$@ bs=512 seek=1 conv=notrunc
+	dd if=$(KERNEL64_BIN) of=$@ bs=512 seek=$(KERNEL64_LBA) conv=notrunc
+
+run64: $(IMG64_FILE)
+	$(QEMU) -drive file=$(IMG64_FILE),format=raw,if=ide -boot c -no-reboot -d int -m 512M
+
+clean64:
+	$(DEL) $(BUILD64_DIR) $(IMG64_DIR)
+
 run: $(IMG_DIR)/haribote.img
 	$(QEMU) -fda $(IMG_DIR)/haribote.img -no-reboot -d int -m 512M
 
