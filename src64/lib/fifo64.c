@@ -1,6 +1,7 @@
 #include <fifo64.h>
+#include <mtask64.h>
 
-void fifo64_init(struct FIFO64 *fifo, uint32_t size, struct EVENT64 *buf)
+void fifo64_init(struct FIFO64 *fifo, uint32_t size, struct EVENT64 *buf, struct TASK64 *task)
 {
 	fifo->size = size;
 	fifo->buf = buf;
@@ -8,6 +9,7 @@ void fifo64_init(struct FIFO64 *fifo, uint32_t size, struct EVENT64 *buf)
 	fifo->flags = 0;
 	fifo->p = 0;
 	fifo->q = 0;
+	fifo->task = task;
 }
 
 int fifo64_put(struct FIFO64 *fifo, struct EVENT64 data)
@@ -22,6 +24,9 @@ int fifo64_put(struct FIFO64 *fifo, struct EVENT64 data)
 		fifo->p = 0;
 	}
 	fifo->free--;
+	if (fifo->task != 0 && fifo->task->flags != TASK64_FLAGS_RUNNING) {
+		task_run64(fifo->task, -1, 0);
+	}
 	return 0;
 }
 

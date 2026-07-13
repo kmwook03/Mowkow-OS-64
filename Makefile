@@ -26,6 +26,7 @@ FDIMG2ISO = $(TOOLPATH)/makeiso/fdimg2iso
 GOLIB = $(TOOLPATH)/golib00
 
 QEMU = qemu-system-x86_64
+PYTHON ?= python3
 
 X64_CC ?= x86_64-elf-gcc
 X64_ASM ?= nasm
@@ -37,7 +38,10 @@ X64_BOOT_ASMFLAGS = -f bin
 X64_LDFLAGS = -nostdlib -T $(SRC64_DIR)/kernel/kernel64.ld
 STAGE2_64_SECTORS = 16
 KERNEL64_SECTORS = 64
-KERNEL64_LBA = $(shell expr 1 + $(STAGE2_64_SECTORS))
+FAT12_64_RESERVED_SECTORS = $(shell expr 1 + $(STAGE2_64_SECTORS))
+FAT12_64_ROOT_LBA = $(shell expr $(FAT12_64_RESERVED_SECTORS) + 18)
+FAT12_64_DATA_LBA = $(shell expr $(FAT12_64_ROOT_LBA) + 14)
+KERNEL64_LBA = $(FAT12_64_DATA_LBA)
 
 COPY = cp
 DEL = rm -rf
@@ -165,11 +169,11 @@ $(IMG_DIR)/haribote.img : $(BUILD_DIR)/boot/ipl.bin $(BUILD_DIR)/haribote.sys $(
 # Commands
 x86_64: $(IMG64_FILE)
 
-$(BUILD64_DIR)/boot/boot64.bin : $(SRC64_DIR)/boot/boot64.asm
+$(BUILD64_DIR)/boot/boot64.bin : $(SRC64_DIR)/boot/boot64.asm Makefile
 	@$(MKDIR) $(dir $@)
 	$(X64_ASM) $(X64_BOOT_ASMFLAGS) -DSTAGE2_SECTORS=$(STAGE2_64_SECTORS) $< -o $@
 
-$(BUILD64_DIR)/boot/loader64.bin : $(SRC64_DIR)/boot/loader64.asm
+$(BUILD64_DIR)/boot/loader64.bin : $(SRC64_DIR)/boot/loader64.asm Makefile
 	@$(MKDIR) $(dir $@)
 	$(X64_ASM) $(X64_BOOT_ASMFLAGS) -DKERNEL_LBA=$(KERNEL64_LBA) -DKERNEL_SECTORS=$(KERNEL64_SECTORS) $< -o $@
 
@@ -190,10 +194,7 @@ $(KERNEL64_BIN) : $(KERNEL64_ELF)
 
 $(IMG64_FILE) : $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN)
 	@$(MKDIR) $(IMG64_DIR)
-	dd if=/dev/zero of=$@ bs=512 count=2880
-	dd if=$(BOOT64_BIN) of=$@ bs=512 count=1 conv=notrunc
-	dd if=$(LOADER64_BIN) of=$@ bs=512 seek=1 conv=notrunc
-	dd if=$(KERNEL64_BIN) of=$@ bs=512 seek=$(KERNEL64_LBA) conv=notrunc
+	$(PYTHON) $(TOOLPATH)/mkfat12_64.py $@ $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN)
 
 run64: $(IMG64_FILE)
 	$(QEMU) -drive file=$(IMG64_FILE),format=raw,if=ide -boot c -no-reboot -d int -m 512M

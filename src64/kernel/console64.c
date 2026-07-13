@@ -1,5 +1,8 @@
 #include <asmfunc64.h>
 #include <console64.h>
+#include <fd64.h>
+#include <memory64.h>
+#include <mtask64.h>
 #include <timer64.h>
 #include <stdint.h>
 
@@ -108,6 +111,25 @@ static int str_eq(const char *a, const char *b)
 	return *a == *b;
 }
 
+static void print_file_name(const struct FDINFO64 *finfo)
+{
+	uint16_t i;
+
+	for (i = 0; i < 8; i++) {
+		if (finfo->name[i] != ' ') {
+			console_putchar((char) finfo->name[i]);
+		}
+	}
+	if (finfo->ext[0] != ' ') {
+		console_putchar('.');
+		for (i = 0; i < 3; i++) {
+			if (finfo->ext[i] != ' ') {
+				console_putchar((char) finfo->ext[i]);
+			}
+		}
+	}
+}
+
 static void print_uint64(uint64_t value)
 {
 	char buf[20];
@@ -125,6 +147,25 @@ static void print_uint64(uint64_t value)
 	while (i > 0) {
 		console_putchar(buf[--i]);
 	}
+}
+
+static void print_hex64(uint64_t value)
+{
+	uint16_t shift;
+	uint8_t digit;
+	int started;
+
+	console64_puts("0x");
+	started = 0;
+	for (shift = 60; shift > 0; shift -= 4) {
+		digit = (uint8_t) ((value >> shift) & 0x0f);
+		if (digit != 0 || started != 0) {
+			console_putchar((char) (digit < 10 ? '0' + digit : 'a' + digit - 10));
+			started = 1;
+		}
+	}
+	digit = (uint8_t) (value & 0x0f);
+	console_putchar((char) (digit < 10 ? '0' + digit : 'a' + digit - 10));
 }
 
 static void prompt(void)
@@ -155,13 +196,70 @@ static void execute_command(void)
 		return;
 	}
 	if (str_eq(input_line, "help")) {
-		console64_puts("commands: help clear ticks\n");
+		console64_puts("commands: help clear ticks mem tasks ls type readme.txt\n");
 	} else if (str_eq(input_line, "clear")) {
 		clear_screen();
 	} else if (str_eq(input_line, "ticks")) {
 		console64_puts("ticks ");
 		print_uint64(timerctl64.count);
 		console_putchar('\n');
+	} else if (str_eq(input_line, "mem")) {
+		uintptr_t addr;
+
+		console64_puts("free ");
+		print_uint64(memman64_total(&memman64) / 1024);
+		console64_puts(" KiB\n");
+		addr = memman64_alloc_4k(&memman64, 4096);
+		console64_puts("alloc4k ");
+		print_hex64(addr);
+		console_putchar('\n');
+		if (addr != 0) {
+			memman64_free_4k(&memman64, addr, 4096);
+		}
+	} else if (str_eq(input_line, "tasks")) {
+		console64_puts("switches ");
+		print_uint64(taskctl64.switches);
+		console64_puts(" current-level ");
+		print_uint64(taskctl64.now_lv);
+		console_putchar('\n');
+	} else if (str_eq(input_line, "ls") || str_eq(input_line, "목록")) {
+		uint32_t i;
+		uint32_t count;
+		const struct FDINFO64 *finfo;
+
+		count = fd64_file_count();
+		for (i = 0; i < count; i++) {
+			finfo = fd64_file_at(i);
+			if (finfo != NULL) {
+				print_file_name(finfo);
+				console64_puts("  ");
+				print_uint64(finfo->size);
+				console_putchar('\n');
+			}
+		}
+		if (count == 0) {
+			console64_puts("no files\n");
+		}
+	} else if (str_eq(input_line, "type readme.txt")) {
+		struct FDHANDLE64 fh;
+		char buf[65];
+		size_t n;
+		size_t i;
+
+		if (fd64_open(&fh, "readme.txt") == 0) {
+			console64_puts("file not found\n");
+		} else {
+			for (;;) {
+				n = fd64_read(&fh, buf, sizeof(buf) - 1);
+				if (n == 0) {
+					break;
+				}
+				for (i = 0; i < n; i++) {
+					console_putchar(buf[i]);
+				}
+			}
+			console_putchar('\n');
+		}
 	} else {
 		console64_puts("unknown command\n");
 	}

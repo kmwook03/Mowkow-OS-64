@@ -8,6 +8,49 @@ org 0x7c00
 stage2_addr equ 0x8000
 
 start:
+	jmp short after_bpb
+	nop
+
+oem_name:
+	db "MOWKOW64"
+bytes_per_sector:
+	dw 512
+sectors_per_cluster:
+	db 1
+reserved_sectors:
+	dw 17
+fat_count:
+	db 2
+root_entries:
+	dw 224
+total_sectors16:
+	dw 2880
+media_type:
+	db 0xf0
+sectors_per_fat:
+	dw 9
+sectors_per_track:
+	dw 18
+heads:
+	dw 2
+hidden_sectors:
+	dd 0
+total_sectors32:
+	dd 0
+drive_number:
+	db 0
+reserved1:
+	db 0
+boot_signature:
+	db 0x29
+volume_id:
+	dd 0x646b776d
+volume_label:
+	db "MOWKOW64   "
+filesystem_type:
+	db "FAT12   "
+
+after_bpb:
 	jmp 0x0000:boot_start
 
 boot_start:
@@ -17,7 +60,6 @@ boot_start:
 	mov es, ax
 	mov ss, ax
 	mov sp, 0x7c00
-	sti
 
 	mov [boot_drive], dl
 

@@ -13,6 +13,7 @@ global load_gdtr64
 global load_idtr64
 global load_tr64
 global reload_segments64
+global context_switch64
 global asm_exception_default
 global asm_exception00
 global asm_exception01
@@ -133,6 +134,23 @@ reload_segments64:
 	mov ss, ax
 	mov fs, ax
 	mov gs, ax
+	ret
+
+context_switch64:
+	push rbx
+	push rbp
+	push r12
+	push r13
+	push r14
+	push r15
+	mov [rdi], rsp
+	mov rsp, [rsi]
+	pop r15
+	pop r14
+	pop r13
+	pop r12
+	pop rbp
+	pop rbx
 	ret
 
 asm_exception_default:
