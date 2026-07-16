@@ -49,17 +49,19 @@ def write_file(image, fat, root, index, name, data, cluster):
 
 
 def main():
-    if len(sys.argv) != 5:
-        print("usage: mkfat12_64.py image boot.bin loader.bin kernel.bin", file=sys.stderr)
+    if len(sys.argv) != 6:
+        print("usage: mkfat12_64.py image boot.bin loader.bin kernel.bin h04.fnt", file=sys.stderr)
         return 2
 
-    image_path, boot_path, loader_path, kernel_path = sys.argv[1:]
+    image_path, boot_path, loader_path, kernel_path, h04_path = sys.argv[1:]
     with open(boot_path, "rb") as f:
         boot = f.read()
     with open(loader_path, "rb") as f:
         loader = f.read()
     with open(kernel_path, "rb") as f:
         kernel = f.read()
+    with open(h04_path, "rb") as f:
+        h04 = f.read()
 
     if len(boot) != SECTOR_SIZE:
         raise SystemExit("boot sector must be 512 bytes")
@@ -76,11 +78,12 @@ def main():
 
     cluster = 2
     cluster = write_file(image, fat, root, 0, "KERNEL64.BIN", kernel, cluster)
+    cluster = write_file(image, fat, root, 1, "H04.FNT", h04, cluster)
     readme = (
-        b"Mowkow OS x86_64 FAT12 image\r\n"
-        b"This file is read through the 64-bit FAT12 port.\r\n"
-    )
-    write_file(image, fat, root, 1, "README.TXT", readme, cluster)
+        "Mowkow OS x86_64 FAT12 image\r\n"
+        "한글 콘솔에서 읽는 UTF-8 파일입니다.\r\n"
+    ).encode("utf-8")
+    write_file(image, fat, root, 2, "README.TXT", readme, cluster)
 
     for copy in range(FAT_COUNT):
         start = (RESERVED_SECTORS + copy * SECTORS_PER_FAT) * SECTOR_SIZE

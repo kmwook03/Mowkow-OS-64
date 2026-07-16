@@ -13,7 +13,10 @@ kernel_load_real equ 0x10000
 kernel_load_addr equ 0x100000
 pml4_addr equ 0x70000
 pdpt_addr equ 0x71000
-pd_addr equ 0x72000
+pd0_addr equ 0x72000
+pd1_addr equ 0x73000
+pd2_addr equ 0x74000
+pd3_addr equ 0x75000
 stack64_top equ 0x90000
 
 start:
@@ -69,6 +72,42 @@ collect_boot_info:
 	mov es, bx
 	mov di, vbe_info_buffer
 	int 0x10
+	cmp ax, 0x004f
+	jne .text_mode
+
+	mov ax, 0x4f01
+	mov cx, 0x0103
+	xor bx, bx
+	mov es, bx
+	mov di, vbe_mode_info
+	int 0x10
+	cmp ax, 0x004f
+	jne .text_mode
+
+	mov ax, 0x4f02
+	mov bx, 0x4103
+	int 0x10
+	cmp ax, 0x004f
+	jne .text_mode
+
+	mov ax, [vbe_mode_info + 18]
+	mov [boot_info.scrnx], ax
+	mov ax, [vbe_mode_info + 20]
+	mov [boot_info.scrny], ax
+	mov ax, [vbe_mode_info + 50]
+	test ax, ax
+	jnz .store_stride
+	mov ax, [vbe_mode_info + 16]
+.store_stride:
+	mov word [boot_info.bytes_per_scanline], ax
+	mov al, [vbe_mode_info + 25]
+	mov [boot_info.bpp], al
+	mov al, [vbe_mode_info + 27]
+	mov [boot_info.framebuffer_type], al
+	mov eax, [vbe_mode_info + 40]
+	mov [boot_info.vram], eax
+	mov dword [boot_info.vram + 4], 0
+.text_mode:
 	ret
 
 disk_error:
@@ -100,6 +139,14 @@ boot_info:
 	dw 80
 .scrny:
 	dw 25
+.bytes_per_scanline:
+	dw 160
+.bpp:
+	db 16
+.framebuffer_type:
+	db 0
+.reserved2:
+	dd 0
 .vram:
 	dq 0xb8000
 
@@ -122,6 +169,10 @@ align 16
 vbe_info_buffer:
 	db "VBE2"
 	times 508 db 0
+
+align 16
+vbe_mode_info:
+	times 256 db 0
 
 gdt64:
 	dq 0
@@ -164,18 +215,25 @@ setup_page_tables:
 	cld
 	mov edi, pml4_addr
 	xor eax, eax
-	mov ecx, 4096 * 3 / 4
+	mov ecx, 4096 * 6 / 4
 	rep stosd
 
 	mov dword [pml4_addr], pdpt_addr | 0x003
 	mov dword [pml4_addr + 4], 0
-	mov dword [pdpt_addr], pd_addr | 0x003
-	mov dword [pdpt_addr + 4], 0
 
-	mov edi, pd_addr
+	mov dword [pdpt_addr], pd0_addr | 0x003
+	mov dword [pdpt_addr + 4], 0
+	mov dword [pdpt_addr + 8], pd1_addr | 0x003
+	mov dword [pdpt_addr + 12], 0
+	mov dword [pdpt_addr + 16], pd2_addr | 0x003
+	mov dword [pdpt_addr + 20], 0
+	mov dword [pdpt_addr + 24], pd3_addr | 0x003
+	mov dword [pdpt_addr + 28], 0
+
+	mov edi, pd0_addr
 	mov eax, 0x00000083
 	xor edx, edx
-	mov ecx, 512
+	mov ecx, 512 * 4
 .map_pd:
 	mov [edi], eax
 	mov [edi + 4], edx
