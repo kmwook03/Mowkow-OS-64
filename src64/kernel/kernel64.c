@@ -12,9 +12,11 @@
 #include <timer64.h>
 
 #define EVENT_BUF_SIZE 128
+#define HANGUL_FONT_SIZE 11520
 
 static struct FIFO64 event_fifo;
 static struct EVENT64 event_buf[EVENT_BUF_SIZE];
+static uint8_t hangul_font_buf[HANGUL_FONT_SIZE];
 
 static void serial_init(void)
 {
@@ -82,6 +84,32 @@ static void serial_fat12_smoke(void)
 	serial_print("\r\n");
 }
 
+static void load_hangul_font(void)
+{
+	struct FDHANDLE64 fh;
+	size_t loaded;
+	size_t n;
+
+	loaded = 0;
+	if (fd64_open(&fh, "H04.FNT") == 0) {
+		serial_print("hangul font=open-failed\r\n");
+		return;
+	}
+	while (loaded < HANGUL_FONT_SIZE) {
+		n = fd64_read(&fh, hangul_font_buf + loaded, HANGUL_FONT_SIZE - loaded);
+		if (n == 0) {
+			break;
+		}
+		loaded += n;
+	}
+	if (loaded == HANGUL_FONT_SIZE) {
+		console64_set_hangul_font(hangul_font_buf);
+		serial_print("hangul font=loaded\r\n");
+	} else {
+		serial_print("hangul font=short-read\r\n");
+	}
+}
+
 static void process_event64(const struct EVENT64 *event)
 {
 	if (event->type == EVENT64_TIMER) {
@@ -102,7 +130,8 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 	init_memory64();
 	fd64_init();
 	serial_fat12_smoke();
-	console64_init(boot_info->vram, boot_info->scrnx, boot_info->scrny);
+	load_hangul_font();
+	console64_init(boot_info);
 	task_init64();
 	fifo64_init(&event_fifo, EVENT_BUF_SIZE, event_buf, task_now64());
 	init_pit64(&event_fifo);

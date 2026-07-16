@@ -10,6 +10,10 @@ struct BOOTINFO64 {
 	uint8_t reserve;
 	uint16_t scrnx;
 	uint16_t scrny;
+	uint16_t bytes_per_scanline;
+	uint8_t bpp;
+	uint8_t framebuffer_type;
+	uint32_t reserved2;
 	uintptr_t vram;
 };
 
