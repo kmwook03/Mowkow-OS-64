@@ -6,8 +6,11 @@
 #define GDT64_KERNEL_CODE 0x08
 #define GDT64_KERNEL_DATA 0x10
 #define GDT64_TSS         0x18
+#define GDT64_USER_DATA   0x2b
+#define GDT64_USER_CODE   0x33
 
 #define AR64_PRESENT     0x80
+#define AR64_DPL3        0x60
 #define AR64_CODE        0x1a
 #define AR64_DATA        0x12
 #define AR64_TSS         0x89

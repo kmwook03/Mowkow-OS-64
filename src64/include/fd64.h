@@ -28,6 +28,7 @@ uint32_t fd64_file_count(void);
 const struct FDINFO64 *fd64_file_at(uint32_t index);
 int fd64_open(struct FDHANDLE64 *fh, const char *name);
 size_t fd64_read(struct FDHANDLE64 *fh, void *dst, size_t request_size);
+int fd64_seek(struct FDHANDLE64 *fh, int64_t offset, int whence);
 uint16_t fd64_next_cluster(uint16_t cluster);
 
 #endif

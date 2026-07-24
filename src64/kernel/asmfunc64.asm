@@ -1,5 +1,8 @@
 bits 64
 
+%define KERNEL_DATA_SEL 0x10
+%define USER_DATA_SEL   0x2b
+
 global _start
 global io_hlt
 global io_cli
@@ -49,9 +52,15 @@ global asm_exception30
 global asm_exception31
 global asm_irq20
 global asm_irq21
+global asm_syscall80
+global enter_user_mode64
+global leave_user_mode64
 extern kernel64_main
 extern exception_handler64
 extern irq_handler64
+extern syscall_handler64
+extern process64_current_exit_rsp
+extern process64_current_exit_status
 
 section .text
 _start:
@@ -212,6 +221,11 @@ asm_irq%1:
 IRQ_STUB 20, 0x20
 IRQ_STUB 21, 0x21
 
+asm_syscall80:
+	push qword 0
+	push qword 0x80
+	jmp syscall_common
+
 exception_common:
 	push rax
 	push rbx
@@ -287,6 +301,106 @@ irq_common:
 	pop rax
 	add rsp, 16
 	iretq
+
+syscall_common:
+	push rax
+	push rbx
+	push rcx
+	push rdx
+	push rbp
+	push rsi
+	push rdi
+	push r8
+	push r9
+	push r10
+	push r11
+	push r12
+	push r13
+	push r14
+	push r15
+
+	mov ax, KERNEL_DATA_SEL
+	mov ds, ax
+	mov es, ax
+
+	mov rdi, rsp
+	call syscall_handler64
+	cmp rax, 1
+	je syscall_exit_to_kernel
+
+	pop r15
+	pop r14
+	pop r13
+	pop r12
+	pop r11
+	pop r10
+	pop r9
+	pop r8
+	pop rdi
+	pop rsi
+	pop rbp
+	pop rdx
+	pop rcx
+	pop rbx
+	pop rax
+	add rsp, 16
+	mov ax, USER_DATA_SEL
+	mov ds, ax
+	mov es, ax
+	iretq
+
+syscall_exit_to_kernel:
+	call process64_current_exit_rsp
+	push rax
+	call process64_current_exit_status
+	mov esi, eax
+	pop rdi
+	mov rsp, rdi
+	mov eax, esi
+	ret
+
+enter_user_mode64:
+	mov r10, [rsp + 8]
+	cli
+	push rbx
+	push rbp
+	push r12
+	push r13
+	push r14
+	push r15
+	lea r11, [rel .kernel_resume]
+	push r11
+	mov [r10], rsp
+	mov rax, rdi
+	mov r11, rsi
+	mov rdi, rdx
+	mov rsi, rcx
+	mov dx, r9w
+	mov ds, dx
+	mov es, dx
+	push r9
+	push r11
+	pushfq
+	pop rcx
+	or rcx, 0x200
+	push rcx
+	push r8
+	push rax
+	iretq
+.kernel_resume:
+	pop r15
+	pop r14
+	pop r13
+	pop r12
+	pop rbp
+	pop rbx
+	sti
+	ret
+
+leave_user_mode64:
+	mov rsp, rdi
+	mov eax, esi
+	ret
 
 section .bss
 align 16

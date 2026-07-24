@@ -49,11 +49,12 @@ def write_file(image, fat, root, index, name, data, cluster):
 
 
 def main():
-    if len(sys.argv) != 6:
-        print("usage: mkfat12_64.py image boot.bin loader.bin kernel.bin h04.fnt", file=sys.stderr)
+    if len(sys.argv) < 6:
+        print("usage: mkfat12_64.py image boot.bin loader.bin kernel.bin h04.fnt [NAME=path ...]", file=sys.stderr)
         return 2
 
-    image_path, boot_path, loader_path, kernel_path, h04_path = sys.argv[1:]
+    image_path, boot_path, loader_path, kernel_path, h04_path = sys.argv[1:6]
+    app_specs = sys.argv[6:]
     with open(boot_path, "rb") as f:
         boot = f.read()
     with open(loader_path, "rb") as f:
@@ -83,7 +84,17 @@ def main():
         "Mowkow OS x86_64 FAT12 image\r\n"
         "한글 콘솔에서 읽는 UTF-8 파일입니다.\r\n"
     ).encode("utf-8")
-    write_file(image, fat, root, 2, "README.TXT", readme, cluster)
+    cluster = write_file(image, fat, root, 2, "README.TXT", readme, cluster)
+
+    root_index = 3
+    for spec in app_specs:
+        name, sep, path = spec.partition("=")
+        if not sep:
+            raise SystemExit(f"bad app spec: {spec}")
+        with open(path, "rb") as f:
+            data = f.read()
+        cluster = write_file(image, fat, root, root_index, name.upper(), data, cluster)
+        root_index += 1
 
     for copy in range(FAT_COUNT):
         start = (RESERVED_SECTORS + copy * SECTORS_PER_FAT) * SECTOR_SIZE

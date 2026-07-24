@@ -5,6 +5,7 @@
 #include <hangul64.h>
 #include <memory64.h>
 #include <mtask64.h>
+#include <process64.h>
 #include <timer64.h>
 #include <utf864.h>
 #include <stddef.h>
@@ -16,6 +17,8 @@
 #define FONT_W 8
 #define FONT_H 16
 #define HANGUL_W 16
+#define KBD_STATUS_PORT 0x64
+#define KBD_DATA_PORT   0x60
 
 extern const uint8_t hankaku64[4096];
 
@@ -450,6 +453,18 @@ static int str_eq(const char *a, const char *b)
 	return *a == *b;
 }
 
+static int str_starts_with(const char *s, const char *prefix)
+{
+	while (*prefix != '\0') {
+		if (*s != *prefix) {
+			return 0;
+		}
+		s++;
+		prefix++;
+	}
+	return 1;
+}
+
 static void print_file_name(const struct FDINFO64 *finfo)
 {
 	uint16_t i;
@@ -532,7 +547,7 @@ static void execute_command(void)
 		return;
 	}
 	if (str_eq(input_line, "help")) {
-		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt\n");
+		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO\n");
 	} else if (str_eq(input_line, "clear")) {
 		clear_screen();
 	} else if (str_eq(input_line, "ticks")) {
@@ -593,6 +608,13 @@ static void execute_command(void)
 			}
 			console64_puts("\n");
 		}
+	} else if (str_starts_with(input_line, "run ")) {
+		int status;
+
+		status = process64_exec_file(input_line + 4, input_line + 4);
+		console64_puts("exit ");
+		print_uint64((uint64_t) status);
+		console64_puts("\n");
 	} else {
 		console64_puts("unknown command\n");
 	}
@@ -635,6 +657,60 @@ void console64_puts(const char *s)
 		}
 		put_utf8_char(s, len);
 		s += len;
+	}
+}
+
+void console64_write(const char *s, uint64_t len)
+{
+	put_bytes(s, (size_t) len);
+}
+
+uint64_t console64_read(char *dst, uint64_t len)
+{
+	uint64_t count;
+	uint8_t scancode;
+	char c;
+
+	if (dst == 0 || len == 0) {
+		return 0;
+	}
+	count = 0;
+	for (;;) {
+		while ((io_in8(KBD_STATUS_PORT) & 0x01) == 0) {
+		}
+		scancode = io_in8(KBD_DATA_PORT);
+		if (scancode == 0x2a || scancode == 0x36) {
+			shift_down = 1;
+			continue;
+		}
+		if (scancode == 0xaa || scancode == 0xb6) {
+			shift_down = 0;
+			continue;
+		}
+		if ((scancode & 0x80) != 0) {
+			continue;
+		}
+		if (scancode == 0x1c) {
+			dst[count++] = '\n';
+			put_utf8_char("\n", 1);
+			return count;
+		}
+		if (scancode == 0x0e) {
+			if (count > 0) {
+				count--;
+				erase_prev_visual(FONT_W);
+			}
+			continue;
+		}
+		c = shift_down != 0 ? keymap1[scancode] : keymap0[scancode];
+		if (c == '\0') {
+			continue;
+		}
+		dst[count++] = c;
+		put_utf8_char(&c, 1);
+		if (count == len) {
+			return count;
+		}
 	}
 }
 

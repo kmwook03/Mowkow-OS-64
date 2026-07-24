@@ -5,6 +5,7 @@ SRC_DIR = src
 BUILD_DIR = build
 IMG_DIR = img
 APP_DIR = app
+APP64_DIR = app64
 SRC64_DIR = src64
 BUILD64_DIR = build64
 IMG64_DIR = img64
@@ -33,6 +34,8 @@ X64_ASM ?= nasm
 X64_LD ?= x86_64-elf-ld
 X64_OBJCOPY ?= x86_64-elf-objcopy
 X64_CFLAGS = -ffreestanding -mno-red-zone -fno-pic -fno-stack-protector -Wall -Wextra -Wa,--noexecstack -I$(SRC64_DIR)/include
+APP64_CFLAGS = -ffreestanding -fno-pic -fno-pie -mno-red-zone -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -Wall -Wextra -I$(APP64_DIR)/crt/include
+APP64_LDFLAGS = -nostdlib -static -T $(APP64_DIR)/app64.ld
 X64_ASMFLAGS = -f elf64
 X64_BOOT_ASMFLAGS = -f bin
 X64_LDFLAGS = -nostdlib -T $(SRC64_DIR)/kernel/kernel64.ld
@@ -79,6 +82,10 @@ APPS = $(filter-out api include, $(APP_NAMES))
 
 API_LIB = $(BUILD_DIR)/app/api/apilib.lib
 APP_TARGETS = $(foreach app, $(APPS), $(BUILD_DIR)/app/$(app)/$(app).hrb)
+
+APP64_DIRS = $(wildcard $(APP64_DIR)/*/)
+APP64_NAMES = $(filter-out crt,$(notdir $(patsubst %/,%,$(APP64_DIRS))))
+APP64_TARGETS = $(foreach app, $(APP64_NAMES), $(BUILD64_DIR)/app/$(app)/$(app).elf)
 
 # -- Build Rule --
 .PHONY : default clean run info x86_64 run64 clean64
@@ -192,9 +199,30 @@ $(KERNEL64_ELF) : $(KERNEL64_OBJS) $(SRC64_DIR)/kernel/kernel64.ld
 $(KERNEL64_BIN) : $(KERNEL64_ELF)
 	$(X64_OBJCOPY) -O binary $< $@
 
-$(IMG64_FILE) : $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT
+$(BUILD64_DIR)/app/crt/%.o : $(APP64_DIR)/crt/%.S
+	@$(MKDIR) $(dir $@)
+	$(X64_CC) $(APP64_CFLAGS) -c $< -o $@
+
+$(BUILD64_DIR)/app/crt/%.o : $(APP64_DIR)/crt/%.c
+	@$(MKDIR) $(dir $@)
+	$(X64_CC) $(APP64_CFLAGS) -c $< -o $@
+
+APP64_CRT_OBJS = $(BUILD64_DIR)/app/crt/crt0.o $(BUILD64_DIR)/app/crt/syscall.o $(BUILD64_DIR)/app/crt/string.o $(BUILD64_DIR)/app/crt/malloc.o
+
+define APP64_RULES
+$(BUILD64_DIR)/app/$(1)/$(1).o : $(APP64_DIR)/$(1)/$(1).c
+	@$$(MKDIR) $$(dir $$@)
+	$$(X64_CC) $$(APP64_CFLAGS) -c $$< -o $$@
+
+$(BUILD64_DIR)/app/$(1)/$(1).elf : $(BUILD64_DIR)/app/$(1)/$(1).o $$(APP64_CRT_OBJS) $(APP64_DIR)/app64.ld
+	$$(X64_CC) $$(APP64_LDFLAGS) -Wl,-Map=$(BUILD64_DIR)/app/$(1)/$(1).map -o $$@ $(BUILD64_DIR)/app/$(1)/$(1).o $$(APP64_CRT_OBJS)
+endef
+
+$(foreach app,$(APP64_NAMES),$(eval $(call APP64_RULES,$(app))))
+
+$(IMG64_FILE) : $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(APP64_TARGETS)
 	@$(MKDIR) $(IMG64_DIR)
-	$(PYTHON) $(TOOLPATH)/mkfat12_64.py $@ $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT
+	$(PYTHON) $(TOOLPATH)/mkfat12_64.py $@ $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(foreach app,$(APP64_NAMES),$(app)=$(BUILD64_DIR)/app/$(app)/$(app).elf)
 
 run64: $(IMG64_FILE)
 	$(QEMU) -drive file=$(IMG64_FILE),format=raw,if=ide -boot c -no-reboot -d int -m 512M
@@ -216,3 +244,4 @@ info:
 	@echo "[Driver Sources] $(DRIVERS_SRCS)"
 	@echo "[Library Sources] $(LIB_SRCS)"
 	@echo "[APPS] $(APPS)"
+	@echo "[APP64] $(APP64_NAMES)"

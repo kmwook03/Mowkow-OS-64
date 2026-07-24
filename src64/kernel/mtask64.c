@@ -95,6 +95,9 @@ struct TASK64 *task_alloc64(void)
 			task->switches = 0;
 			task->stack_base = 0;
 			task->stack_size = 0;
+			task->process = NULL;
+			task->is_user = 0;
+			task->kernel_rsp = 0;
 			task->context.rsp = 0;
 			return task;
 		}
