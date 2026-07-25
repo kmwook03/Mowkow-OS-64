@@ -318,3 +318,42 @@ size_t fd64_read(struct FDHANDLE64 *fh, void *dst, size_t request_size)
 	}
 	return read_size;
 }
+
+int fd64_seek(struct FDHANDLE64 *fh, int64_t offset, int whence)
+{
+	int64_t base;
+	int64_t new_pos;
+	uint32_t cluster_bytes;
+	uint32_t skip_clusters;
+
+	if (fh == NULL || fh->finfo == NULL) {
+		return -1;
+	}
+	if (whence == 0) {
+		base = 0;
+	} else if (whence == 1) {
+		base = fh->pos;
+	} else if (whence == 2) {
+		base = fh->finfo->size;
+	} else {
+		return -1;
+	}
+	new_pos = base + offset;
+	if (new_pos < 0 || new_pos > (int64_t) fh->finfo->size) {
+		return -1;
+	}
+	fh->pos = (uint32_t) new_pos;
+	fh->cluster = fh->finfo->clustno;
+	cluster_bytes = bytes_per_sector * sectors_per_cluster;
+	if (cluster_bytes == 0) {
+		return -1;
+	}
+	skip_clusters = fh->pos / cluster_bytes;
+	while (skip_clusters-- > 0 && fh->cluster < 0x0ff0) {
+		fh->cluster = fd64_next_cluster(fh->cluster);
+	}
+	if (fh->cluster >= 0x0ff0 && fh->pos < fh->finfo->size) {
+		return -1;
+	}
+	return 0;
+}

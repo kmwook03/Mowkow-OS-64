@@ -24,6 +24,9 @@ struct TASK64 {
 	uint64_t switches;
 	uintptr_t stack_base;
 	size_t stack_size;
+	void *process;
+	uint32_t is_user;
+	uintptr_t kernel_rsp;
 	struct CONTEXT64 context;
 };
 

@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <timer64.h>
 
-#define GDT64_ENTRIES 5
+#define GDT64_ENTRIES 7
 #define IDT64_ENTRIES 256
 #define KERNEL_STACK_SIZE 16384
 
@@ -17,6 +17,8 @@ static union {
 		struct GDT64_DESCRIPTOR code_desc;
 		struct GDT64_DESCRIPTOR data_desc;
 		struct TSS64_DESCRIPTOR tss_desc;
+		struct GDT64_DESCRIPTOR user_data_desc;
+		struct GDT64_DESCRIPTOR user_code_desc;
 	} entry;
 } gdt64 __attribute__((aligned(16)));
 
@@ -58,6 +60,7 @@ extern void asm_exception30(void);
 extern void asm_exception31(void);
 extern void asm_irq20(void);
 extern void asm_irq21(void);
+extern void asm_syscall80(void);
 
 static void (*const exception_stubs[32])(void) = {
 	asm_exception00, asm_exception01, asm_exception02, asm_exception03,
@@ -163,6 +166,10 @@ void init_gdtidt64(void)
 
 	set_gdt64_desc(&gdt64.entry.code_desc, 0, 0, AR64_PRESENT | AR64_CODE, 0x20);
 	set_gdt64_desc(&gdt64.entry.data_desc, 0, 0, AR64_PRESENT | AR64_DATA, 0x00);
+	set_gdt64_desc(&gdt64.entry.user_data_desc, 0, 0,
+		AR64_PRESENT | AR64_DPL3 | AR64_DATA, 0x00);
+	set_gdt64_desc(&gdt64.entry.user_code_desc, 0, 0,
+		AR64_PRESENT | AR64_DPL3 | AR64_CODE, 0x20);
 
 	tss64.rsp0 = (uintptr_t) (kernel_stack + KERNEL_STACK_SIZE);
 	tss64.io_map_base = sizeof(tss64);
@@ -173,6 +180,8 @@ void init_gdtidt64(void)
 	}
 	set_idt64_gate(&idt64[0x20], (uintptr_t) asm_irq20, GDT64_KERNEL_CODE, 0, AR64_INT_GATE);
 	set_idt64_gate(&idt64[0x21], (uintptr_t) asm_irq21, GDT64_KERNEL_CODE, 0, AR64_INT_GATE);
+	set_idt64_gate(&idt64[0x80], (uintptr_t) asm_syscall80, GDT64_KERNEL_CODE, 0,
+		AR64_INT_GATE | AR64_DPL3);
 
 	load_gdtr64(sizeof(gdt64) - 1, (uintptr_t) &gdt64);
 	reload_segments64(GDT64_KERNEL_CODE, GDT64_KERNEL_DATA);

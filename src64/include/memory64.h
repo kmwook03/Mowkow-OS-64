@@ -33,6 +33,7 @@ size_t memman64_total(const struct MEMMAN64 *man);
 uintptr_t memman64_alloc(struct MEMMAN64 *man, size_t size);
 int memman64_free(struct MEMMAN64 *man, uintptr_t addr, size_t size);
 uintptr_t memman64_alloc_4k(struct MEMMAN64 *man, size_t size);
+uintptr_t memman64_alloc_at_4k(struct MEMMAN64 *man, uintptr_t addr, size_t size);
 int memman64_free_4k(struct MEMMAN64 *man, uintptr_t addr, size_t size);
 void init_memory64(void);
 

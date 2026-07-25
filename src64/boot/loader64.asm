@@ -218,20 +218,20 @@ setup_page_tables:
 	mov ecx, 4096 * 6 / 4
 	rep stosd
 
-	mov dword [pml4_addr], pdpt_addr | 0x003
+	mov dword [pml4_addr], pdpt_addr | 0x007
 	mov dword [pml4_addr + 4], 0
 
-	mov dword [pdpt_addr], pd0_addr | 0x003
+	mov dword [pdpt_addr], pd0_addr | 0x007
 	mov dword [pdpt_addr + 4], 0
-	mov dword [pdpt_addr + 8], pd1_addr | 0x003
+	mov dword [pdpt_addr + 8], pd1_addr | 0x007
 	mov dword [pdpt_addr + 12], 0
-	mov dword [pdpt_addr + 16], pd2_addr | 0x003
+	mov dword [pdpt_addr + 16], pd2_addr | 0x007
 	mov dword [pdpt_addr + 20], 0
-	mov dword [pdpt_addr + 24], pd3_addr | 0x003
+	mov dword [pdpt_addr + 24], pd3_addr | 0x007
 	mov dword [pdpt_addr + 28], 0
 
 	mov edi, pd0_addr
-	mov eax, 0x00000083
+	mov eax, 0x00000087
 	xor edx, edx
 	mov ecx, 512 * 4
 .map_pd:

@@ -144,6 +144,50 @@ uintptr_t memman64_alloc_4k(struct MEMMAN64 *man, size_t size)
 	return memman64_alloc(man, size);
 }
 
+uintptr_t memman64_alloc_at_4k(struct MEMMAN64 *man, uintptr_t addr, size_t size)
+{
+	uint32_t i;
+	uintptr_t end;
+	uintptr_t free_start;
+	uintptr_t free_end;
+
+	addr = align_down64(addr, MEMMAN64_PAGE_SIZE);
+	size = (size_t) align_up64((uintptr_t) size, MEMMAN64_PAGE_SIZE);
+	end = addr + size;
+	if (size == 0 || end <= addr) {
+		return 0;
+	}
+	for (i = 0; i < man->frees; i++) {
+		free_start = man->free[i].addr;
+		free_end = free_start + man->free[i].size;
+		if (free_start <= addr && end <= free_end) {
+			if (free_start == addr && free_end == end) {
+				man->frees--;
+				for (; i < man->frees; i++) {
+					man->free[i] = man->free[i + 1];
+				}
+			} else if (free_start == addr) {
+				man->free[i].addr = end;
+				man->free[i].size = free_end - end;
+			} else if (free_end == end) {
+				man->free[i].size = addr - free_start;
+			} else if (man->frees < MEMMAN64_FREES) {
+				for (uint32_t j = man->frees; j > i + 1; j--) {
+					man->free[j] = man->free[j - 1];
+				}
+				man->frees++;
+				man->free[i + 1].addr = end;
+				man->free[i + 1].size = free_end - end;
+				man->free[i].size = addr - free_start;
+			} else {
+				return 0;
+			}
+			return addr;
+		}
+	}
+	return 0;
+}
+
 int memman64_free_4k(struct MEMMAN64 *man, uintptr_t addr, size_t size)
 {
 	size = (size_t) align_up64((uintptr_t) size, MEMMAN64_PAGE_SIZE);
