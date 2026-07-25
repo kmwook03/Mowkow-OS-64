@@ -1,25 +1,41 @@
 #include <mpport64.h>
 
 #include "py/builtin.h"
+#include "py/compile.h"
 #include "py/cstack.h"
 #include "py/gc.h"
 #include "py/lexer.h"
 #include "py/mperrno.h"
 #include "py/mpstate.h"
+#include "py/parse.h"
+#include "py/reader.h"
 #include "py/runtime.h"
 #include "shared/runtime/gchelper.h"
 #include "shared/runtime/pyexec.h"
 
 #include <console64.h>
+#include <fd64.h>
+#include <memory64.h>
 #include <stdint.h>
 
-#define MPPORT_GC_HEAP_SIZE (256 * 1024)
+/*
+ * Right-sized (Stage 4, python_porting.md) from a real measured workload
+ * rather than the Stage 0.6 guess: a synthetic script mixing recursion
+ * (fib(15)), a 200-entry dict of small lists, a 300-element list
+ * comprehension, 100 class instances, string-building, and exception
+ * handling peaked at ~153KiB of the old 256KiB heap (gc.mem_free() before
+ * vs after gc.collect()). 512KiB gives ~3x headroom over that peak,
+ * matching the original 512KiB-1MiB range python_porting.md's Stage 0.6
+ * suggested (this port under-shot it for .bss-headroom reasons that
+ * MEMMAN64_EARLY_START being raised alongside this, memory64.h, resolves).
+ */
+#define MPPORT_GC_HEAP_SIZE (512 * 1024)
 
 extern uint8_t stack_bottom[];
 
 static uint8_t gc_heap[MPPORT_GC_HEAP_SIZE];
 
-void mpport_repl(void)
+static void mpport_init(void)
 {
 	int here;
 	size_t available;
@@ -33,6 +49,11 @@ void mpport_repl(void)
 	mp_cstack_init_with_sp_here(available);
 	gc_init(gc_heap, gc_heap + sizeof(gc_heap));
 	mp_init();
+}
+
+void mpport_repl(void)
+{
+	mpport_init();
 
 	console64_repl_set_active(1);
 	pyexec_friendly_repl();
@@ -43,8 +64,46 @@ void mpport_repl(void)
 
 void mpport_run_file(const char *path)
 {
-	(void) path;
-	console64_puts("MicroPython script execution not wired up yet (python_porting.md Stage 3)\n");
+	struct FDHANDLE64 fh;
+	uintptr_t buf_addr;
+	size_t size;
+	nlr_buf_t nlr;
+
+	if (fd64_open(&fh, path) == 0) {
+		console64_puts("file not found\n");
+		return;
+	}
+
+	size = fh.finfo->size;
+	buf_addr = memman64_alloc_4k(&memman64, size);
+	if (buf_addr == 0) {
+		console64_puts("out of memory\n");
+		return;
+	}
+	fd64_read(&fh, (void *) buf_addr, size);
+
+	mpport_init();
+
+	if (nlr_push(&nlr) == 0) {
+		mp_reader_t reader;
+		mp_lexer_t *lex;
+		qstr source_name;
+		mp_parse_tree_t parse_tree;
+		mp_obj_t module_fun;
+
+		mp_reader_new_mem(&reader, (const uint8_t *) buf_addr, size, 0);
+		lex = mp_lexer_new(qstr_from_str(path), reader);
+		source_name = lex->source_name;
+		parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
+		module_fun = mp_compile(&parse_tree, source_name, false);
+		mp_call_function_0(module_fun);
+		nlr_pop();
+	} else {
+		mp_obj_print_exception(&mp_plat_print, MP_OBJ_FROM_PTR(nlr.ret_val));
+	}
+
+	mp_deinit();
+	memman64_free_4k(&memman64, buf_addr, size);
 }
 
 /*

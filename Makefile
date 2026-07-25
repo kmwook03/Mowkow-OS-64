@@ -96,7 +96,7 @@ MPY_CORE_SRCS = $(addprefix $(MPY_PY_DIR)/, $(addsuffix .c, $(MPY_CORE_BASENAMES
 MPY_QSTR_SRCS = $(filter-out $(MPY_PY_DIR)/nlr%.c, $(MPY_CORE_SRCS)) \
 	$(MPY_DIR)/shared/runtime/pyexec.c \
 	$(MPY_DIR)/shared/readline/readline.c
-MPY_PORT_SRCS = $(wildcard $(SRC64_DIR)/mpport/*.c)
+MPY_PORT_SRCS = $(wildcard $(SRC64_DIR)/mpport/*.c) $(wildcard $(SRC64_DIR)/mpport/libc/*.c)
 MPY_GEN_DIR = $(BUILD64_DIR)/mpgen
 # core files include these as "genhdr/xxx.h" (upstream's own convention),
 # so the generated headers must live in a genhdr/ subdir under a -I root.

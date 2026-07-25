@@ -11,6 +11,12 @@
 #define MICROPY_HELPER_REPL     (1)
 #define MICROPY_STACK_CHECK     (1)
 /*
+ * `import gc` with gc.mem_free()/gc.mem_alloc() -- Stage 4 uses this to
+ * right-size the GC heap from real usage instead of the Stage 0.6 guess;
+ * kept on afterward since it's a standard, expected capability.
+ */
+#define MICROPY_PY_GC           (1)
+/*
  * Needed at link time: shared/runtime/pyexec.c (Stage 2's REPL loop) calls
  * mp_hal_set_interrupt_char() unconditionally, which shared/runtime/
  * interrupt_char.c only defines when this is on. Only the bookkeeping is
@@ -55,10 +61,26 @@
 #define MICROPY_ENABLE_EXTERNAL_IMPORT (0)
 
 /*
- * MICROPY_FLOAT_IMPL left at its MINIMUM-level default (NONE), so
- * MICROPY_PY_BUILTINS_FLOAT is 0. Flip to MICROPY_FLOAT_IMPL_DOUBLE in
- * Stage 4, once FPU/SSE (Stage 0.1) is proven under real float workloads.
+ * Stage 4: FPU/SSE (Stage 0.1) proven under real float workloads, so
+ * MICROPY_PY_BUILTINS_FLOAT is enabled via a real double-precision impl
+ * (x86_64 has hardware double support, no reason to restrict to float).
+ * MICROPY_PY_BUILTINS_COMPLEX defaults to tracking FLOAT -- kept off
+ * explicitly, out of scope (plan only calls for re-enabling FLOAT), and
+ * complex support would pull in a much bigger set of real transcendental
+ * math functions (csqrt, cexp, ...) than the two (pow, nan) FLOAT alone
+ * needed.
  */
+#define MICROPY_FLOAT_IMPL      (MICROPY_FLOAT_IMPL_DOUBLE)
+#define MICROPY_PY_BUILTINS_COMPLEX (0)
+
+/*
+ * x86_64-elf-gcc's _Float16 support (default on, since it defines
+ * __FLT16_MAX__) needs __extendhfsf2/__truncsfhf2 from compiler-rt/libgcc,
+ * which we don't link (-nostdlib, no -lgcc). Confirmed via undefined
+ * references at link time. Falls back to binary.c's software conversion
+ * path instead, which needs no runtime helpers.
+ */
+#define MICROPY_FLOAT_USE_NATIVE_FLT16 (0)
 
 /*
  * x86_64-elf-gcc (this toolchain) ships no libc, so no <alloca.h> exists

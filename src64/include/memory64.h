@@ -5,7 +5,17 @@
 #include <stdint.h>
 
 #define MEMMAN64_FREES 4090
-#define MEMMAN64_EARLY_START ((uintptr_t) 0x00200000)
+/*
+ * Raised from 0x200000 (Stage 4, python_porting.md): with the MicroPython
+ * GC heap now baked into the kernel's .bss, the old 2MiB boundary left
+ * only ~250KiB of headroom for it. Nothing else is hardcoded against this
+ * address (identity-mapped 2MB pages cover the whole range regardless) --
+ * it's purely a policy line for where kernel-static .bss ends and the
+ * dynamically-managed early allocator begins. 4MiB is generous against a
+ * 512MB system, matching the same "budget generously" approach as
+ * KERNEL64_SECTORS (Stage 0.3).
+ */
+#define MEMMAN64_EARLY_START ((uintptr_t) 0x00400000)
 #define MEMMAN64_EARLY_END   ((uintptr_t) 0x20000000)
 #define MEMMAN64_PAGE_SIZE   ((size_t) 0x1000)
 

@@ -585,7 +585,7 @@ static void execute_command(void)
 		return;
 	}
 	if (str_eq(input_line, "help")) {
-		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py\n");
+		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY\n");
 	} else if (str_eq(input_line, "clear")) {
 		clear_screen();
 	} else if (str_eq(input_line, "ticks")) {
@@ -655,6 +655,8 @@ static void execute_command(void)
 		console64_puts("\n");
 	} else if (str_eq(input_line, "py")) {
 		mpport_repl();
+	} else if (str_starts_with(input_line, "py ")) {
+		mpport_run_file(input_line + 3);
 	} else {
 		console64_puts("unknown command\n");
 	}
