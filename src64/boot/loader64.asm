@@ -57,13 +57,22 @@ print_string:
 ; BIOS int 13h AH=42h caps a single extended-read request at 128 sectors
 ; (64 KiB) on this BIOS -- confirmed empirically, request silently fails
 ; past that. Loop in <=128-sector chunks to support any KERNEL_SECTORS size.
+;
+; int 0x13 does NOT preserve EAX across calls (SeaBIOS uses it internally
+; for LBA math) -- confirmed empirically via DAP dumps: keeping the running
+; LBA accumulator live in eax across the interrupt made it revert to a
+; stale value after the 3rd call (49,177,305,177,305,... instead of
+; continuing 433,561,689,817,...), corrupting every chunk from the 4th
+; onward. CX (sectors left) and BX (segment) verified to survive fine, so
+; only the LBA accumulator needs to move to memory.
 read_kernel:
 	mov cx, KERNEL_SECTORS
 	mov bx, kernel_load_real >> 4
-	mov eax, KERNEL_LBA
+	mov dword [current_lba], KERNEL_LBA
 .loop:
 	mov word [kernel_packet_off], 0
 	mov [kernel_packet_seg], bx
+	mov eax, [current_lba]
 	mov [kernel_packet_lba], eax
 	cmp cx, 128
 	jbe .last_chunk
@@ -79,7 +88,9 @@ read_kernel:
 	jc disk_error
 	movzx edx, word [kernel_packet_count]
 	sub cx, dx
+	mov eax, [current_lba]
 	add eax, edx
+	mov [current_lba], eax
 	shl edx, 5
 	add bx, dx
 	test cx, cx
@@ -149,6 +160,9 @@ enable_a20:
 
 boot_drive:
 	db 0
+
+current_lba:
+	dd 0
 
 boot_info:
 .cyls:

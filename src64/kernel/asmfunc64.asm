@@ -53,6 +53,7 @@ global asm_exception31
 global asm_irq20
 global asm_irq21
 global asm_syscall80
+global stack_bottom
 extern _bss_start
 extern _bss_end
 global enter_user_mode64

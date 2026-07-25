@@ -5,6 +5,7 @@
 #include <fifo64.h>
 #include <hangul64.h>
 #include <memory64.h>
+#include <mpport64.h>
 #include <mtask64.h>
 #include <process64.h>
 #include <timer64.h>
@@ -33,6 +34,7 @@ static char input_line[CONSOLE_INPUT_MAX];
 static uint16_t input_len;
 static int lang_hangul;
 static int shift_down;
+static int ctrl_down;
 static struct HANGUL64 composing;
 static const uint8_t *hangul_font;
 
@@ -191,6 +193,8 @@ static void newline(void)
 	scroll_if_needed();
 }
 
+static void erase_prev_visual(uint16_t width);
+
 static void put_utf8_char(const char *s, int len)
 {
 	unsigned int unicode;
@@ -203,6 +207,10 @@ static void put_utf8_char(const char *s, int len)
 		return;
 	}
 	if (len == 1 && s[0] == '\r') {
+		return;
+	}
+	if (len == 1 && s[0] == '\b') {
+		erase_prev_visual(FONT_W);
 		return;
 	}
 	width = FONT_W;
@@ -577,7 +585,7 @@ static void execute_command(void)
 		return;
 	}
 	if (str_eq(input_line, "help")) {
-		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO\n");
+		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py\n");
 	} else if (str_eq(input_line, "clear")) {
 		clear_screen();
 	} else if (str_eq(input_line, "ticks")) {
@@ -645,6 +653,8 @@ static void execute_command(void)
 		console64_puts("exit ");
 		print_uint64((uint64_t) status);
 		console64_puts("\n");
+	} else if (str_eq(input_line, "py")) {
+		mpport_repl();
 	} else {
 		console64_puts("unknown command\n");
 	}
@@ -756,6 +766,14 @@ void console64_process_key(uint8_t scancode)
 		shift_down = 0;
 		return;
 	}
+	if (scancode == 0x1d) {
+		ctrl_down = 1;
+		return;
+	}
+	if (scancode == 0x9d) {
+		ctrl_down = 0;
+		return;
+	}
 	if ((scancode & 0x80) != 0) {
 		return;
 	}
@@ -771,6 +789,13 @@ void console64_process_key(uint8_t scancode)
 		c = translate_key(scancode);
 		if (c == '\0') {
 			return;
+		}
+		if (ctrl_down) {
+			if (c >= 'a' && c <= 'z') {
+				c = (char) (c - 'a' + 1);
+			} else if (c >= 'A' && c <= 'Z') {
+				c = (char) (c - 'A' + 1);
+			}
 		}
 		repl_queue_push(c);
 		return;
