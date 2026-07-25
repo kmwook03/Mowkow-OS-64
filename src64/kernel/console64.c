@@ -2,6 +2,7 @@
 #include <bootinfo64.h>
 #include <console64.h>
 #include <fd64.h>
+#include <fifo64.h>
 #include <hangul64.h>
 #include <memory64.h>
 #include <mtask64.h>
@@ -34,6 +35,35 @@ static int lang_hangul;
 static int shift_down;
 static struct HANGUL64 composing;
 static const uint8_t *hangul_font;
+
+#define REPL_QUEUE_SIZE 64
+static char repl_queue[REPL_QUEUE_SIZE];
+static uint32_t repl_queue_head;
+static uint32_t repl_queue_tail;
+static int repl_active;
+static struct FIFO64 *repl_event_fifo;
+
+static void repl_queue_push(char c)
+{
+	uint32_t next;
+
+	next = (repl_queue_tail + 1) % REPL_QUEUE_SIZE;
+	if (next == repl_queue_head) {
+		return;
+	}
+	repl_queue[repl_queue_tail] = c;
+	repl_queue_tail = next;
+}
+
+static int repl_queue_pop(char *out)
+{
+	if (repl_queue_head == repl_queue_tail) {
+		return 0;
+	}
+	*out = repl_queue[repl_queue_head];
+	repl_queue_head = (repl_queue_head + 1) % REPL_QUEUE_SIZE;
+	return 1;
+}
 
 static const char keymap0[128] = {
 	[0x02] = '1', [0x03] = '2', [0x04] = '3', [0x05] = '4',
@@ -729,6 +759,22 @@ void console64_process_key(uint8_t scancode)
 	if ((scancode & 0x80) != 0) {
 		return;
 	}
+	if (repl_active) {
+		if (scancode == 0x1c) {
+			repl_queue_push('\r');
+			return;
+		}
+		if (scancode == 0x0e) {
+			repl_queue_push('\b');
+			return;
+		}
+		c = translate_key(scancode);
+		if (c == '\0') {
+			return;
+		}
+		repl_queue_push(c);
+		return;
+	}
 	if (scancode == 0x1c) {
 		execute_command();
 		return;
@@ -750,5 +796,39 @@ void console64_process_key(uint8_t scancode)
 		process_hangul_key(c);
 	} else {
 		not_korean(c);
+	}
+}
+
+void console64_set_event_fifo(struct FIFO64 *fifo)
+{
+	repl_event_fifo = fifo;
+}
+
+void console64_repl_set_active(int active)
+{
+	repl_active = active;
+	repl_queue_head = 0;
+	repl_queue_tail = 0;
+}
+
+int console64_repl_getchar(void)
+{
+	struct EVENT64 event;
+	char c;
+
+	for (;;) {
+		if (repl_queue_pop(&c)) {
+			return (unsigned char) c;
+		}
+		io_cli();
+		if (repl_event_fifo != NULL && fifo64_get(repl_event_fifo, &event) == 0) {
+			io_sti();
+			if (event.type == EVENT64_KEYBOARD) {
+				console64_process_key((uint8_t) event.data);
+			}
+		} else {
+			task_sleep64(task_now64());
+			io_sti();
+		}
 	}
 }

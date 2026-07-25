@@ -40,7 +40,7 @@ X64_ASMFLAGS = -f elf64
 X64_BOOT_ASMFLAGS = -f bin
 X64_LDFLAGS = -nostdlib -T $(SRC64_DIR)/kernel/kernel64.ld
 STAGE2_64_SECTORS = 16
-KERNEL64_SECTORS = 80
+KERNEL64_SECTORS = 800
 FAT12_64_RESERVED_SECTORS = $(shell expr 1 + $(STAGE2_64_SECTORS))
 FAT12_64_ROOT_LBA = $(shell expr $(FAT12_64_RESERVED_SECTORS) + 18)
 FAT12_64_DATA_LBA = $(shell expr $(FAT12_64_ROOT_LBA) + 14)
@@ -198,6 +198,12 @@ $(KERNEL64_ELF) : $(KERNEL64_OBJS) $(SRC64_DIR)/kernel/kernel64.ld
 
 $(KERNEL64_BIN) : $(KERNEL64_ELF)
 	$(X64_OBJCOPY) -O binary $< $@
+	@size=$$(stat -c%s $@); budget=$$(expr $(KERNEL64_SECTORS) \* 512); \
+	if [ $$size -gt $$budget ]; then \
+		echo "error: $@ is $$size bytes, exceeds KERNEL64_SECTORS budget of $$budget bytes"; \
+		echo "raise KERNEL64_SECTORS in Makefile"; \
+		exit 1; \
+	fi
 
 $(BUILD64_DIR)/app/crt/%.o : $(APP64_DIR)/crt/%.S
 	@$(MKDIR) $(dir $@)

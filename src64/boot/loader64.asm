@@ -54,12 +54,36 @@ print_string:
 .done:
 	ret
 
+; BIOS int 13h AH=42h caps a single extended-read request at 128 sectors
+; (64 KiB) on this BIOS -- confirmed empirically, request silently fails
+; past that. Loop in <=128-sector chunks to support any KERNEL_SECTORS size.
 read_kernel:
+	mov cx, KERNEL_SECTORS
+	mov bx, kernel_load_real >> 4
+	mov eax, KERNEL_LBA
+.loop:
+	mov word [kernel_packet_off], 0
+	mov [kernel_packet_seg], bx
+	mov [kernel_packet_lba], eax
+	cmp cx, 128
+	jbe .last_chunk
+	mov word [kernel_packet_count], 128
+	jmp .do_read
+.last_chunk:
+	mov [kernel_packet_count], cx
+.do_read:
 	mov si, kernel_packet
 	mov ah, 0x42
 	mov dl, [boot_drive]
 	int 0x13
 	jc disk_error
+	movzx edx, word [kernel_packet_count]
+	sub cx, dx
+	add eax, edx
+	shl edx, 5
+	add bx, dx
+	test cx, cx
+	jnz .loop
 	ret
 
 collect_boot_info:
@@ -159,9 +183,13 @@ align 4
 kernel_packet:
 	db 0x10
 	db 0
+kernel_packet_count:
 	dw KERNEL_SECTORS
+kernel_packet_off:
 	dw kernel_load_real & 0xffff
+kernel_packet_seg:
 	dw kernel_load_real >> 4
+kernel_packet_lba:
 	dd KERNEL_LBA
 	dd 0
 
