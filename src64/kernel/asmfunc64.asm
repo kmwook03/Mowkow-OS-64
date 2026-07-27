@@ -53,6 +53,9 @@ global asm_exception31
 global asm_irq20
 global asm_irq21
 global asm_syscall80
+global stack_bottom
+extern _bss_start
+extern _bss_end
 global enter_user_mode64
 global leave_user_mode64
 extern kernel64_main
@@ -63,9 +66,21 @@ extern process64_current_exit_rsp
 extern process64_current_exit_status
 
 section .text
+; copy_kernel (loader64.asm) always copies a fixed KERNEL_SECTORS*512-byte
+; block from disk, which now reaches past .bss's LMA and fills it with
+; whatever file data sits there on disk instead of zeros. Zero it explicitly
+; before any C code touches globals.
 _start:
 	cli
+	cld
 	mov rsp, stack_top
+	mov r12, rdi
+	mov rdi, _bss_start
+	mov rcx, _bss_end
+	sub rcx, rdi
+	xor eax, eax
+	rep stosb
+	mov rdi, r12
 	call kernel64_main
 
 .halt:
@@ -405,7 +420,7 @@ leave_user_mode64:
 section .bss
 align 16
 stack_bottom:
-	resb 16384
+	resb 131072
 stack_top:
 
 section .note.GNU-stack noalloc noexec nowrite progbits

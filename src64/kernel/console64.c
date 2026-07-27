@@ -2,8 +2,10 @@
 #include <bootinfo64.h>
 #include <console64.h>
 #include <fd64.h>
+#include <fifo64.h>
 #include <hangul64.h>
 #include <memory64.h>
+#include <mpport64.h>
 #include <mtask64.h>
 #include <process64.h>
 #include <timer64.h>
@@ -32,8 +34,38 @@ static char input_line[CONSOLE_INPUT_MAX];
 static uint16_t input_len;
 static int lang_hangul;
 static int shift_down;
+static int ctrl_down;
 static struct HANGUL64 composing;
 static const uint8_t *hangul_font;
+
+#define REPL_QUEUE_SIZE 64
+static char repl_queue[REPL_QUEUE_SIZE];
+static uint32_t repl_queue_head;
+static uint32_t repl_queue_tail;
+static int repl_active;
+static struct FIFO64 *repl_event_fifo;
+
+static void repl_queue_push(char c)
+{
+	uint32_t next;
+
+	next = (repl_queue_tail + 1) % REPL_QUEUE_SIZE;
+	if (next == repl_queue_head) {
+		return;
+	}
+	repl_queue[repl_queue_tail] = c;
+	repl_queue_tail = next;
+}
+
+static int repl_queue_pop(char *out)
+{
+	if (repl_queue_head == repl_queue_tail) {
+		return 0;
+	}
+	*out = repl_queue[repl_queue_head];
+	repl_queue_head = (repl_queue_head + 1) % REPL_QUEUE_SIZE;
+	return 1;
+}
 
 static const char keymap0[128] = {
 	[0x02] = '1', [0x03] = '2', [0x04] = '3', [0x05] = '4',
@@ -161,6 +193,8 @@ static void newline(void)
 	scroll_if_needed();
 }
 
+static void erase_prev_visual(uint16_t width);
+
 static void put_utf8_char(const char *s, int len)
 {
 	unsigned int unicode;
@@ -173,6 +207,10 @@ static void put_utf8_char(const char *s, int len)
 		return;
 	}
 	if (len == 1 && s[0] == '\r') {
+		return;
+	}
+	if (len == 1 && s[0] == '\b') {
+		erase_prev_visual(FONT_W);
 		return;
 	}
 	width = FONT_W;
@@ -547,14 +585,14 @@ static void execute_command(void)
 		return;
 	}
 	if (str_eq(input_line, "help")) {
-		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO\n");
-	} else if (str_eq(input_line, "clear")) {
+		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY\n");
+	} else if (str_eq(input_line, "clear") || str_eq(input_line, "지우기")) {
 		clear_screen();
 	} else if (str_eq(input_line, "ticks")) {
 		console64_puts("ticks ");
 		print_uint64(timerctl64.count);
 		console64_puts("\n");
-	} else if (str_eq(input_line, "mem")) {
+	} else if (str_eq(input_line, "mem") || str_eq(input_line, "메모리")) {
 		uintptr_t addr;
 
 		console64_puts("free ");
@@ -567,7 +605,7 @@ static void execute_command(void)
 		if (addr != 0) {
 			memman64_free_4k(&memman64, addr, 4096);
 		}
-	} else if (str_eq(input_line, "tasks")) {
+	} else if (str_eq(input_line, "tasks") || str_eq(input_line, "태스크")) {
 		console64_puts("switches ");
 		print_uint64(taskctl64.switches);
 		console64_puts(" current-level ");
@@ -591,7 +629,7 @@ static void execute_command(void)
 		if (count == 0) {
 			console64_puts("no files\n");
 		}
-	} else if (str_eq(input_line, "type readme.txt")) {
+	} else if (str_eq(input_line, "type readme.txt") || str_eq(input_line, "읽기 readme.txt")) {
 		struct FDHANDLE64 fh;
 		char buf[65];
 		size_t n;
@@ -608,13 +646,17 @@ static void execute_command(void)
 			}
 			console64_puts("\n");
 		}
-	} else if (str_starts_with(input_line, "run ")) {
+	} else if (str_starts_with(input_line, "run ") || str_starts_with(input_line, "실행 ")) {
 		int status;
 
 		status = process64_exec_file(input_line + 4, input_line + 4);
 		console64_puts("exit ");
 		print_uint64((uint64_t) status);
 		console64_puts("\n");
+	} else if (str_eq(input_line, "py") || str_eq(input_line, "파이썬")) {
+		mpport_repl();
+	} else if (str_starts_with(input_line, "py ")) {
+		mpport_run_file(input_line + 3);
 	} else {
 		console64_puts("unknown command\n");
 	}
@@ -641,8 +683,10 @@ void console64_init(const struct BOOTINFO64 *boot_info)
 	shift_down = 0;
 	hangul64_init(&composing);
 	clear_screen();
-	console64_puts("Mowkow OS x86_64 console\n");
-	console64_puts("Hangul input is default. Shift+Space toggles English.\n");
+	// console64_puts("Mowkow OS x86_64 console\n");
+	console64_puts("머꼬 OS x86_64 콘솔\n");
+	// console64_puts("Hangul input is default. Shift+Space toggles English.\n");
+	console64_puts("한글 입력이 기본입니다. Shift+Space로 영어 입력으로 전환합니다.\n");
 	prompt();
 }
 
@@ -726,7 +770,38 @@ void console64_process_key(uint8_t scancode)
 		shift_down = 0;
 		return;
 	}
+	if (scancode == 0x1d) {
+		ctrl_down = 1;
+		return;
+	}
+	if (scancode == 0x9d) {
+		ctrl_down = 0;
+		return;
+	}
 	if ((scancode & 0x80) != 0) {
+		return;
+	}
+	if (repl_active) {
+		if (scancode == 0x1c) {
+			repl_queue_push('\r');
+			return;
+		}
+		if (scancode == 0x0e) {
+			repl_queue_push('\b');
+			return;
+		}
+		c = translate_key(scancode);
+		if (c == '\0') {
+			return;
+		}
+		if (ctrl_down) {
+			if (c >= 'a' && c <= 'z') {
+				c = (char) (c - 'a' + 1);
+			} else if (c >= 'A' && c <= 'Z') {
+				c = (char) (c - 'A' + 1);
+			}
+		}
+		repl_queue_push(c);
 		return;
 	}
 	if (scancode == 0x1c) {
@@ -750,5 +825,39 @@ void console64_process_key(uint8_t scancode)
 		process_hangul_key(c);
 	} else {
 		not_korean(c);
+	}
+}
+
+void console64_set_event_fifo(struct FIFO64 *fifo)
+{
+	repl_event_fifo = fifo;
+}
+
+void console64_repl_set_active(int active)
+{
+	repl_active = active;
+	repl_queue_head = 0;
+	repl_queue_tail = 0;
+}
+
+int console64_repl_getchar(void)
+{
+	struct EVENT64 event;
+	char c;
+
+	for (;;) {
+		if (repl_queue_pop(&c)) {
+			return (unsigned char) c;
+		}
+		io_cli();
+		if (repl_event_fifo != NULL && fifo64_get(repl_event_fifo, &event) == 0) {
+			io_sti();
+			if (event.type == EVENT64_KEYBOARD) {
+				console64_process_key((uint8_t) event.data);
+			}
+		} else {
+			task_sleep64(task_now64());
+			io_sti();
+		}
 	}
 }

@@ -62,6 +62,17 @@ static void serial_print_uint(uint64_t value)
 	}
 }
 
+static void serial_fpu_smoke(void)
+{
+	volatile double d;
+
+	d = 1.0;
+	d *= 2.0;
+	serial_print("fpu smoke=");
+	serial_print_uint((uint64_t) d);
+	serial_print("\r\n");
+}
+
 static void serial_fat12_smoke(void)
 {
 	struct FDHANDLE64 fh;
@@ -120,6 +131,21 @@ static void process_event64(const struct EVENT64 *event)
 	}
 }
 
+extern uint8_t _bss_start[];
+
+static void serial_bss_smoke(void)
+{
+	serial_print("bss probe=");
+	serial_print_uint(_bss_start[0]);
+	serial_putc(' ');
+	serial_print_uint(_bss_start[1]);
+	serial_putc(' ');
+	serial_print_uint(_bss_start[2]);
+	serial_putc(' ');
+	serial_print_uint(_bss_start[3]);
+	serial_print("\r\n");
+}
+
 void kernel64_main(const struct BOOTINFO64 *boot_info)
 {
 	struct EVENT64 event;
@@ -127,6 +153,9 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 	serial_init();
 	serial_print("Mowkow OS x86_64 kernel64_main\r\n");
 	init_gdtidt64();
+	serial_bss_smoke();
+	init_fpu64();
+	serial_fpu_smoke();
 	init_memory64();
 	fd64_init();
 	serial_fat12_smoke();
@@ -134,6 +163,7 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 	console64_init(boot_info);
 	task_init64();
 	fifo64_init(&event_fifo, EVENT_BUF_SIZE, event_buf, task_now64());
+	console64_set_event_fifo(&event_fifo);
 	init_pit64(&event_fifo);
 	init_keyboard64(&event_fifo);
 	init_pic64();

@@ -9,6 +9,8 @@ APP64_DIR = app64
 SRC64_DIR = src64
 BUILD64_DIR = build64
 IMG64_DIR = img64
+MPY_DIR = third_party/micropython
+MPY_PY_DIR = $(MPY_DIR)/py
 
 FONT_DIR = src/graphics/font
 
@@ -40,7 +42,7 @@ X64_ASMFLAGS = -f elf64
 X64_BOOT_ASMFLAGS = -f bin
 X64_LDFLAGS = -nostdlib -T $(SRC64_DIR)/kernel/kernel64.ld
 STAGE2_64_SECTORS = 16
-KERNEL64_SECTORS = 80
+KERNEL64_SECTORS = 800
 FAT12_64_RESERVED_SECTORS = $(shell expr 1 + $(STAGE2_64_SECTORS))
 FAT12_64_ROOT_LBA = $(shell expr $(FAT12_64_RESERVED_SECTORS) + 18)
 FAT12_64_DATA_LBA = $(shell expr $(FAT12_64_ROOT_LBA) + 14)
@@ -68,7 +70,55 @@ KERNEL64_C_SRCS = $(wildcard $(SRC64_DIR)/kernel/*.c) $(wildcard $(SRC64_DIR)/dr
 KERNEL64_ASM_SRCS = $(wildcard $(SRC64_DIR)/kernel/*.asm)
 KERNEL64_C_OBJS = $(patsubst $(SRC64_DIR)/%.c, $(BUILD64_DIR)/%.o, $(KERNEL64_C_SRCS))
 KERNEL64_ASM_OBJS = $(patsubst $(SRC64_DIR)/kernel/%.asm, $(BUILD64_DIR)/kernel/%.o, $(KERNEL64_ASM_SRCS))
-KERNEL64_OBJS = $(KERNEL64_ASM_OBJS) $(KERNEL64_C_OBJS)
+# PY_CORE_O_BASENAME from third_party/micropython/py/py.mk, kept in sync by hand.
+MPY_CORE_BASENAMES = \
+	mpstate nlr nlrx86 nlrx64 nlrthumb nlraarch64 nlrmips nlrpowerpc nlrxtensa nlrrv32 \
+	nlrrv64 nlrsetjmp malloc gc pystack qstr vstr mpprint unicode mpz reader lexer parse \
+	scope compile emitcommon emitbc asmbase asmx64 emitnx64 asmx86 emitnx86 asmthumb \
+	emitnthumb emitinlinethumb asmarm emitnarm asmxtensa emitnxtensa emitinlinextensa \
+	emitnxtensawin asmrv32 emitnrv32 emitinlinerv32 emitndebug formatfloat parsenumbase \
+	parsenum emitglue persistentcode runtime runtime_utils scheduler nativeglue pairheap \
+	ringbuf cstack stackctrl argcheck warning profile map obj objarray objattrtuple objbool \
+	objboundmeth objcell objclosure objcode objcomplex objdeque objdict objenumerate \
+	objexcept objfilter objfloat objfun objgenerator objgetitemiter objint objint_longlong \
+	objint_mpz objlist objmap objmodule objobject objpolyiter objproperty objnone \
+	objnamedtuple objrange objreversed objringio objset objsingleton objslice objstr \
+	objstrunicode objstringio objtemplate objtuple objtype objzip opmethods sequence stream \
+	binary builtinimport builtinevex builtinhelp modarray modbuiltins modcollections modgc \
+	modio modmath modcmath modmicropython modstring modstruct modsys moderrno modthread \
+	modweakref vm bc showbc repl smallint frozenmod
+
+MPY_CORE_SRCS = $(addprefix $(MPY_PY_DIR)/, $(addsuffix .c, $(MPY_CORE_BASENAMES)))
+# shared/runtime/pyexec.c uses MP_QSTR_ tokens (e.g. MP_QSTR___file__), and
+# shared/readline/readline.c has an MP_REGISTER_ROOT_POINTER() for its
+# history buffer -- both need scanning too or qstrdefs.generated.h /
+# genhdr/root_pointers.h won't have them.
+MPY_QSTR_SRCS = $(filter-out $(MPY_PY_DIR)/nlr%.c, $(MPY_CORE_SRCS)) \
+	$(MPY_DIR)/shared/runtime/pyexec.c \
+	$(MPY_DIR)/shared/readline/readline.c
+MPY_PORT_SRCS = $(wildcard $(SRC64_DIR)/mpport/*.c) $(wildcard $(SRC64_DIR)/mpport/libc/*.c)
+MPY_GEN_DIR = $(BUILD64_DIR)/mpgen
+# core files include these as "genhdr/xxx.h" (upstream's own convention),
+# so the generated headers must live in a genhdr/ subdir under a -I root.
+MPY_GENHDR_DIR = $(MPY_GEN_DIR)/genhdr
+MPY_OBJS_DIR = $(BUILD64_DIR)/upy
+MPY_OBJS = $(patsubst $(MPY_PY_DIR)/%.c, $(MPY_OBJS_DIR)/%.o, $(MPY_CORE_SRCS))
+MPY_PORT_OBJS = $(patsubst $(SRC64_DIR)/mpport/%.c, $(MPY_OBJS_DIR)/mpport/%.o, $(MPY_PORT_SRCS))
+# gc_helper_collect_regs_and_stack() -- portable register-capture + stack
+# scan for gc_collect(), has a real x86_64 path needing no arch-specific
+# asm file. Vendored, reused as-is rather than reimplemented.
+# pyexec.c: shared/runtime/pyexec.c provides pyexec_friendly_repl(), the
+# REPL loop itself (python_porting.md Stage 2); interrupt_char.c backs its
+# Ctrl-C bookkeeping; readline.c is pyexec's line editor. All vendored as-is.
+MPY_SHARED_OBJS = $(MPY_OBJS_DIR)/shared/runtime/gchelper_generic.o \
+	$(MPY_OBJS_DIR)/shared/runtime/pyexec.o \
+	$(MPY_OBJS_DIR)/shared/runtime/interrupt_char.o \
+	$(MPY_OBJS_DIR)/shared/readline/readline.o
+MPY_INCLUDES = -I$(SRC64_DIR)/mpport -I$(SRC64_DIR)/mpport/libc -I$(MPY_DIR) -I$(MPY_PY_DIR) -I$(MPY_GEN_DIR)
+MPY_CFLAGS = $(X64_CFLAGS) $(MPY_INCLUDES)
+MPY_QSTR_CFLAGS = $(MPY_CFLAGS) -DNO_QSTR
+
+KERNEL64_OBJS = $(KERNEL64_ASM_OBJS) $(KERNEL64_C_OBJS) $(MPY_OBJS) $(MPY_PORT_OBJS) $(MPY_SHARED_OBJS)
 KERNEL64_ELF = $(BUILD64_DIR)/kernel/kernel64.elf
 KERNEL64_BIN = $(BUILD64_DIR)/kernel/kernel64.bin
 BOOT64_BIN = $(BUILD64_DIR)/boot/boot64.bin
@@ -198,6 +248,80 @@ $(KERNEL64_ELF) : $(KERNEL64_OBJS) $(SRC64_DIR)/kernel/kernel64.ld
 
 $(KERNEL64_BIN) : $(KERNEL64_ELF)
 	$(X64_OBJCOPY) -O binary $< $@
+	@size=$$(stat -c%s $@); budget=$$(expr $(KERNEL64_SECTORS) \* 512); \
+	if [ $$size -gt $$budget ]; then \
+		echo "error: $@ is $$size bytes, exceeds KERNEL64_SECTORS budget of $$budget bytes"; \
+		echo "raise KERNEL64_SECTORS in Makefile"; \
+		exit 1; \
+	fi
+
+# -- MicroPython qstr/module/root-pointer codegen (python_porting.md Stage 1.4) --
+$(MPY_GENHDR_DIR)/mpversion.h :
+	@$(MKDIR) $(MPY_GENHDR_DIR)
+	$(PYTHON) $(MPY_PY_DIR)/makeversionhdr.py $@
+
+$(MPY_GEN_DIR)/qstr.i.last : $(MPY_QSTR_SRCS) $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDR_DIR)/mpversion.h
+	@$(MKDIR) $(MPY_GEN_DIR)
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py pp $(X64_CC) -E output $@ \
+		cflags $(MPY_QSTR_CFLAGS) cxxflags \
+		sources $(MPY_QSTR_SRCS) \
+		dependencies $(SRC64_DIR)/mpport/mpconfigport.h \
+		changed_sources $(MPY_QSTR_SRCS)
+
+$(MPY_GEN_DIR)/qstr.split : $(MPY_GEN_DIR)/qstr.i.last
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py split qstr $< $(MPY_GEN_DIR)/qstr _
+	touch $@
+
+$(MPY_GEN_DIR)/qstrdefs.collected.h : $(MPY_GEN_DIR)/qstr.split
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py cat qstr _ $(MPY_GEN_DIR)/qstr $@
+
+$(MPY_GEN_DIR)/module.split : $(MPY_GEN_DIR)/qstr.i.last
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py split module $< $(MPY_GEN_DIR)/module _
+	touch $@
+
+$(MPY_GEN_DIR)/moduledefs.collected : $(MPY_GEN_DIR)/module.split
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py cat module _ $(MPY_GEN_DIR)/module $@
+
+$(MPY_GEN_DIR)/root_pointer.split : $(MPY_GEN_DIR)/qstr.i.last
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py split root_pointer $< $(MPY_GEN_DIR)/root_pointer _
+	touch $@
+
+$(MPY_GEN_DIR)/root_pointers.collected : $(MPY_GEN_DIR)/root_pointer.split
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py cat root_pointer _ $(MPY_GEN_DIR)/root_pointer $@
+
+$(MPY_GENHDR_DIR)/qstrdefs.generated.h : $(MPY_GEN_DIR)/qstrdefs.collected.h $(MPY_PY_DIR)/qstrdefs.h $(MPY_PY_DIR)/makeqstrdata.py
+	@$(MKDIR) $(MPY_GENHDR_DIR)
+	cat $(MPY_PY_DIR)/qstrdefs.h $(MPY_GEN_DIR)/qstrdefs.collected.h | sed 's/^Q(.*)/"&"/' | $(X64_CC) -E $(MPY_CFLAGS) - | sed 's/^"\(Q(.*)\)"/\1/' > $(MPY_GEN_DIR)/qstrdefs.preprocessed.h
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdata.py $(MPY_GEN_DIR)/qstrdefs.preprocessed.h > $@
+
+$(MPY_GENHDR_DIR)/moduledefs.h : $(MPY_GEN_DIR)/moduledefs.collected $(MPY_PY_DIR)/makemoduledefs.py
+	@$(MKDIR) $(MPY_GENHDR_DIR)
+	$(PYTHON) $(MPY_PY_DIR)/makemoduledefs.py $< > $@
+
+$(MPY_GENHDR_DIR)/root_pointers.h : $(MPY_GEN_DIR)/root_pointers.collected $(MPY_PY_DIR)/make_root_pointers.py
+	@$(MKDIR) $(MPY_GENHDR_DIR)
+	$(PYTHON) $(MPY_PY_DIR)/make_root_pointers.py $< > $@
+
+.PHONY : mpy-qstr
+mpy-qstr : $(MPY_GENHDR_DIR)/qstrdefs.generated.h $(MPY_GENHDR_DIR)/moduledefs.h $(MPY_GENHDR_DIR)/root_pointers.h
+
+MPY_GENHDRS = $(MPY_GENHDR_DIR)/qstrdefs.generated.h $(MPY_GENHDR_DIR)/moduledefs.h $(MPY_GENHDR_DIR)/root_pointers.h
+
+$(MPY_OBJS_DIR)/%.o : $(MPY_PY_DIR)/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
+	@$(MKDIR) $(dir $@)
+	$(X64_CC) $(MPY_CFLAGS) -c $< -o $@
+
+$(MPY_OBJS_DIR)/mpport/%.o : $(SRC64_DIR)/mpport/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
+	@$(MKDIR) $(dir $@)
+	$(X64_CC) $(MPY_CFLAGS) -c $< -o $@
+
+$(MPY_OBJS_DIR)/shared/runtime/%.o : $(MPY_DIR)/shared/runtime/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
+	@$(MKDIR) $(dir $@)
+	$(X64_CC) $(MPY_CFLAGS) -c $< -o $@
+
+$(MPY_OBJS_DIR)/shared/readline/%.o : $(MPY_DIR)/shared/readline/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
+	@$(MKDIR) $(dir $@)
+	$(X64_CC) $(MPY_CFLAGS) -c $< -o $@
 
 $(BUILD64_DIR)/app/crt/%.o : $(APP64_DIR)/crt/%.S
 	@$(MKDIR) $(dir $@)
