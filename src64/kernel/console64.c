@@ -586,13 +586,13 @@ static void execute_command(void)
 	}
 	if (str_eq(input_line, "help")) {
 		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY\n");
-	} else if (str_eq(input_line, "clear")) {
+	} else if (str_eq(input_line, "clear") || str_eq(input_line, "지우기")) {
 		clear_screen();
 	} else if (str_eq(input_line, "ticks")) {
 		console64_puts("ticks ");
 		print_uint64(timerctl64.count);
 		console64_puts("\n");
-	} else if (str_eq(input_line, "mem")) {
+	} else if (str_eq(input_line, "mem") || str_eq(input_line, "메모리")) {
 		uintptr_t addr;
 
 		console64_puts("free ");
@@ -605,7 +605,7 @@ static void execute_command(void)
 		if (addr != 0) {
 			memman64_free_4k(&memman64, addr, 4096);
 		}
-	} else if (str_eq(input_line, "tasks")) {
+	} else if (str_eq(input_line, "tasks") || str_eq(input_line, "태스크")) {
 		console64_puts("switches ");
 		print_uint64(taskctl64.switches);
 		console64_puts(" current-level ");
@@ -629,7 +629,7 @@ static void execute_command(void)
 		if (count == 0) {
 			console64_puts("no files\n");
 		}
-	} else if (str_eq(input_line, "type readme.txt")) {
+	} else if (str_eq(input_line, "type readme.txt") || str_eq(input_line, "읽기 readme.txt")) {
 		struct FDHANDLE64 fh;
 		char buf[65];
 		size_t n;
@@ -646,14 +646,14 @@ static void execute_command(void)
 			}
 			console64_puts("\n");
 		}
-	} else if (str_starts_with(input_line, "run ")) {
+	} else if (str_starts_with(input_line, "run ") || str_starts_with(input_line, "실행 ")) {
 		int status;
 
 		status = process64_exec_file(input_line + 4, input_line + 4);
 		console64_puts("exit ");
 		print_uint64((uint64_t) status);
 		console64_puts("\n");
-	} else if (str_eq(input_line, "py")) {
+	} else if (str_eq(input_line, "py") || str_eq(input_line, "파이썬")) {
 		mpport_repl();
 	} else if (str_starts_with(input_line, "py ")) {
 		mpport_run_file(input_line + 3);
@@ -683,8 +683,10 @@ void console64_init(const struct BOOTINFO64 *boot_info)
 	shift_down = 0;
 	hangul64_init(&composing);
 	clear_screen();
-	console64_puts("Mowkow OS x86_64 console\n");
-	console64_puts("Hangul input is default. Shift+Space toggles English.\n");
+	// console64_puts("Mowkow OS x86_64 console\n");
+	console64_puts("머꼬 OS x86_64 콘솔\n");
+	// console64_puts("Hangul input is default. Shift+Space toggles English.\n");
+	console64_puts("한글 입력이 기본입니다. Shift+Space로 영어 입력으로 전환합니다.\n");
 	prompt();
 }
 

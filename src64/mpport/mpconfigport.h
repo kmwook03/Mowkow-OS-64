@@ -89,7 +89,8 @@
  */
 #define MICROPY_NO_ALLOCA (1)
 
-#define MICROPY_HW_BOARD_NAME "Mowkow OS x86_64"
+// #define MICROPY_HW_BOARD_NAME "Mowkow OS x86_64"
+#define MICROPY_HW_BOARD_NAME "머꼬 OS"
 #define MICROPY_HW_MCU_NAME   "x86_64"
 
 /*
