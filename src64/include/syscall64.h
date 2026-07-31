@@ -11,4 +11,8 @@
 #define SYS_FREE   8
 #define SYS_TICKS  9
 
+/* SYS_OPEN flags (no separate SYS_CREATE) */
+#define O_CREAT 1
+#define O_TRUNC 2
+
 #endif

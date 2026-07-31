@@ -80,8 +80,7 @@ long read(int fd, void *buf, size_t len)
 
 int open(const char *path, int flags)
 {
-	(void) flags;
-	return (int) syscall1(SYS_OPEN, (long) path);
+	return (int) syscall2(SYS_OPEN, (long) path, flags);
 }
 
 int close(int fd)

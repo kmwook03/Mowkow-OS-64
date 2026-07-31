@@ -17,13 +17,22 @@
 #define ATA_STATUS_DRQ 0x08
 #define ATA_STATUS_BSY 0x80
 #define ATA_CMD_READ   0x20
+#define ATA_CMD_WRITE  0x30
+#define ATA_CMD_FLUSH  0xe7
 
 #define FD64_SECTOR_SIZE 512
 #define FD64_IMAGE_SECTORS 2880
 
+#define FAT12_EOC 0x0ff0
+/* no RTC driver in src64 yet, so stamp every write with a fixed valid date
+   (2026-01-01 00:00) -- host tools reject 0 as a directory timestamp. */
+#define FD64_FIXED_DATE (((2026 - 1980) << 9) | (1 << 5) | 1)
+#define FD64_FIXED_TIME 0
+
 static uint8_t *disk_image;
-static const uint8_t *fat;
-static const struct FDINFO64 *root;
+static uint8_t *fat;
+static struct FDINFO64 *root;
+static uint8_t dirty[FD64_IMAGE_SECTORS / 8];
 static uint16_t bytes_per_sector;
 static uint8_t sectors_per_cluster;
 static uint16_t reserved_sectors;
@@ -33,6 +42,7 @@ static uint16_t sectors_per_fat;
 static uint32_t root_lba;
 static uint32_t root_sectors;
 static uint32_t data_lba;
+static uint16_t max_cluster;
 static int initialized;
 
 static uint16_t read16(const uint8_t *p)
@@ -77,6 +87,11 @@ static uint16_t ata_in16(void)
 	return value;
 }
 
+static void ata_out16(uint16_t value)
+{
+	__asm__ volatile ("outw %0, %1" : : "a" (value), "Nd" ((uint16_t) ATA_DATA));
+}
+
 static int ata_read_sector(uint32_t lba, uint8_t *dst)
 {
 	uint16_t i;
@@ -100,6 +115,70 @@ static int ata_read_sector(uint32_t lba, uint8_t *dst)
 		dst[i * 2 + 1] = (uint8_t) (word >> 8);
 	}
 	return 0;
+}
+
+static int ata_write_sector(uint32_t lba, const uint8_t *src)
+{
+	uint16_t i;
+
+	if (ata_wait_not_busy() != 0) {
+		return -1;
+	}
+	io_out8(ATA_DRIVE, (uint8_t) (0xe0 | ((lba >> 24) & 0x0f)));
+	io_out8(ATA_SECCOUNT, 1);
+	io_out8(ATA_LBA_LOW, (uint8_t) lba);
+	io_out8(ATA_LBA_MID, (uint8_t) (lba >> 8));
+	io_out8(ATA_LBA_HIGH, (uint8_t) (lba >> 16));
+	io_out8(ATA_COMMAND, ATA_CMD_WRITE);
+	if (ata_wait_drq() != 0) {
+		return -1;
+	}
+	for (i = 0; i < FD64_SECTOR_SIZE / 2; i++) {
+		ata_out16((uint16_t) src[i * 2] | ((uint16_t) src[i * 2 + 1] << 8));
+	}
+	if (ata_wait_not_busy() != 0) {
+		return -1;
+	}
+	io_out8(ATA_COMMAND, ATA_CMD_FLUSH);
+	return ata_wait_not_busy();
+}
+
+static void mark_dirty(const void *ptr, size_t size)
+{
+	uint32_t first;
+	uint32_t last;
+	uint32_t i;
+
+	if (size == 0) {
+		return;
+	}
+	first = (uint32_t) (((const uint8_t *) ptr - disk_image) / FD64_SECTOR_SIZE);
+	last = (uint32_t) (((const uint8_t *) ptr + size - 1 - disk_image) / FD64_SECTOR_SIZE);
+	for (i = first; i <= last && i < FD64_IMAGE_SECTORS; i++) {
+		dirty[i / 8] |= (uint8_t) (1 << (i % 8));
+	}
+}
+
+int fd64_sync(void)
+{
+	uint32_t i;
+	int written;
+
+	if (initialized == 0) {
+		return -1;
+	}
+	written = 0;
+	for (i = 0; i < FD64_IMAGE_SECTORS; i++) {
+		if ((dirty[i / 8] & (1 << (i % 8))) == 0) {
+			continue;
+		}
+		if (ata_write_sector(i, disk_image + i * FD64_SECTOR_SIZE) != 0) {
+			return -1;
+		}
+		dirty[i / 8] &= (uint8_t) ~(1 << (i % 8));
+		written++;
+	}
+	return written;
 }
 
 static int load_disk_image(void)
@@ -155,12 +234,66 @@ static int name_eq83(const struct FDINFO64 *finfo, const uint8_t b[FD64_NAME_LEN
 	return 1;
 }
 
-static const uint8_t *cluster_data(uint16_t cluster)
+static uint8_t *cluster_data(uint16_t cluster)
 {
 	uint32_t lba;
 
 	lba = data_lba + ((uint32_t) cluster - 2) * sectors_per_cluster;
 	return disk_image + lba * bytes_per_sector;
+}
+
+static uint32_t cluster_bytes(void)
+{
+	return (uint32_t) bytes_per_sector * sectors_per_cluster;
+}
+
+static void fat_set(uint16_t cluster, uint16_t value)
+{
+	uint32_t offset;
+	uint32_t copy;
+	uint8_t *p;
+
+	offset = cluster + cluster / 2;
+	value &= 0x0fff;
+	for (copy = 0; copy < fat_count; copy++) {
+		p = disk_image + ((uint32_t) reserved_sectors + copy * sectors_per_fat) *
+			bytes_per_sector + offset;
+		if ((cluster & 1) != 0) {
+			p[0] = (uint8_t) ((p[0] & 0x0f) | ((value << 4) & 0xf0));
+			p[1] = (uint8_t) (value >> 4);
+		} else {
+			p[0] = (uint8_t) value;
+			p[1] = (uint8_t) ((p[1] & 0xf0) | ((value >> 8) & 0x0f));
+		}
+		mark_dirty(p, 2);
+	}
+}
+
+static uint16_t alloc_cluster(void)
+{
+	uint16_t c;
+
+	/* ponytail: linear free-cluster scan from 2 every time; 2835 clusters
+	   max on a 1.44M image, so a free-cluster hint only matters if the
+	   image grows. */
+	for (c = 2; c < max_cluster; c++) {
+		if (fd64_next_cluster(c) == 0) {
+			fat_set(c, 0x0fff);
+			return c;
+		}
+	}
+	return 0;
+}
+
+static void free_chain(uint16_t cluster)
+{
+	uint16_t next;
+
+	while (cluster >= 2 && cluster < FAT12_EOC) {
+		next = fd64_next_cluster(cluster);
+		fat_set(cluster, 0);
+		cluster = next;
+	}
 }
 
 int fd64_init(void)
@@ -188,7 +321,8 @@ int fd64_init(void)
 	root_sectors = ((uint32_t) root_entries * 32 + bytes_per_sector - 1) / bytes_per_sector;
 	data_lba = root_lba + root_sectors;
 	fat = disk_image + (uint32_t) reserved_sectors * bytes_per_sector;
-	root = (const struct FDINFO64 *) (disk_image + root_lba * bytes_per_sector);
+	root = (struct FDINFO64 *) (disk_image + root_lba * bytes_per_sector);
+	max_cluster = (uint16_t) ((FD64_IMAGE_SECTORS - data_lba) / sectors_per_cluster + 2);
 	initialized = 1;
 	return 0;
 }
@@ -356,4 +490,170 @@ int fd64_seek(struct FDHANDLE64 *fh, int64_t offset, int whence)
 		return -1;
 	}
 	return 0;
+}
+
+int fd64_create(struct FDHANDLE64 *fh, const char *name)
+{
+	uint8_t name83[FD64_NAME_LEN];
+	struct FDINFO64 *entry;
+	uint32_t i;
+	uint32_t j;
+
+	if (fh == NULL || initialized == 0) {
+		return 0;
+	}
+	if (fd64_open(fh, name) != 0) {
+		return fd64_truncate(fh, 0) == 0 ? 1 : 0;
+	}
+	make_name83(name83, name);
+	entry = NULL;
+	for (i = 0; i < root_entries; i++) {
+		if (root[i].name[0] == 0x00 || root[i].name[0] == 0xe5) {
+			entry = &root[i];
+			break;
+		}
+	}
+	if (entry == NULL) {
+		/* root directory is fixed-size in FAT12: fail instead of clobbering */
+		fh->finfo = NULL;
+		return 0;
+	}
+	for (j = 0; j < sizeof(struct FDINFO64); j++) {
+		((uint8_t *) entry)[j] = 0;
+	}
+	for (j = 0; j < FD64_NAME_LEN; j++) {
+		if (j < 8) {
+			entry->name[j] = name83[j];
+		} else {
+			entry->ext[j - 8] = name83[j];
+		}
+	}
+	entry->type = 0x20;
+	entry->time = FD64_FIXED_TIME;
+	entry->date = FD64_FIXED_DATE;
+	mark_dirty(entry, sizeof(struct FDINFO64));
+	fh->finfo = entry;
+	fh->pos = 0;
+	fh->cluster = 0;
+	return fd64_sync() < 0 ? 0 : 1;
+}
+
+size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
+{
+	const uint8_t *in;
+	uint8_t *dst;
+	size_t written;
+	size_t chunk;
+	uint32_t cb;
+	uint32_t index;
+	uint32_t offset;
+	uint32_t i;
+	uint16_t cluster;
+	uint16_t next;
+
+	if (fh == NULL || fh->finfo == NULL || src == NULL || initialized == 0 || size == 0) {
+		return 0;
+	}
+	cb = cluster_bytes();
+	if (fh->finfo->clustno == 0) {
+		cluster = alloc_cluster();
+		if (cluster == 0) {
+			return 0;
+		}
+		fh->finfo->clustno = cluster;
+		mark_dirty(fh->finfo, sizeof(struct FDINFO64));
+	}
+	/* ponytail: walk the chain from the start once per call to find the
+	   cluster holding fh->pos; cache it in the handle if appends get hot. */
+	cluster = fh->finfo->clustno;
+	for (index = fh->pos / cb; index > 0; index--) {
+		next = fd64_next_cluster(cluster);
+		if (next < 2 || next >= FAT12_EOC) {
+			next = alloc_cluster();
+			if (next == 0) {
+				return 0;
+			}
+			fat_set(cluster, next);
+		}
+		cluster = next;
+	}
+	fh->cluster = cluster;
+	in = (const uint8_t *) src;
+	written = 0;
+	while (size > 0) {
+		offset = fh->pos % cb;
+		chunk = cb - offset;
+		if (chunk > size) {
+			chunk = size;
+		}
+		dst = cluster_data(fh->cluster) + offset;
+		for (i = 0; i < chunk; i++) {
+			dst[i] = in[i];
+		}
+		mark_dirty(dst, chunk);
+		in += chunk;
+		fh->pos += (uint32_t) chunk;
+		written += chunk;
+		size -= chunk;
+		if (fh->pos > fh->finfo->size) {
+			fh->finfo->size = fh->pos;
+			fh->finfo->date = FD64_FIXED_DATE;
+			fh->finfo->time = FD64_FIXED_TIME;
+			mark_dirty(fh->finfo, sizeof(struct FDINFO64));
+		}
+		if (size > 0) {
+			next = fd64_next_cluster(fh->cluster);
+			if (next < 2 || next >= FAT12_EOC) {
+				next = alloc_cluster();
+				if (next == 0) {
+					break;
+				}
+				fat_set(fh->cluster, next);
+			}
+			fh->cluster = next;
+		}
+	}
+	/* ponytail: write through on every call -- no flush syscall, no data
+	   lost to a QEMU kill. Batch behind an explicit fd64_sync() if PIO
+	   write cost ever shows up. */
+	if (fd64_sync() < 0) {
+		return 0;
+	}
+	return written;
+}
+
+int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size)
+{
+	uint32_t cb;
+	uint32_t keep;
+	uint32_t i;
+	uint16_t cluster;
+	uint16_t next;
+
+	if (fh == NULL || fh->finfo == NULL || initialized == 0 || size > fh->finfo->size) {
+		return -1;
+	}
+	cb = cluster_bytes();
+	keep = (size + cb - 1) / cb;
+	cluster = fh->finfo->clustno;
+	if (keep == 0) {
+		fh->finfo->clustno = 0;
+		free_chain(cluster);
+	} else {
+		for (i = 1; i < keep && cluster >= 2 && cluster < FAT12_EOC; i++) {
+			cluster = fd64_next_cluster(cluster);
+		}
+		if (cluster >= 2 && cluster < FAT12_EOC) {
+			next = fd64_next_cluster(cluster);
+			fat_set(cluster, 0x0fff);
+			free_chain(next);
+		}
+	}
+	fh->finfo->size = size;
+	fh->finfo->date = FD64_FIXED_DATE;
+	fh->finfo->time = FD64_FIXED_TIME;
+	mark_dirty(fh->finfo, sizeof(struct FDINFO64));
+	fh->pos = 0;
+	fh->cluster = fh->finfo->clustno;
+	return fd64_sync() < 0 ? -1 : 0;
 }

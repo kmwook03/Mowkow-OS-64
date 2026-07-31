@@ -98,7 +98,9 @@ int process64_current_exit_status(void)
 	return current_process != NULL ? current_process->exit_status : -1;
 }
 
-static int setup_args(struct PROCESS64 *process, const char *cmdline, uint64_t *argc_out, uintptr_t *argv_out)
+/* returns the initial user rsp: below the argv block, so the app's own
+   frames cannot overwrite its arguments. */
+static uintptr_t setup_args(struct PROCESS64 *process, const char *cmdline, uint64_t *argc_out, uintptr_t *argv_out)
 {
 	uintptr_t sp;
 	uintptr_t argv[PROCESS64_MAX_ARGS];
@@ -131,14 +133,14 @@ static int setup_args(struct PROCESS64 *process, const char *cmdline, uint64_t *
 		argv[argc++] = sp;
 	}
 	sp &= ~(uintptr_t) 0x0f;
-	sp -= (argc + 1) * sizeof(uintptr_t);
+	sp -= ((argc + 1) * sizeof(uintptr_t) + 15) & ~(uintptr_t) 15;
 	for (i = 0; i < argc; i++) {
 		((uintptr_t *) sp)[i] = argv[i];
 	}
 	((uintptr_t *) sp)[argc] = 0;
 	*argc_out = argc;
 	*argv_out = sp;
-	return 0;
+	return sp;
 }
 
 static void process_free_memory(struct PROCESS64 *process)
@@ -156,19 +158,31 @@ static void process_free_memory(struct PROCESS64 *process)
 
 int process64_exec_file(const char *path, const char *cmdline)
 {
+	char name[16];
+	size_t name_len;
 	struct PROCESS64 *process;
 	uintptr_t stack;
 	uintptr_t heap;
+	uintptr_t user_rsp;
 	uint64_t argc;
 	uintptr_t argv;
 	struct TASK64 *task;
 	int status;
 
+	/* "cat test.txt" arrives as one string: the executable is the first
+	   token, the rest is argv for setup_args(). */
+	for (name_len = 0; name_len < sizeof(name) - 1; name_len++) {
+		if (path[name_len] == '\0' || path[name_len] == ' ') {
+			break;
+		}
+		name[name_len] = path[name_len];
+	}
+	name[name_len] = '\0';
 	process = process_alloc();
 	if (process == NULL) {
 		return -1;
 	}
-	if (elf64_load_process(path, process) != 0) {
+	if (elf64_load_process(name, process) != 0) {
 		process->pid = 0;
 		return -2;
 	}
@@ -184,14 +198,14 @@ int process64_exec_file(const char *path, const char *cmdline)
 	process->heap.base = heap;
 	process->heap.size = USER_HEAP_SIZE;
 	process->heap_next = heap;
-	setup_args(process, cmdline != NULL ? cmdline : path, &argc, &argv);
+	user_rsp = setup_args(process, cmdline != NULL ? cmdline : path, &argc, &argv);
 	current_process = process;
 	task = task_now64();
 	if (task != NULL) {
 		task->process = process;
 		task->is_user = 1;
 	}
-	status = enter_user_mode64(process->entry, process->stack.base + process->stack.size,
+	status = enter_user_mode64(process->entry, user_rsp,
 		argc, argv, GDT64_USER_CODE, GDT64_USER_DATA, &process->saved_kernel_rsp);
 	if (task != NULL) {
 		task->kernel_rsp = process->saved_kernel_rsp;
