@@ -4,10 +4,14 @@
 #include <dsctbl64.h>
 #include <fd64.h>
 #include <fifo64.h>
+#include <graphic64.h>
 #include <int64.h>
 #include <keyboard64.h>
 #include <memory64.h>
+#include <gui64.h>
+#include <mouse64.h>
 #include <mtask64.h>
+#include <sheet64.h>
 #include <stdint.h>
 #include <timer64.h>
 
@@ -17,6 +21,7 @@
 static struct FIFO64 event_fifo;
 static struct EVENT64 event_buf[EVENT_BUF_SIZE];
 static uint8_t hangul_font_buf[HANGUL_FONT_SIZE];
+static struct MOUSE_DEC64 mdec64;
 
 static void serial_init(void)
 {
@@ -129,6 +134,77 @@ static void serial_fat12_write_smoke(void)
 	serial_print(n == len ? "[len-ok]\r\n" : "[len-bad]\r\n");
 }
 
+/* Phase 3 check: 겹침 처리와 스트라이드를 실제 화면 없이 검증한다.
+   가짜 VRAM은 폭 64, 스트라이드 80으로 잡아 stride > xsize 경로를 강제한다
+   (실제 VBE 모드에서 둘이 다를 수 있음). 화면에는 아무것도 그리지 않는다. */
+#define SMOKE_W      64
+#define SMOKE_H      32
+#define SMOKE_STRIDE 80
+
+static uint8_t smoke_vram[SMOKE_STRIDE * SMOKE_H];
+static uint8_t smoke_buf_a[16 * 16];
+static uint8_t smoke_buf_b[16 * 16];
+
+static uint8_t smoke_pixel(int32_t x, int32_t y)
+{
+	return smoke_vram[(uint32_t) y * SMOKE_STRIDE + x];
+}
+
+static void serial_sheet64_smoke(void)
+{
+	struct SHTCTL64 *ctl;
+	struct SHEET64 *a;
+	struct SHEET64 *b;
+	int32_t i;
+	int ok = 1;
+
+	for (i = 0; i < SMOKE_STRIDE * SMOKE_H; i++) {
+		smoke_vram[i] = 0;
+	}
+	for (i = 0; i < 16 * 16; i++) {
+		smoke_buf_a[i] = 1;
+		smoke_buf_b[i] = 2;
+	}
+	smoke_buf_b[1 * 16 + 1] = 99;   /* 투명 픽셀 */
+
+	ctl = shtctl64_init(&memman64, smoke_vram, SMOKE_W, SMOKE_H, SMOKE_STRIDE);
+	if (ctl == NULL) {
+		serial_print("sheet64 smoke=alloc-failed\r\n");
+		return;
+	}
+	a = sheet64_alloc(ctl);
+	b = sheet64_alloc(ctl);
+	if (a == NULL || b == NULL) {
+		serial_print("sheet64 smoke=sheet-alloc-failed\r\n");
+		return;
+	}
+	sheet64_setbuf(a, smoke_buf_a, 16, 16, -1);
+	sheet64_setbuf(b, smoke_buf_b, 16, 16, 99);
+	a->vx0 = 0;
+	a->vy0 = 0;
+	b->vx0 = 8;
+	b->vy0 = 8;
+	sheet64_updown(a, 0);
+	sheet64_updown(b, 1);
+
+	/* b는 (8,8)에서 16x16이므로 x,y 8..23을 덮는다. */
+	if (smoke_pixel(0, 0) != 1) { ok = 0; }            /* a만 있는 곳 */
+	if (smoke_pixel(8, 8) != 2) { ok = 0; }            /* b가 a를 덮음 */
+	if (smoke_pixel(9, 9) != 1) { ok = 0; }            /* b의 투명 픽셀로 a가 비침 */
+	if (smoke_pixel(60, 30) != 0) { ok = 0; }          /* 어느 시트에도 없는 곳 */
+	if (smoke_vram[8 * SMOKE_W + 8] != 0) { ok = 0; }  /* 스트라이드를 xsize로 잘못 쓰면 여기 값이 남는다 */
+
+	sheet64_slide(b, 40, 0);
+	if (smoke_pixel(8, 8) != 1) { ok = 0; }            /* b가 비켜난 자리를 a가 되칠함 */
+	if (smoke_pixel(40, 0) != 2) { ok = 0; }
+
+	serial_print(ok ? "sheet64 smoke=ok\r\n" : "sheet64 smoke=FAIL\r\n");
+
+	memman64_free_4k(&memman64, (uintptr_t) ctl->map,
+		(size_t) SMOKE_W * (size_t) SMOKE_H);
+	memman64_free_4k(&memman64, (uintptr_t) ctl, sizeof (struct SHTCTL64));
+}
+
 static void load_hangul_font(void)
 {
 	struct FDHANDLE64 fh;
@@ -161,7 +237,19 @@ static void process_event64(const struct EVENT64 *event)
 		return;
 	}
 	if (event->type == EVENT64_KEYBOARD) {
-		console64_process_key((uint8_t) event->data);
+		if (event->data == 0x57) {          /* F11 */
+			gui64_raise_bottom_window();
+			return;
+		}
+		if (gui64_console_has_focus() != 0) {
+			console64_process_key((uint8_t) event->data);
+		}
+		return;
+	}
+	if (event->type == EVENT64_MOUSE) {
+		if (mouse64_decode(&mdec64, (uint8_t) event->data) != 0) {
+			gui64_mouse_event(mdec64.x, mdec64.y, mdec64.btn);
+		}
 	}
 }
 
@@ -194,15 +282,21 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 	fd64_init();
 	serial_fat12_smoke();
 	serial_fat12_write_smoke();
+	serial_sheet64_smoke();
 	load_hangul_font();
+	init_palette64();
 	console64_init(boot_info);
 	task_init64();
 	fifo64_init(&event_fifo, EVENT_BUF_SIZE, event_buf, task_now64());
 	console64_set_event_fifo(&event_fifo);
 	init_pit64(&event_fifo);
-	init_keyboard64(&event_fifo);
 	init_pic64();
 	io_sti();
+	/* 인터럽트를 켠 뒤에 KBC를 건드린다. 마우스 활성화 명령의 ACK(0xfa)는
+	   IRQ12로 돌아오므로, 마스킹된 상태에서 보내면 출력 버퍼에 갇힌 채
+	   에지를 놓쳐 이후 패킷이 오지 않는다 (32비트 bootpack.c:76-85과 같은 순서). */
+	init_keyboard64(&event_fifo);
+	init_mouse64(&event_fifo, &mdec64);
 
 	for (;;) {
 		io_cli();

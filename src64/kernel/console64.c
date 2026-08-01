@@ -7,7 +7,9 @@
 #include <memory64.h>
 #include <mpport64.h>
 #include <mtask64.h>
+#include <gui64.h>
 #include <process64.h>
+#include <sheet64.h>
 #include <timer64.h>
 #include <utf864.h>
 #include <stddef.h>
@@ -15,7 +17,9 @@
 
 #define CONSOLE_INPUT_MAX 256
 #define COLOR_BG 0
-#define COLOR_FG 15
+/* 32비트 트리와 같은 값(COL8_FFFFFF). init_palette64가 15를 어두운 회색으로
+   바꾸므로, 예전처럼 15를 쓰면 검정 배경에 어두운 회색 글씨가 된다. */
+#define COLOR_FG 7
 #define FONT_W 8
 #define FONT_H 16
 #define HANGUL_W 16
@@ -37,6 +41,21 @@ static int shift_down;
 static int ctrl_down;
 static struct HANGUL64 composing;
 static const uint8_t *hangul_font;
+
+/* 시트에 붙어 있으면 console_vram은 시트 버퍼의 내용 영역을 가리킨다.
+   붙어 있지 않으면(초기 부팅, 컴포지터 할당 실패) 예전처럼 LFB에 직접 쓴다. */
+static struct SHEET64 *console_sheet;
+static uint16_t console_ox;
+static uint16_t console_oy;
+
+static void console_flush(int32_t x, int32_t y, int32_t w, int32_t h)
+{
+	if (console_sheet == NULL) {
+		return;
+	}
+	sheet64_refresh(console_sheet, console_ox + x, console_oy + y,
+		console_ox + x + w, console_oy + y + h);
+}
 
 #define REPL_QUEUE_SIZE 64
 static char repl_queue[REPL_QUEUE_SIZE];
@@ -141,6 +160,7 @@ static void fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t co
 			console_vram[(uint32_t) py * console_stride + px] = color;
 		}
 	}
+	console_flush(x, y, w, h);
 }
 
 static void draw_ascii(uint16_t x, uint16_t y, char c)
@@ -161,6 +181,7 @@ static void draw_ascii(uint16_t x, uint16_t y, char c)
 			}
 		}
 	}
+	console_flush(x, y, FONT_W, FONT_H);
 }
 
 static void scroll_if_needed(void)
@@ -183,6 +204,7 @@ static void scroll_if_needed(void)
 		}
 	}
 	cursor_y = console_height - FONT_H;
+	console_flush(0, 0, console_width, console_height);
 }
 
 static void newline(void)
@@ -229,6 +251,7 @@ static void put_utf8_char(const char *s, int len)
 		unicode = utf8_to_unicode64(s, &decode_len);
 		hangul64_draw_unicode(console_vram, console_stride, cursor_x, cursor_y,
 			COLOR_FG, hangul_font, unicode);
+		console_flush(cursor_x, cursor_y, HANGUL_W, FONT_H);
 	} else if (len == 1) {
 		draw_ascii(cursor_x, cursor_y, s[0]);
 	}
@@ -287,6 +310,7 @@ static void draw_composing(void)
 	fill_rect(cursor_x - HANGUL_W, cursor_y, HANGUL_W, FONT_H, COLOR_BG);
 	hangul64_draw_johab(console_vram, console_stride, cursor_x - HANGUL_W, cursor_y,
 		COLOR_FG, hangul_font, hangul64_to_johab(&composing));
+	console_flush(cursor_x - HANGUL_W, cursor_y, HANGUL_W, FONT_H);
 }
 
 static void flush_composing(void)
@@ -317,6 +341,7 @@ static void start_new_hangul(int state, int cho, int jung, int jong)
 	fill_rect(cursor_x, cursor_y, HANGUL_W, FONT_H, COLOR_BG);
 	hangul64_draw_johab(console_vram, console_stride, cursor_x, cursor_y,
 		COLOR_FG, hangul_font, hangul64_to_johab(&composing));
+	console_flush(cursor_x, cursor_y, HANGUL_W, FONT_H);
 	cursor_x += HANGUL_W;
 }
 
@@ -585,7 +610,9 @@ static void execute_command(void)
 		return;
 	}
 	if (str_eq(input_line, "help")) {
-		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY\n");
+		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY xwindow 창\n");
+	} else if (str_eq(input_line, "xwindow") || str_eq(input_line, "창")) {
+		gui64_toggle_window();
 	} else if (str_eq(input_line, "clear") || str_eq(input_line, "지우기")) {
 		clear_screen();
 	} else if (str_eq(input_line, "ticks")) {
@@ -669,8 +696,30 @@ void console64_set_hangul_font(const uint8_t *font)
 	hangul_font = font;
 }
 
+const uint8_t *console64_hangul_font(void)
+{
+	return hangul_font;
+}
+
+void console64_attach_sheet(struct SHEET64 *sht, uint16_t ox, uint16_t oy,
+	uint16_t w, uint16_t h)
+{
+	console_sheet = sht;
+	console_ox = ox;
+	console_oy = oy;
+	console_vram = sht->buf + (uint32_t) oy * (uint32_t) sht->bxsize + ox;
+	console_stride = (uint32_t) sht->bxsize;
+	console_width = w;
+	console_height = h;
+	cursor_x = 0;
+	cursor_y = 0;
+	clear_screen();
+}
+
 void console64_init(const struct BOOTINFO64 *boot_info)
 {
+	struct SHEET64 *sht;
+
 	console_vram = (uint8_t *) boot_info->vram;
 	console_width = boot_info->scrnx != 0 ? boot_info->scrnx : 800;
 	console_height = boot_info->scrny != 0 ? boot_info->scrny : 600;
@@ -682,7 +731,14 @@ void console64_init(const struct BOOTINFO64 *boot_info)
 	lang_hangul = 1;
 	shift_down = 0;
 	hangul64_init(&composing);
-	clear_screen();
+	/* 컴포지터가 뜨면 콘솔은 전체 화면 창 하나가 된다 (로드맵 decision 3b).
+	   실패하면 지금까지처럼 LFB에 직접 그린다. */
+	sht = gui64_init(boot_info);
+	if (sht != NULL) {
+		console64_attach_sheet(sht, 0, 0, console_width, console_height);
+	} else {
+		clear_screen();
+	}
 	// console64_puts("Mowkow OS x86_64 console\n");
 	console64_puts("머꼬 OS x86_64 콘솔\n");
 	// console64_puts("Hangul input is default. Shift+Space toggles English.\n");

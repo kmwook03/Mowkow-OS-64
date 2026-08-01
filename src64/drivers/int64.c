@@ -16,6 +16,8 @@ void init_pic64(void)
 	io_out8(PIC1_ICW3, 2);
 	io_out8(PIC1_ICW4, 0x01);
 
-	io_out8(PIC0_IMR, 0xfc);
-	io_out8(PIC1_IMR, 0xff);
+	/* 마스터: IRQ0 타이머, IRQ1 키보드, IRQ2 캐스케이드(슬레이브가 여기 달림).
+	   슬레이브: IRQ12 마우스. */
+	io_out8(PIC0_IMR, 0xf8);
+	io_out8(PIC1_IMR, 0xef);
 }

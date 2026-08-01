@@ -10,6 +10,7 @@ struct TASK64;
 enum EVENT64_TYPE {
 	EVENT64_TIMER = 1,
 	EVENT64_KEYBOARD = 2,
+	EVENT64_MOUSE = 3,
 };
 
 struct EVENT64 {

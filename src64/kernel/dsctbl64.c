@@ -2,6 +2,7 @@
 #include <dsctbl64.h>
 #include <interrupt64.h>
 #include <keyboard64.h>
+#include <mouse64.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <timer64.h>
@@ -60,6 +61,7 @@ extern void asm_exception30(void);
 extern void asm_exception31(void);
 extern void asm_irq20(void);
 extern void asm_irq21(void);
+extern void asm_irq2c(void);
 extern void asm_syscall80(void);
 
 static void (*const exception_stubs[32])(void) = {
@@ -116,6 +118,10 @@ void irq_handler64(const struct INTERRUPT_FRAME64 *frame)
 	}
 	if (frame->vector == 0x21) {
 		inthandler21_64();
+		return;
+	}
+	if (frame->vector == 0x2c) {
+		inthandler2c_64();
 		return;
 	}
 }
@@ -180,6 +186,7 @@ void init_gdtidt64(void)
 	}
 	set_idt64_gate(&idt64[0x20], (uintptr_t) asm_irq20, GDT64_KERNEL_CODE, 0, AR64_INT_GATE);
 	set_idt64_gate(&idt64[0x21], (uintptr_t) asm_irq21, GDT64_KERNEL_CODE, 0, AR64_INT_GATE);
+	set_idt64_gate(&idt64[0x2c], (uintptr_t) asm_irq2c, GDT64_KERNEL_CODE, 0, AR64_INT_GATE);
 	set_idt64_gate(&idt64[0x80], (uintptr_t) asm_syscall80, GDT64_KERNEL_CODE, 0,
 		AR64_INT_GATE | AR64_DPL3);
 
