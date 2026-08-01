@@ -343,6 +343,12 @@ syscall_common:
 	cmp rax, 1
 	je syscall_exit_to_kernel
 
+	; restore the user data selectors before popping rax: doing it after
+	; clobbers the low 16 bits of every syscall return value with 0x2b.
+	mov ax, USER_DATA_SEL
+	mov ds, ax
+	mov es, ax
+
 	pop r15
 	pop r14
 	pop r13
@@ -359,9 +365,6 @@ syscall_common:
 	pop rbx
 	pop rax
 	add rsp, 16
-	mov ax, USER_DATA_SEL
-	mov ds, ax
-	mov es, ax
 	iretq
 
 syscall_exit_to_kernel:

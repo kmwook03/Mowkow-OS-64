@@ -18,7 +18,7 @@ struct FDINFO64 {
 } __attribute__((packed));
 
 struct FDHANDLE64 {
-	const struct FDINFO64 *finfo;
+	struct FDINFO64 *finfo;
 	uint32_t pos;
 	uint16_t cluster;
 };
@@ -30,5 +30,10 @@ int fd64_open(struct FDHANDLE64 *fh, const char *name);
 size_t fd64_read(struct FDHANDLE64 *fh, void *dst, size_t request_size);
 int fd64_seek(struct FDHANDLE64 *fh, int64_t offset, int whence);
 uint16_t fd64_next_cluster(uint16_t cluster);
+int fd64_create(struct FDHANDLE64 *fh, const char *name);
+size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size);
+int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size);
+/* writes back dirty sectors only; returns sectors written, -1 on I/O error */
+int fd64_sync(void);
 
 #endif

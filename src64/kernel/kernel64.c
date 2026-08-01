@@ -95,6 +95,40 @@ static void serial_fat12_smoke(void)
 	serial_print("\r\n");
 }
 
+/* Phase 0 check: create, write, sync, read back. Runs every boot, so a
+   regression in the FAT12 write path shows up on COM1 before the console. */
+static void serial_fat12_write_smoke(void)
+{
+	struct FDHANDLE64 fh;
+	const char text[] = "fat12 write smoke\n";
+	char buf[32];
+	size_t len;
+	size_t n;
+	size_t i;
+
+	len = sizeof(text) - 1;
+	if (fd64_create(&fh, "SMOKE.TXT") == 0) {
+		serial_print("fat12 write=create-failed\r\n");
+		return;
+	}
+	n = fd64_write(&fh, text, len);
+	serial_print("fat12 write=");
+	serial_print_uint(n);
+	serial_print(" sectors=");
+	serial_print_uint((uint64_t) fd64_sync());
+	serial_print("\r\n");
+	if (fd64_open(&fh, "SMOKE.TXT") == 0) {
+		serial_print("fat12 write=reopen-failed\r\n");
+		return;
+	}
+	n = fd64_read(&fh, buf, sizeof(buf));
+	serial_print("fat12 readback=");
+	for (i = 0; i < n && i < len; i++) {
+		serial_putc(buf[i] == '\n' ? ' ' : buf[i]);
+	}
+	serial_print(n == len ? "[len-ok]\r\n" : "[len-bad]\r\n");
+}
+
 static void load_hangul_font(void)
 {
 	struct FDHANDLE64 fh;
@@ -159,6 +193,7 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 	init_memory64();
 	fd64_init();
 	serial_fat12_smoke();
+	serial_fat12_write_smoke();
 	load_hangul_font();
 	console64_init(boot_info);
 	task_init64();

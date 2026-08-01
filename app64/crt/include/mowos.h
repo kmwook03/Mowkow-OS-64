@@ -3,6 +3,9 @@
 
 typedef unsigned long size_t;
 
+#define O_CREAT 1
+#define O_TRUNC 2
+
 long write(int fd, const void *buf, size_t len);
 long read(int fd, void *buf, size_t len);
 int open(const char *path, int flags);
