@@ -593,6 +593,11 @@ static void prompt(void)
 	console64_puts("> ");
 }
 
+void console64_prompt(void)
+{
+	prompt();
+}
+
 static void clear_screen(void)
 {
 	fill_rect(0, 0, console_width, console_height, COLOR_BG);
@@ -610,8 +615,9 @@ static void execute_command(void)
 		return;
 	}
 	if (str_eq(input_line, "help")) {
-		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY window 창\n");
-	} else if (str_eq(input_line, "window") || str_eq(input_line, "창")) {
+		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY xwindow 창\n");
+	} else if (str_eq(input_line, "xwindow") || str_eq(input_line, "window") ||
+			str_eq(input_line, "창")) {
 		gui64_toggle_window();
 	} else if (str_eq(input_line, "clear") || str_eq(input_line, "지우기")) {
 		clear_screen();

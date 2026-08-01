@@ -342,6 +342,11 @@ static void handle_close(struct SHEET64 *sht)
 		   숨기면 키를 받을 곳이 없어진다. 전체 화면으로 되돌린다. */
 		if (gui_mode == GUI64_MODE_WINDOW) {
 			gui64_toggle_window();
+			/* 전환하면 화면이 지워진다. xwindow 명령으로 왔을 때는
+			   execute_command가 곧바로 프롬프트를 찍지만, 이 경로는
+			   마우스 이벤트라 아무도 찍어 주지 않는다. 그대로 두면
+			   빈 화면만 남아 멈춘 것처럼 보인다. */
+			console64_prompt();
 		}
 		return;
 	}
