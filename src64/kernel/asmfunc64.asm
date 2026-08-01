@@ -52,6 +52,7 @@ global asm_exception30
 global asm_exception31
 global asm_irq20
 global asm_irq21
+global asm_irq2c
 global asm_syscall80
 global stack_bottom
 extern _bss_start
@@ -235,6 +236,7 @@ asm_irq%1:
 
 IRQ_STUB 20, 0x20
 IRQ_STUB 21, 0x21
+IRQ_STUB 2c, 0x2c
 
 asm_syscall80:
 	push qword 0
