@@ -21,7 +21,10 @@
 #define ATA_CMD_FLUSH  0xe7
 
 #define FD64_SECTOR_SIZE 512
-#define FD64_IMAGE_SECTORS 2880
+/* 2 MiB. tools/mkfat12_64.py의 TOTAL_SECTORS, boot64.asm BPB의 total_sectors16과
+   같아야 한다. 나머지 지오메트리는 부팅 때 BPB에서 읽는다. 이미지 전체를
+   RAM에 올리므로 이 값이 곧 RAM 비용이다. */
+#define FD64_IMAGE_SECTORS 4096
 
 #define FAT12_EOC 0x0ff0
 /* no RTC driver in src64 yet, so stamp every write with a fixed valid date

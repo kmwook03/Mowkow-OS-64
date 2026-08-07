@@ -21,7 +21,6 @@
 static struct FIFO64 event_fifo;
 static struct EVENT64 event_buf[EVENT_BUF_SIZE];
 static uint8_t hangul_font_buf[HANGUL_FONT_SIZE];
-static struct MOUSE_DEC64 mdec64;
 
 static void serial_init(void)
 {
@@ -236,20 +235,48 @@ static void process_event64(const struct EVENT64 *event)
 	if (event->type == EVENT64_TIMER) {
 		return;
 	}
-	if (event->type == EVENT64_KEYBOARD) {
-		if (event->data == 0x57) {          /* F11 */
-			gui64_raise_bottom_window();
-			return;
-		}
-		if (gui64_console_has_focus() != 0) {
-			console64_process_key((uint8_t) event->data);
-		}
+	if (gui64_handle_system_event(event) != 0) {
 		return;
 	}
-	if (event->type == EVENT64_MOUSE) {
-		if (mouse64_decode(&mdec64, (uint8_t) event->data) != 0) {
-			gui64_mouse_event(mdec64.x, mdec64.y, mdec64.btn);
+	if (event->type == EVENT64_KEYBOARD && gui64_console_has_focus() != 0) {
+		console64_process_key((uint16_t) event->data);
+	}
+}
+
+static void serial_keyboard64_smoke(void)
+{
+	/* a, Up 누름, Up 뗌, Pause 6바이트, Enter */
+	static const uint8_t seq[] = {
+		0x1e,
+		0xe0, 0x48,
+		0xe0, 0xc8,
+		0xe1, 0x1d, 0x45, 0xe1, 0x9d, 0xc5,
+		0x1c
+	};
+	static const uint16_t want[] = {
+		0x1e, KEY64_UP, KEY64_UP | 0x80, 0x1c
+	};
+	uint16_t key;
+	uint32_t i;
+	uint32_t n = 0;
+	int ok = 1;
+
+	for (i = 0; i < sizeof(seq) / sizeof(seq[0]); i++) {
+		if (keyboard64_decode(seq[i], &key) == 0) {
+			continue;
 		}
+		if (n >= sizeof(want) / sizeof(want[0]) || key != want[n]) {
+			ok = 0;
+			break;
+		}
+		n++;
+	}
+	if (ok != 0 && n == sizeof(want) / sizeof(want[0])) {
+		serial_print("keyboard64 smoke=ok\r\n");
+	} else {
+		serial_print("keyboard64 smoke=FAIL at ");
+		serial_print_uint(n);
+		serial_print("\r\n");
 	}
 }
 
@@ -283,6 +310,9 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 	serial_fat12_smoke();
 	serial_fat12_write_smoke();
 	serial_sheet64_smoke();
+	serial_keyboard64_smoke();
+	serial_print(console64_hangul_smoke() != 0 ?
+		"hangul64 smoke=ok\r\n" : "hangul64 smoke=FAIL\r\n");
 	load_hangul_font();
 	init_palette64();
 	console64_init(boot_info);
@@ -296,7 +326,7 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 	   IRQ12로 돌아오므로, 마스킹된 상태에서 보내면 출력 버퍼에 갇힌 채
 	   에지를 놓쳐 이후 패킷이 오지 않는다 (32비트 bootpack.c:76-85과 같은 순서). */
 	init_keyboard64(&event_fifo);
-	init_mouse64(&event_fifo, &mdec64);
+	init_mouse64(&event_fifo, gui64_mouse_dec());
 
 	for (;;) {
 		io_cli();
