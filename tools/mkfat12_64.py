@@ -4,20 +4,36 @@ import struct
 import sys
 
 SECTOR_SIZE = 512
-TOTAL_SECTORS = 2880
+# 2 MiB. 플로피 크기(2880섹터)를 벗어나지만 매체는 IDE 드라이브라 상관없다.
+# 클러스터당 1섹터를 유지하면서 FAT12로 남을 수 있는 상한 근처다: 데이터
+# 영역이 4041클러스터라 FAT12/FAT16 경계인 4085보다 아래다.
+# 이 값들은 src64/boot/boot64.asm의 BPB, src64/kernel/fd64.c의
+# FD64_IMAGE_SECTORS, Makefile의 FAT12_64_* 상수와 반드시 함께 움직인다.
+TOTAL_SECTORS = 4096
 STAGE2_SECTORS = 16
 RESERVED_SECTORS = 1 + STAGE2_SECTORS
 FAT_COUNT = 2
-SECTORS_PER_FAT = 9
+# 4043개 엔트리 x 1.5바이트 = 6065바이트 -> 12섹터
+SECTORS_PER_FAT = 12
 ROOT_ENTRIES = 224
 ROOT_SECTORS = ROOT_ENTRIES * 32 // SECTOR_SIZE
 ROOT_LBA = RESERVED_SECTORS + FAT_COUNT * SECTORS_PER_FAT
 DATA_LBA = ROOT_LBA + ROOT_SECTORS
 
 
+def upper_ascii(text):
+    """ASCII 소문자만 대문자로. UTF-8 바이트는 그대로 둔다 (커널의
+    make_name83과 같은 규칙이라 한글 이름도 양쪽에서 같은 바이트가 된다)."""
+    return bytes(c - 32 if 0x61 <= c <= 0x7a else c for c in text.encode("utf-8"))
+
+
 def dir_name(name):
     base, _, ext = name.partition(".")
-    return (base.upper().ljust(8)[:8] + ext.upper().ljust(3)[:3]).encode("ascii")
+    b = upper_ascii(base)
+    e = upper_ascii(ext)
+    if len(b) > 8 or len(e) > 3:
+        raise SystemExit(f"8.3에 들어가지 않는 이름: {name}")
+    return b.ljust(8) + e.ljust(3)
 
 
 def set_fat12(fat, cluster, value):

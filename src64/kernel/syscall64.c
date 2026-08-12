@@ -142,6 +142,32 @@ uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame)
 		frame->rax = timerctl64.count;
 		return 0;
 	}
+	if (nr == SYS_TTY) {
+		if (a0 == TTY_MODE) {
+			console64_set_raw((int) a1);
+			frame->rax = 0;
+		} else if (a0 == TTY_READKEY && console64_is_raw() != 0) {
+			frame->rax = console64_read_key();
+		} else if (a0 == TTY_SIZE) {
+			frame->rax = console64_size();
+		} else if (a0 == TTY_MOVE) {
+			console64_move((uint32_t) a1, (uint32_t) a2);
+			frame->rax = 0;
+		} else if (a0 == TTY_CLEAR) {
+			console64_clear_cells((uint32_t) a1, (uint32_t) a2,
+				(uint32_t) frame->r10, (uint32_t) frame->r8);
+			frame->rax = 0;
+		} else if (a0 == TTY_ATTR) {
+			console64_set_attr((uint8_t) a1, (uint8_t) a2);
+			frame->rax = 0;
+		} else if (a0 == TTY_FLUSH) {
+			console64_flush();
+			frame->rax = 0;
+		} else {
+			frame->rax = (uint64_t) -1;
+		}
+		return 0;
+	}
 	frame->rax = (uint64_t) -1;
 	return 0;
 }

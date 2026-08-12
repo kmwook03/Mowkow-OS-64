@@ -15,7 +15,14 @@
  * 512MB system, matching the same "budget generously" approach as
  * KERNEL64_SECTORS (Stage 0.3).
  */
-#define MEMMAN64_EARLY_START ((uintptr_t) 0x00400000)
+/*
+ * 0x00800000에서 시작하는 이유: 유저 이미지 창 [0x400000, 0x800000)은
+ * 모든 app64 실행 파일이 링크되는 고정 주소다(app64/app64.ld). 예전처럼
+ * 힙 아레나가 0x400000에서 시작하면 fd64_init의 디스크 캐시가 그 창의
+ * 바닥을 먼저 가져가 버려서, 어떤 앱도 적재되지 못한다.
+ * 페이즈 1에서 프로세스마다 PML4를 갖게 되면 이 칸막이는 사라진다.
+ */
+#define MEMMAN64_EARLY_START ((uintptr_t) 0x00800000)
 #define MEMMAN64_EARLY_END   ((uintptr_t) 0x20000000)
 #define MEMMAN64_PAGE_SIZE   ((size_t) 0x1000)
 

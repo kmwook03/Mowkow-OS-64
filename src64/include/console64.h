@@ -16,7 +16,17 @@ void console64_puts(const char *s);
 void console64_prompt(void);
 void console64_write(const char *s, uint64_t len);
 uint64_t console64_read(char *dst, uint64_t len);
-void console64_process_key(uint8_t scancode);
+void console64_process_key(uint16_t scancode);
+void console64_set_raw(int on);
+/* 한글 오토마타 회귀 확인. 통과하면 1. */
+int console64_hangul_smoke(void);
+int console64_is_raw(void);
+uint64_t console64_read_key(void);
+uint64_t console64_size(void);
+void console64_move(uint32_t row, uint32_t col);
+void console64_clear_cells(uint32_t row, uint32_t col, uint32_t rows, uint32_t cols);
+void console64_set_attr(uint8_t fg, uint8_t bg);
+void console64_flush(void);
 void console64_set_event_fifo(struct FIFO64 *fifo);
 void console64_repl_set_active(int active);
 int console64_repl_getchar(void);

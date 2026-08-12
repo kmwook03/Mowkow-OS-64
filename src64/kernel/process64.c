@@ -1,4 +1,5 @@
 #include <asmfunc64.h>
+#include <console64.h>
 #include <dsctbl64.h>
 #include <elf64_loader.h>
 #include <memory64.h>
@@ -7,8 +8,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/*
+ * 실측으로 정한 값 (roadmap64.md Phase 4 step 7). report_usage가 프로세스마다
+ * COM1에 실제 사용량을 찍는다.
+ *
+ * 힙: 나노의 사용량은 파일 크기가 아니라 줄 수를 따라간다 - 줄마다 최소
+ * 64바이트다. 8 KiB짜리 4000줄 파일이 256 KiB의 98.5%를 먹었다. 1 MiB면
+ * 같은 파일이 25% 언저리고, 64 KiB(MAX_FILE) 소스 파일도 편집할 여유가 남는다.
+ * 스택: 나노가 472바이트, 다른 앱은 그보다 적게 썼다. 64 KiB는 135배 여유라
+ * 줄일 이유가 없어 그대로 둔다. 페이즈 1이 여기에 가드 페이지를 붙인다.
+ */
 #define USER_STACK_SIZE (64 * 1024)
-#define USER_HEAP_SIZE  (256 * 1024)
+#define USER_HEAP_SIZE  (1024 * 1024)
 
 static struct PROCESS64 process_table[4];
 static uint32_t next_pid = 1;
@@ -86,6 +97,9 @@ void process64_exit_current(int status)
 	}
 	current_process->exited = 1;
 	current_process->exit_status = status;
+	/* raw 모드는 프로세스 상태다. 앱이 정리하지 않고 나가도 콘솔이 다시
+	   줄 편집기로 돌아오게 커널이 되돌린다. */
+	console64_set_raw(0);
 }
 
 uintptr_t process64_current_exit_rsp(void)
@@ -145,15 +159,95 @@ static uintptr_t setup_args(struct PROCESS64 *process, const char *cmdline, uint
 
 static void process_free_memory(struct PROCESS64 *process)
 {
-	if (process->image.base != 0 && process->image.size != 0) {
-		memman64_free_4k(&memman64, process->image.base, process->image.size);
-	}
+	/* image는 memman64가 아니라 고정 유저 이미지 창에서 온다(elf64_loader.c).
+	   memman64에 돌려주면 커널 힙이 그 창을 나눠주게 되므로 건드리지 않는다. */
 	if (process->stack.base != 0 && process->stack.size != 0) {
 		memman64_free_4k(&memman64, process->stack.base, process->stack.size);
 	}
 	if (process->heap.base != 0 && process->heap.size != 0) {
 		memman64_free_4k(&memman64, process->heap.base, process->heap.size);
 	}
+}
+
+/*
+ * 스택과 힙을 얼마나 썼는지 COM1으로 알린다.
+ *
+ * 힙은 커널이 정확히 안다: SYS_ALLOC이 범프라 heap_next - heap.base가 곧
+ * 최대 사용량이다. 스택은 알 수 없으므로 들어가기 전에 무늬를 칠해 두고
+ * 나올 때 어디까지 지워졌는지 본다.
+ * USER_STACK_SIZE와 USER_HEAP_SIZE를 짐작이 아니라 실측으로 정하기 위한 것.
+ */
+#define STACK_PAINT 0xa5
+
+static void stack_paint(struct PROCESS64 *process)
+{
+	uint8_t *p;
+	size_t i;
+
+	p = (uint8_t *) process->stack.base;
+	for (i = 0; i < process->stack.size; i++) {
+		p[i] = STACK_PAINT;
+	}
+}
+
+static size_t stack_used(const struct PROCESS64 *process)
+{
+	const uint8_t *p;
+	size_t i;
+
+	p = (const uint8_t *) process->stack.base;
+	for (i = 0; i < process->stack.size; i++) {
+		if (p[i] != STACK_PAINT) {
+			break;                  /* 스택은 위에서 아래로 자란다 */
+		}
+	}
+	return process->stack.size - i;
+}
+
+static void serial_out(char c)
+{
+	while ((io_in8(0x3f8 + 5) & 0x20) == 0) {
+	}
+	io_out8(0x3f8, (uint8_t) c);
+}
+
+static void serial_dec(uint64_t v)
+{
+	char buf[20];
+	int i;
+
+	if (v == 0) {
+		serial_out('0');
+		return;
+	}
+	i = 0;
+	while (v != 0 && i < 20) {
+		buf[i++] = (char) ('0' + v % 10);
+		v /= 10;
+	}
+	while (i > 0) {
+		serial_out(buf[--i]);
+	}
+}
+
+static void serial_text(const char *s)
+{
+	while (*s != '\0') {
+		serial_out(*s++);
+	}
+}
+
+static void report_usage(const struct PROCESS64 *process)
+{
+	serial_text("proc usage heap=");
+	serial_dec(process->heap_next - process->heap.base);
+	serial_text("/");
+	serial_dec(process->heap.size);
+	serial_text(" stack=");
+	serial_dec(stack_used(process));
+	serial_text("/");
+	serial_dec(process->stack.size);
+	serial_text("\r\n");
 }
 
 int process64_exec_file(const char *path, const char *cmdline)
@@ -198,6 +292,7 @@ int process64_exec_file(const char *path, const char *cmdline)
 	process->heap.base = heap;
 	process->heap.size = USER_HEAP_SIZE;
 	process->heap_next = heap;
+	stack_paint(process);
 	user_rsp = setup_args(process, cmdline != NULL ? cmdline : path, &argc, &argv);
 	current_process = process;
 	task = task_now64();
@@ -219,6 +314,7 @@ int process64_exec_file(const char *path, const char *cmdline)
 		task->kernel_rsp = 0;
 	}
 	current_process = NULL;
+	report_usage(process);
 	process_free_memory(process);
 	process->pid = 0;
 	return status;

@@ -24,11 +24,11 @@ fat_count:
 root_entries:
 	dw 224
 total_sectors16:
-	dw 2880
+	dw 4096                 ; 2 MiB (tools/mkfat12_64.py의 TOTAL_SECTORS와 같아야 한다)
 media_type:
 	db 0xf0
 sectors_per_fat:
-	dw 9
+	dw 12                   ; 4041클러스터를 덮는다
 sectors_per_track:
 	dw 18
 heads:

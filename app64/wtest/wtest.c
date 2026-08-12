@@ -5,9 +5,12 @@
    contents reached the medium and not just the RAM image. */
 
 #define BIG_SIZE 1500
+#define CHUNK_SIZE 4096
+#define HUGE_SIZE (384 * CHUNK_SIZE)      /* 1.5 MiB */
 
 static const char text[] = "phase0 fat12 write ok\n";
 static char big[BIG_SIZE];
+static char chunk[CHUNK_SIZE];
 
 int main(int argc, char **argv)
 {
@@ -19,7 +22,7 @@ int main(int argc, char **argv)
 	size_t got;
 	size_t i;
 
-	path = argc >= 2 ? argv[1] : "TEST.TXT";
+	path = (argc >= 2 && strcmp(argv[1], "HUGE") != 0) ? argv[1] : "TEST.TXT";
 	len = strlen(text);
 
 	fd = open(path, O_CREAT | O_TRUNC);
@@ -85,6 +88,61 @@ int main(int argc, char **argv)
 			return 1;
 		}
 	}
+
+	/* 2 MiB 이미지 확인: 예전 9섹터 FAT은 클러스터 3071까지밖에 표현하지
+	   못했다. 1.5 MiB를 쓰면 할당이 그 위로 넘어가므로, 커진 FAT과 늘어난
+	   데이터 영역을 실제로 밟는다.
+	   1.5 MiB를 먹고 20초쯤 걸리므로 "run WTEST HUGE"로 부를 때만 한다. */
+	if (argc < 2 || strcmp(argv[1], "HUGE") != 0) {
+		puts("wtest: ok");
+		return 0;
+	}
+	fd = open("HUGE.TXT", O_CREAT | O_TRUNC);
+	if (fd < 0) {
+		puts("wtest: FAIL huge create");
+		return 1;
+	}
+	for (got = 0; got < HUGE_SIZE; got += CHUNK_SIZE) {
+		for (i = 0; i < CHUNK_SIZE; i++) {
+			chunk[i] = (char) ((got + i) % 251);
+		}
+		n = write(fd, chunk, CHUNK_SIZE);
+		if (n != CHUNK_SIZE) {
+			close(fd);
+			puts("wtest: FAIL huge write");
+			return 1;
+		}
+	}
+	close(fd);
+
+	fd = open("HUGE.TXT", 0);
+	if (fd < 0) {
+		puts("wtest: FAIL huge reopen");
+		return 1;
+	}
+	for (got = 0; got < HUGE_SIZE; got += CHUNK_SIZE) {
+		size_t off;
+
+		for (off = 0; off < CHUNK_SIZE; off += (size_t) n) {
+			n = read(fd, chunk + off, CHUNK_SIZE - off);
+			if (n <= 0) {
+				break;
+			}
+		}
+		if (off != CHUNK_SIZE) {
+			close(fd);
+			puts("wtest: FAIL huge readback size");
+			return 1;
+		}
+		for (i = 0; i < CHUNK_SIZE; i++) {
+			if (chunk[i] != (char) ((got + i) % 251)) {
+				close(fd);
+				puts("wtest: FAIL huge readback data");
+				return 1;
+			}
+		}
+	}
+	close(fd);
 
 	puts("wtest: ok");
 	return 0;

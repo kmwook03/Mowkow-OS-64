@@ -115,6 +115,41 @@ unsigned long ticks(void)
 	return (unsigned long) syscall0(SYS_TICKS);
 }
 
+void tty_raw(int on)
+{
+	syscall2(SYS_TTY, TTY_MODE, on);
+}
+
+unsigned long tty_readkey(void)
+{
+	return (unsigned long) syscall1(SYS_TTY, TTY_READKEY);
+}
+
+unsigned long tty_size(void)
+{
+	return (unsigned long) syscall1(SYS_TTY, TTY_SIZE);
+}
+
+void tty_move(int row, int col)
+{
+	syscall3(SYS_TTY, TTY_MOVE, row, col);
+}
+
+void tty_clear(int row, int col, int rows, int cols)
+{
+	syscall5(SYS_TTY, TTY_CLEAR, row, col, rows, cols);
+}
+
+void tty_attr(int fg, int bg)
+{
+	syscall3(SYS_TTY, TTY_ATTR, fg, bg);
+}
+
+void tty_flush(void)
+{
+	syscall1(SYS_TTY, TTY_FLUSH);
+}
+
 int puts(const char *s)
 {
 	size_t len;

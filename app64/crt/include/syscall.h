@@ -10,6 +10,15 @@
 #define SYS_ALLOC  7
 #define SYS_FREE   8
 #define SYS_TICKS  9
+#define SYS_TTY    10
+
+#define TTY_MODE    0
+#define TTY_READKEY 1
+#define TTY_SIZE    2
+#define TTY_MOVE    3
+#define TTY_CLEAR   4
+#define TTY_ATTR    5
+#define TTY_FLUSH   6
 
 long syscall0(long nr);
 long syscall1(long nr, long a0);
