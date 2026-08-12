@@ -343,27 +343,50 @@ static void put(const char *s)
 	write(1, s, strlen(s));
 }
 
-static void put_dec(int v)
+static int append_str(char *buf, int at, const char *s)
 {
-	char buf[12];
 	int i;
 
-	if (v < 0) {
-		put("-");
-		v = -v;
+	for (i = 0; s[i] != '\0'; i++) {
+		buf[at + i] = s[i];
 	}
+	return at + i;
+}
+
+static int append_dec(char *buf, int at, int v)
+{
+	char tmp[12];
+	int i;
+
 	if (v == 0) {
-		put("0");
-		return;
+		buf[at] = '0';
+		return at + 1;
 	}
 	i = 0;
 	while (v != 0 && i < 12) {
-		buf[i++] = (char) ('0' + v % 10);
+		tmp[i++] = (char) ('0' + v % 10);
 		v /= 10;
 	}
 	while (i > 0) {
-		write(1, &buf[--i], 1);
+		buf[at++] = tmp[--i];
 	}
+	return at;
+}
+
+/* 화면 칸 수. 가운데 맞추기에 필요하다. */
+static int str_cols(const char *s)
+{
+	int i;
+	int w;
+	int len;
+
+	i = 0;
+	w = 0;
+	while (s[i] != '\0') {
+		w += cp_width(utf8_decode(s + i, &len));
+		i += len;
+	}
+	return w;
 }
 
 /* 칸 수로 잘라서 쓴다. 상태 줄이 화면보다 길면 줄이 넘어가면서 화면 전체가
@@ -389,12 +412,12 @@ static int put_clipped(const char *s, int max_cols)
 	return used;
 }
 
-static void pad_to(int used, int width)
+/* 반전(검정 글씨 / 흰 바탕)으로 한 줄을 통째로 칠한다. tty_clear는 지금
+   설정된 배경색을 쓰므로 속성을 먼저 바꿔야 한다. */
+static void fill_bar(int row)
 {
-	while (used < width) {
-		put(" ");
-		used++;
-	}
+	tty_attr(0, 7);
+	tty_clear(row, 0, 1, cols);
 }
 
 /* 한 줄을 left_col부터 화면 폭만큼 그린다. 경계에 걸친 두 칸짜리 글자는
@@ -438,68 +461,110 @@ static void draw_line(int screen_row, int idx)
 	}
 }
 
+/* nano의 제목 줄: 왼쪽에 이름과 판, 가운데에 파일 이름, 오른쪽에 수정 표시. */
 static void draw_title(void)
 {
-	int used;
+	static const char *const VERSION = "나노 1.0";
+	static const char *const DIRTY = "수정됨";
+	int left_end;
+	int right_start;
+	int start;
 
-	tty_move(0, 0);
-	tty_attr(0, 7);
-	put(" 나노  ");
-	used = 7;
-	put(filename);
-	used += (int) strlen(filename);
+	fill_bar(0);
+	tty_move(0, 2);
+	left_end = 2 + put_clipped(VERSION, cols - 2);
+
+	right_start = cols;
 	if (modified != 0) {
-		put("  *");
-		used += 3;
+		right_start = cols - 1 - str_cols(DIRTY);
+		if (right_start > left_end) {
+			tty_move(0, right_start);
+			put_clipped(DIRTY, cols - right_start);
+		}
 	}
-	pad_to(used, cols - 1);
+
+	start = (cols - str_cols(filename)) / 2;
+	if (start < left_end + 2) {
+		start = left_end + 2;
+	}
+	if (start < right_start - 1) {
+		tty_move(0, start);
+		put_clipped(filename, right_start - 1 - start);
+	}
 	tty_attr(7, 0);
 }
 
+/*
+ * nano의 알림 줄: 화면 가운데에 [ ... ]로 감싼 반전 글씨 하나만 놓고 나머지는
+ * 바탕 그대로다. 알릴 것이 없으면 nano의 constantshow처럼 커서 자리를 보인다.
+ */
 static void draw_status(void)
 {
-	int used;
+	char buf[STATUS_MAX];
+	const char *msg;
+	int at;
+	int start;
 
-	tty_move(rows - 3, 0);
+	tty_attr(7, 0);
 	tty_clear(rows - 3, 0, 1, cols);
 	if (status[0] != '\0') {
-		tty_attr(0, 7);
-		put(" ");
-		used = 1 + put_clipped(status, cols - 2);
-		pad_to(used, cols - 1);
-		tty_attr(7, 0);
-		return;
+		msg = status;
+	} else {
+		at = append_str(buf, 0, "줄 ");
+		at = append_dec(buf, at, cur_line + 1);
+		at = append_str(buf, at, "/");
+		at = append_dec(buf, at, nlines);
+		at = append_str(buf, at, ", 칸 ");
+		at = append_dec(buf, at,
+			col_of_byte(&lines[cur_line], cur_byte) + 1);
+		buf[at] = '\0';
+		msg = buf;
 	}
-	put("  줄 ");
-	put_dec(cur_line + 1);
-	put("/");
-	put_dec(nlines);
-	put("  칸 ");
-	put_dec(col_of_byte(&lines[cur_line], cur_byte) + 1);
+
+	start = (cols - (str_cols(msg) + 4)) / 2;
+	if (start < 0) {
+		start = 0;
+	}
+	tty_move(rows - 3, start);
+	tty_attr(0, 7);
+	put("[ ");
+	put_clipped(msg, cols - start - 4);
+	put(" ]");
+	tty_attr(7, 0);
 }
+
+/* nano의 도움말 줄: 두 줄 짜리 격자다. 키 이름만 반전, 설명은 보통 글씨. */
+struct HINT {
+	const char *key;
+	const char *desc;
+};
+
+static const struct HINT hints[8] = {
+	{ "^O", "저장" },   { "^A", "줄 처음" }, { "PgUp", "위로" },   { "화살표", "이동" },
+	{ "^X", "나가기" }, { "^E", "줄 끝" },   { "PgDn", "아래로" }, { "Sh+Spc", "한/영" }
+};
+
+#define HINT_COLS 4
 
 static void draw_help(void)
 {
-	tty_move(rows - 2, 0);
-	tty_attr(0, 7);
-	put(" ^O ");
-	tty_attr(7, 0);
-	put("저장   ");
-	tty_attr(0, 7);
-	put(" ^X ");
-	tty_attr(7, 0);
-	put("나가기   ");
-	tty_attr(0, 7);
-	put(" ^A ");
-	tty_attr(7, 0);
-	put("줄 처음   ");
-	tty_attr(0, 7);
-	put(" ^E ");
-	tty_attr(7, 0);
-	put("줄 끝");
+	int i;
+	int colw;
 
-	tty_move(rows - 1, 0);
-	put(" 화살표 이동   PgUp/PgDn 쪽 넘기기   Shift+Space 한/영");
+	tty_attr(7, 0);
+	tty_clear(rows - 2, 0, 2, cols);
+	colw = cols / HINT_COLS;
+	for (i = 0; i < 8; i++) {
+		int at = (i % HINT_COLS) * colw;
+		int used;
+
+		tty_move(rows - 2 + i / HINT_COLS, at);
+		tty_attr(0, 7);
+		used = put_clipped(hints[i].key, colw - 1);
+		tty_attr(7, 0);
+		put(" ");
+		put_clipped(hints[i].desc, colw - used - 2);
+	}
 }
 
 /* 커서가 화면 밖으로 나가지 않게 보이는 범위를 옮긴다. */
@@ -535,6 +600,7 @@ static void draw_all(void)
 	scroll_into_view();
 	/* ponytail: 키마다 화면 전체를 다시 그린다. 100x37이면 한 번에 3700칸이라
 	   느려지면 바뀐 줄만 그리도록 좁히면 된다. 지금은 단순함이 먼저다. */
+	tty_attr(7, 0);
 	tty_clear(0, 0, rows, cols);
 	draw_title();
 	for (r = 0; r < text_rows(); r++) {
@@ -823,6 +889,15 @@ int main(int argc, char **argv)
 		puts("나노: 화면이 너무 작습니다");
 		return 1;
 	}
+	if (has_name != 0) {                /* nano의 "Read N lines" */
+		char buf[STATUS_MAX];
+		int at = append_dec(buf, 0, nlines);
+
+		at = append_str(buf, at, "줄을 읽었습니다");
+		buf[at] = '\0';
+		set_status(buf);
+	}
+
 	tty_raw(1);
 	draw_all();
 
