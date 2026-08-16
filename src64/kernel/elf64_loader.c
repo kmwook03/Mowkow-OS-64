@@ -89,7 +89,7 @@ int elf64_load_process(const char *path, struct PROCESS64 *process)
 	if (fd64_open(&fh, path) == 0) {
 		return -1;
 	}
-	file_size = fh.finfo->size;
+	file_size = fh.info.size;
 	file = (uint8_t *) memman64_alloc_4k(&memman64, file_size);
 	if (file == NULL) {
 		return -2;

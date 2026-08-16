@@ -252,7 +252,7 @@ static void report_usage(const struct PROCESS64 *process)
 
 int process64_exec_file(const char *path, const char *cmdline)
 {
-	char name[16];
+	char name[FD64_NAME_MAX];
 	size_t name_len;
 	struct PROCESS64 *process;
 	uintptr_t stack;

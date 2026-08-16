@@ -35,20 +35,21 @@ X64_CC ?= x86_64-elf-gcc
 X64_ASM ?= nasm
 X64_LD ?= x86_64-elf-ld
 X64_OBJCOPY ?= x86_64-elf-objcopy
+# -MMD -MP: without header dependencies a change to e.g. src64/include/fd64.h
+# leaves stale objects linked against the old struct layout.
+X64_DEPFLAGS = -MMD -MP
 X64_CFLAGS = -ffreestanding -mno-red-zone -fno-pic -fno-stack-protector -Wall -Wextra -Wa,--noexecstack -I$(SRC64_DIR)/include
 APP64_CFLAGS = -ffreestanding -fno-pic -fno-pie -mno-red-zone -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -Wall -Wextra -I$(APP64_DIR)/crt/include
 APP64_LDFLAGS = -nostdlib -static -T $(APP64_DIR)/app64.ld
 X64_ASMFLAGS = -f elf64
 X64_BOOT_ASMFLAGS = -f bin
 X64_LDFLAGS = -nostdlib -T $(SRC64_DIR)/kernel/kernel64.ld
-STAGE2_64_SECTORS = 16
+MKFAT32 = $(TOOLPATH)/mkfat32_64.py
+# The FAT32 layout lives in one place, tools/mkfat32_64.py, and both this
+# makefile and the BPB in boot64.asm read it from there: a silent mismatch
+# between the image and the boot sector is unrecoverable at runtime.
+$(foreach v,$(shell $(PYTHON) $(MKFAT32) --make-vars),$(eval $(v)))
 KERNEL64_SECTORS = 800
-FAT12_64_RESERVED_SECTORS = $(shell expr 1 + $(STAGE2_64_SECTORS))
-# FAT 사본 2개 x 12섹터. tools/mkfat12_64.py의 SECTORS_PER_FAT, boot64.asm BPB와 맞춘다.
-FAT12_64_SECTORS_PER_FAT = 12
-FAT12_64_ROOT_LBA = $(shell expr $(FAT12_64_RESERVED_SECTORS) + 2 \* $(FAT12_64_SECTORS_PER_FAT))
-FAT12_64_DATA_LBA = $(shell expr $(FAT12_64_ROOT_LBA) + 14)
-KERNEL64_LBA = $(FAT12_64_DATA_LBA)
 
 COPY = cp
 DEL = rm -rf
@@ -140,7 +141,7 @@ APP64_NAMES = $(filter-out crt,$(notdir $(patsubst %/,%,$(APP64_DIRS))))
 APP64_TARGETS = $(foreach app, $(APP64_NAMES), $(BUILD64_DIR)/app/$(app)/$(app).elf)
 
 # -- Build Rule --
-.PHONY : default clean run info x86_64 run64 clean64
+.PHONY : default clean run info x86_64 run64 run64-ahci clean64
 
 default : $(IMG_DIR)/haribote.img
 
@@ -228,9 +229,14 @@ $(IMG_DIR)/haribote.img : $(BUILD_DIR)/boot/ipl.bin $(BUILD_DIR)/haribote.sys $(
 # Commands
 x86_64: $(IMG64_FILE)
 
-$(BUILD64_DIR)/boot/boot64.bin : $(SRC64_DIR)/boot/boot64.asm Makefile
+$(BUILD64_DIR)/boot/boot64.bin : $(SRC64_DIR)/boot/boot64.asm Makefile $(MKFAT32)
 	@$(MKDIR) $(dir $@)
-	$(X64_ASM) $(X64_BOOT_ASMFLAGS) -DSTAGE2_SECTORS=$(STAGE2_64_SECTORS) $< -o $@
+	$(X64_ASM) $(X64_BOOT_ASMFLAGS) -DSTAGE2_SECTORS=$(STAGE2_64_SECTORS) \
+		-DSTAGE2_LBA=$(STAGE2_64_LBA) -DTOTAL_SECTORS=$(FAT32_64_TOTAL_SECTORS) \
+		-DRESERVED_SECTORS=$(FAT32_64_RESERVED_SECTORS) -DFAT_COUNT=$(FAT32_64_FAT_COUNT) \
+		-DSECTORS_PER_FAT=$(FAT32_64_SECTORS_PER_FAT) -DROOT_CLUSTER=$(FAT32_64_ROOT_CLUSTER) \
+		-DFSINFO_LBA=$(FAT32_64_FSINFO_LBA) -DBACKUP_BOOT_LBA=$(FAT32_64_BACKUP_BOOT_LBA) \
+		-DVOLUME_ID=$(FAT32_64_VOLUME_ID) $< -o $@
 
 $(BUILD64_DIR)/boot/loader64.bin : $(SRC64_DIR)/boot/loader64.asm Makefile
 	@$(MKDIR) $(dir $@)
@@ -238,7 +244,7 @@ $(BUILD64_DIR)/boot/loader64.bin : $(SRC64_DIR)/boot/loader64.asm Makefile
 
 $(BUILD64_DIR)/%.o : $(SRC64_DIR)/%.c
 	@$(MKDIR) $(dir $@)
-	$(X64_CC) $(X64_CFLAGS) -c $< -o $@
+	$(X64_CC) $(X64_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
 $(BUILD64_DIR)/kernel/%.o : $(SRC64_DIR)/kernel/%.asm
 	@$(MKDIR) $(dir $@)
@@ -311,34 +317,34 @@ MPY_GENHDRS = $(MPY_GENHDR_DIR)/qstrdefs.generated.h $(MPY_GENHDR_DIR)/moduledef
 
 $(MPY_OBJS_DIR)/%.o : $(MPY_PY_DIR)/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(X64_CC) $(MPY_CFLAGS) -c $< -o $@
+	$(X64_CC) $(MPY_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
 $(MPY_OBJS_DIR)/mpport/%.o : $(SRC64_DIR)/mpport/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(X64_CC) $(MPY_CFLAGS) -c $< -o $@
+	$(X64_CC) $(MPY_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
 $(MPY_OBJS_DIR)/shared/runtime/%.o : $(MPY_DIR)/shared/runtime/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(X64_CC) $(MPY_CFLAGS) -c $< -o $@
+	$(X64_CC) $(MPY_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
 $(MPY_OBJS_DIR)/shared/readline/%.o : $(MPY_DIR)/shared/readline/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(X64_CC) $(MPY_CFLAGS) -c $< -o $@
+	$(X64_CC) $(MPY_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
 $(BUILD64_DIR)/app/crt/%.o : $(APP64_DIR)/crt/%.S
 	@$(MKDIR) $(dir $@)
-	$(X64_CC) $(APP64_CFLAGS) -c $< -o $@
+	$(X64_CC) $(APP64_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
 $(BUILD64_DIR)/app/crt/%.o : $(APP64_DIR)/crt/%.c
 	@$(MKDIR) $(dir $@)
-	$(X64_CC) $(APP64_CFLAGS) -c $< -o $@
+	$(X64_CC) $(APP64_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
 APP64_CRT_OBJS = $(BUILD64_DIR)/app/crt/crt0.o $(BUILD64_DIR)/app/crt/syscall.o $(BUILD64_DIR)/app/crt/string.o $(BUILD64_DIR)/app/crt/malloc.o
 
 define APP64_RULES
 $(BUILD64_DIR)/app/$(1)/$(1).o : $(APP64_DIR)/$(1)/$(1).c
 	@$$(MKDIR) $$(dir $$@)
-	$$(X64_CC) $$(APP64_CFLAGS) -c $$< -o $$@
+	$$(X64_CC) $$(APP64_CFLAGS) $$(X64_DEPFLAGS) -c $$< -o $$@
 
 $(BUILD64_DIR)/app/$(1)/$(1).elf : $(BUILD64_DIR)/app/$(1)/$(1).o $$(APP64_CRT_OBJS) $(APP64_DIR)/app64.ld
 	$$(X64_CC) $$(APP64_LDFLAGS) -Wl,-Map=$(BUILD64_DIR)/app/$(1)/$(1).map -o $$@ $(BUILD64_DIR)/app/$(1)/$(1).o $$(APP64_CRT_OBJS)
@@ -346,15 +352,24 @@ endef
 
 $(foreach app,$(APP64_NAMES),$(eval $(call APP64_RULES,$(app))))
 
-$(IMG64_FILE) : $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(APP64_TARGETS)
+$(IMG64_FILE) : $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(APP64_TARGETS) $(MKFAT32)
 	@$(MKDIR) $(IMG64_DIR)
-	$(PYTHON) $(TOOLPATH)/mkfat12_64.py $@ $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(foreach app,$(APP64_NAMES),$(app)=$(BUILD64_DIR)/app/$(app)/$(app).elf)
+	$(PYTHON) $(MKFAT32) $@ $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(foreach app,$(APP64_NAMES),$(app)=$(BUILD64_DIR)/app/$(app)/$(app).elf)
 
 run64: $(IMG64_FILE)
 	$(QEMU) -drive file=$(IMG64_FILE),format=raw,if=ide -boot c -no-reboot -d int -m 512M
 
+# same image on the AHCI path: q35 has no legacy IDE, so this exercises
+# src64/drivers/ahci64.c instead of the ATA PIO fallback
+run64-ahci: $(IMG64_FILE)
+	$(QEMU) -machine q35 -drive file=$(IMG64_FILE),format=raw,if=none,id=disk0 \
+		-device ich9-ahci,id=ahci -device ide-hd,drive=disk0,bus=ahci.0 \
+		-boot c -no-reboot -d int -m 512M
+
 clean64:
 	$(DEL) $(BUILD64_DIR) $(IMG64_DIR)
+
+-include $(shell find $(BUILD64_DIR) -name '*.d' 2>/dev/null)
 
 run: $(IMG_DIR)/haribote.img
 	$(QEMU) -fda $(IMG_DIR)/haribote.img -no-reboot -d int -m 512M

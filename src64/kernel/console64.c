@@ -663,29 +663,15 @@ static int str_starts_with(const char *s, const char *prefix)
 	return 1;
 }
 
-/* 8.3 이름은 UTF-8일 수 있다(예: 나노). 바이트마다 put_utf8_char를 부르면
+/* 이름은 UTF-8이다(긴 이름이든 8.3이든). 바이트마다 put_utf8_char를 부르면
    3바이트 한글이 세 글자로 깨지므로, 모아서 put_bytes로 넘긴다. */
-static void print_file_name(const struct FDINFO64 *finfo)
+static void print_file_name(const char *name)
 {
-	char buf[12];
-	uint16_t i;
 	uint16_t n;
 
-	n = 0;
-	for (i = 0; i < 8; i++) {
-		if (finfo->name[i] != ' ') {
-			buf[n++] = (char) finfo->name[i];
-		}
+	for (n = 0; name[n] != '\0'; n++) {
 	}
-	if (finfo->ext[0] != ' ') {
-		buf[n++] = '.';
-		for (i = 0; i < 3; i++) {
-			if (finfo->ext[i] != ' ') {
-				buf[n++] = (char) finfo->ext[i];
-			}
-		}
-	}
-	put_bytes(buf, n);
+	put_bytes(name, n);
 }
 
 static void print_uint64(uint64_t value)
@@ -788,15 +774,15 @@ static void execute_command(void)
 	} else if (str_eq(input_line, "ls") || str_eq(input_line, "목록")) {
 		uint32_t i;
 		uint32_t count;
-		const struct FDINFO64 *finfo;
+		struct FDINFO64 finfo;
+		char name[FD64_NAME_MAX];
 
 		count = fd64_file_count();
 		for (i = 0; i < count; i++) {
-			finfo = fd64_file_at(i);
-			if (finfo != NULL) {
-				print_file_name(finfo);
+			if (fd64_file_at(i, &finfo, name, sizeof(name)) != 0) {
+				print_file_name(name);
 				console64_puts("  ");
-				print_uint64(finfo->size);
+				print_uint64(finfo.size);
 				console64_puts("\n");
 			}
 		}
@@ -822,8 +808,12 @@ static void execute_command(void)
 		}
 	} else if (str_starts_with(input_line, "run ") || str_starts_with(input_line, "실행 ")) {
 		int status;
+		const char *args;
 
-		status = process64_exec_file(input_line + 4, input_line + 4);
+		/* "실행 " is 7 bytes of UTF-8, "run " is 4: a fixed offset would cut
+		   the Korean form mid-character. */
+		args = input_line + (input_line[0] == 'r' ? 4 : 7);
+		status = process64_exec_file(args, args);
 		console64_puts("exit ");
 		print_uint64((uint64_t) status);
 		console64_puts("\n");
