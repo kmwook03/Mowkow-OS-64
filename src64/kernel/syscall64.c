@@ -27,7 +27,8 @@ static int syscall_open(struct PROCESS64 *process, const char *path, int flags)
 	struct FDHANDLE64 *fh;
 	size_t i;
 
-	if (process64_user_range_valid(path, 1) == 0 || strn_len_user(path, 64) >= 64) {
+	if (process64_user_range_valid(path, 1) == 0 ||
+			strn_len_user(path, FD64_NAME_MAX) >= FD64_NAME_MAX) {
 		return -1;
 	}
 	for (i = 3; i < PROCESS64_MAX_FILES; i++) {

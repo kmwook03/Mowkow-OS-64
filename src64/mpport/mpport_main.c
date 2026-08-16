@@ -74,7 +74,7 @@ void mpport_run_file(const char *path)
 		return;
 	}
 
-	size = fh.finfo->size;
+	size = fh.info.size;
 	buf_addr = memman64_alloc_4k(&memman64, size);
 	if (buf_addr == 0) {
 		console64_puts("out of memory\n");
