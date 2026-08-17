@@ -732,6 +732,22 @@ static void clear_screen(void)
 	cursor_y = 0;
 }
 
+/* Loads and runs cmdline's first token as an app. Returns 0 when there is no
+   such file, so the caller can report an unknown command instead. */
+static int run_program(const char *cmdline)
+{
+	int status;
+
+	status = process64_exec_file(cmdline, cmdline);
+	if (status == -2) {
+		return 0;
+	}
+	console64_puts("exit ");
+	print_uint64((uint64_t) status);
+	console64_puts("\n");
+	return 1;
+}
+
 static void execute_command(void)
 {
 	flush_composing();
@@ -742,7 +758,8 @@ static void execute_command(void)
 		return;
 	}
 	if (str_eq(input_line, "help")) {
-		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY xwindow 창\n");
+		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt py py FILE.PY xwindow 창\n");
+		console64_puts("apps: type the file name, e.g. HELLO or 나노 FILE.TXT\n");
 	} else if (str_eq(input_line, "xwindow") || str_eq(input_line, "window") ||
 			str_eq(input_line, "창")) {
 		gui64_toggle_window();
@@ -807,21 +824,20 @@ static void execute_command(void)
 			console64_puts("\n");
 		}
 	} else if (str_starts_with(input_line, "run ") || str_starts_with(input_line, "실행 ")) {
-		int status;
 		const char *args;
 
 		/* "실행 " is 7 bytes of UTF-8, "run " is 4: a fixed offset would cut
 		   the Korean form mid-character. */
 		args = input_line + (input_line[0] == 'r' ? 4 : 7);
-		status = process64_exec_file(args, args);
-		console64_puts("exit ");
-		print_uint64((uint64_t) status);
-		console64_puts("\n");
+		if (run_program(args) == 0) {
+			console64_puts("file not found\n");
+		}
 	} else if (str_eq(input_line, "py") || str_eq(input_line, "파이썬")) {
 		mpport_repl();
 	} else if (str_starts_with(input_line, "py ")) {
 		mpport_run_file(input_line + 3);
-	} else {
+	} else if (run_program(input_line) == 0) {
+		/* not a builtin and no such executable */
 		console64_puts("unknown command\n");
 	}
 	input_len = 0;
