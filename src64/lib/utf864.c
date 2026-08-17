@@ -1,3 +1,9 @@
+/*
+ * utf864.c -- UTF-8 <-> 유니코드 <-> UTF-16 변환
+ *
+ * 콘솔은 UTF-8을, VFAT 긴 이름은 UTF-16을 쓴다. 둘을 잇는 자리가 여기다.
+ * 다루는 범위는 BMP(U+FFFF 이하)까지다.
+ */
 #include <utf864.h>
 
 int utf8_byte_len64(unsigned char byte)
@@ -83,8 +89,9 @@ int utf8_to_utf16_64(const char *in, uint16_t *out, int max_units)
 	while (*in != '\0') {
 		unicode = utf8_to_unicode64(in, &len);
 		in += len;
-		/* BMP only: a surrogate pair would need two units and a decoder to
-		   match, and no name in this OS needs one */
+		/* BMP까지만 다룬다. 대리 쌍(surrogate pair)을 받으려면 단위 두 개와
+		   그에 맞는 해독기가 필요한데, 이 OS의 파일 이름에는 그런 글자가
+		   쓰이지 않는다. */
 		if (unicode > 0xffff) {
 			unicode = '_';
 		}

@@ -1,3 +1,11 @@
+/*
+ * fd64.c -- FAT32 파일 시스템 (VFAT 긴 이름 포함)
+ *
+ * 아래로는 cache64(되쓰기 섹터 캐시)를 쓰고, 그 아래가 block64다. 이 파일은
+ * 클러스터 사슬과 디렉터리 항목만 다루고 장치는 모른다.
+ *
+ * 디렉터리는 루트 하나뿐이다. 하위 디렉터리는 만들지도, 따라가지도 않는다.
+ */
 #include <block64.h>
 #include <cache64.h>
 #include <fd64.h>
@@ -7,13 +15,14 @@
 
 #define FD64_SECTOR_SIZE BLOCK64_SECTOR_SIZE
 
-/* FAT32: entries at or above this end a chain, and the top 4 bits of every
-   entry are reserved and must survive a write. */
+/* FAT32에서 이 값 이상이면 사슬의 끝이다. 그리고 모든 항목의 위쪽 4비트는
+   예약된 자리라 쓸 때 그대로 살려 두어야 한다. */
 #define FAT32_EOC  0x0ffffff8
 #define FAT32_MASK 0x0fffffff
 #define FAT32_LAST 0x0fffffff
-/* no RTC driver in src64 yet, so stamp every write with a fixed valid date
-   (2026-01-01 00:00) -- host tools reject 0 as a directory timestamp. */
+/* src64에는 아직 RTC 드라이버가 없다. 그래서 쓸 때마다 고정된 날짜
+   (2026-01-01 00:00)를 찍는다. 호스트 도구들이 0을 디렉터리 시각으로
+   받아 주지 않기 때문이다. */
 #define FD64_FIXED_DATE (((2026 - 1980) << 9) | (1 << 5) | 1)
 #define FD64_FIXED_TIME 0
 
@@ -62,14 +71,14 @@ static int cluster_valid(uint32_t cluster)
 	return cluster >= 2 && cluster < FAT32_EOC;
 }
 
-/* Every accessor below returns a pointer into the cache that stays valid only
-   until the next cache64_get. Copy what you need before calling again. */
+/* 아래 접근 함수들이 돌려주는 포인터는 캐시 안을 가리키며, 다음
+   cache64_get을 부르기 전까지만 살아 있다. 필요한 값은 먼저 복사해 둘 것. */
 static uint8_t *fat_entry(uint32_t copy, uint32_t cluster, int mode)
 {
 	uint32_t offset;
 	uint8_t *p;
 
-	/* a 4-byte entry never straddles a 512-byte sector */
+	/* 4바이트짜리 항목은 512바이트 섹터 경계에 걸치지 않는다 */
 	offset = cluster * 4;
 	p = cache64_get(reserved_sectors + copy * sectors_per_fat +
 		offset / bytes_per_sector, mode);
@@ -99,11 +108,11 @@ int fd64_sync(void)
 	int written;
 	int n;
 	uint32_t i;
-	/* File data, then the FAT copies, then directory entries. A failure
-	   between the FAT and the directory leaves orphan clusters, which fsck
-	   repairs; the reverse order would leave a directory entry pointing at
-	   an unwritten chain. The directory lives in the data area on FAT32, so
-	   the ordering comes from the cache's metadata flag, not from the LBA. */
+	/* 파일 데이터, FAT 사본, 디렉터리 항목 순서로 내보낸다. FAT과 디렉터리
+	   사이에서 실패하면 주인 없는 클러스터가 남고 이건 fsck가 고칠 수 있다.
+	   순서를 뒤집으면 아직 쓰이지 않은 사슬을 가리키는 디렉터리 항목이 남는다.
+	   FAT32에서는 디렉터리도 데이터 영역에 있으므로, 이 순서는 LBA가 아니라
+	   캐시의 metadata 표시에서 나온다. */
 	const uint32_t starts[3] = { data_lba, 0, 0 };
 	const uint32_t ends[3] = { 0xffffffff, data_lba, 0xffffffff };
 	const int metas[3] = { 0, 0, 1 };
@@ -115,7 +124,7 @@ int fd64_sync(void)
 	for (i = 0; i < 3; i++) {
 		n = cache64_flush(starts[i], ends[i], metas[i]);
 		if (n < 0) {
-			/* keep what reached the disk, drop the rest, report the error */
+			/* 디스크까지 간 것은 두고 나머지는 버린 뒤 오류를 알린다 */
 			cache64_discard_dirty();
 			return -1;
 		}
@@ -152,7 +161,7 @@ static int fat_set(uint32_t cluster, uint32_t value)
 		if (p == NULL) {
 			return -1;
 		}
-		/* the top 4 bits of a FAT32 entry are reserved: preserve them */
+		/* FAT32 항목의 위쪽 4비트는 예약된 자리다. 그대로 살려 둔다. */
 		old = read32(p) & 0xf0000000;
 		old |= value & FAT32_MASK;
 		p[0] = (uint8_t) old;
@@ -168,9 +177,9 @@ static uint32_t alloc_cluster(void)
 	uint32_t c;
 	uint32_t scanned;
 
-	/* ponytail: linear scan, but resuming from the last allocation instead
-	   of from cluster 2 -- with 128046 clusters, restarting every time made
-	   a multi-cluster write quadratic. */
+	/* ponytail: 선형 탐색이지만 클러스터 2가 아니라 지난번에 할당한 자리부터
+	   이어서 본다. 클러스터가 128046개라 매번 처음부터 찾으면 여러 클러스터에
+	   걸친 쓰기가 제곱으로 느려졌다. */
 	c = alloc_hint;
 	for (scanned = 0; scanned <= max_cluster - 2; scanned++) {
 		if (c > max_cluster) {
@@ -222,8 +231,8 @@ static int zero_cluster(uint32_t cluster)
 	return 0;
 }
 
-/* Advances to the next directory slot, following the chain. Returns 0 at the
-   end of the chain; `grow` links a fresh zeroed cluster instead. */
+/* 사슬을 따라 다음 디렉터리 자리로 넘어간다. 사슬 끝이면 0을 돌려주고,
+   `grow`가 참이면 대신 0으로 채운 클러스터를 새로 이어 붙인다. */
 static int dir_advance(struct FDPOS64 *pos, int grow)
 {
 	uint32_t next;
@@ -254,21 +263,20 @@ static void dir_first(struct FDPOS64 *pos)
 	pos->offset = 0;
 }
 
-/* ---- VFAT long names ----------------------------------------------------
-   A long name is stored in the entries physically *before* its 8.3 entry, in
-   reverse order: the entry carrying the last 13 UTF-16 units comes first and
-   is flagged LFN_LAST. Every long entry repeats a checksum of the 8.3 name,
-   which is what ties the two together. */
+/* ---- VFAT 긴 이름 ------------------------------------------------------
+   긴 이름은 8.3 항목보다 물리적으로 *앞*에, 그것도 거꾸로 놓인다. 마지막
+   UTF-16 13단위를 담은 항목이 맨 앞에 오고 LFN_LAST 표시를 단다. 긴 항목
+   마다 8.3 이름의 검사합이 들어 있고, 둘을 묶어 주는 것이 바로 그 값이다. */
 
 #define LFN_ATTR 0x0f
 #define LFN_LAST 0x40
 #define LFN_UNITS_PER_ENTRY 13
 #define LFN_MAX_ENTRIES (FD64_LFN_MAX_UNITS / LFN_UNITS_PER_ENTRY)
-/* NT case flags: an all-lowercase 8.3 name is stored upper case plus a hint,
-   instead of spending long entries on it. Linux and Windows both honour it. */
+/* NT 대소문자 표시. 전부 소문자인 8.3 이름은 긴 항목을 쓰는 대신 대문자로
+   저장하고 힌트 비트만 남긴다. 리눅스와 윈도우 모두 이 표시를 따른다. */
 #define NT_LOWER_BASE 0x08
 #define NT_LOWER_EXT 0x10
-/* bound on directory scanning, so a corrupt chain cannot loop forever */
+/* 디렉터리 훑기의 상한. 사슬이 망가져도 무한히 돌지 않게 한다. */
 #define DIR_SCAN_LIMIT 8192
 
 struct LFN64_STATE {
@@ -280,8 +288,8 @@ struct LFN64_STATE {
 
 static int is_file_entry(const struct FDINFO64 *finfo)
 {
-	/* 0x08 volume label, 0x10 directory, 0x0f long-name entry (0x0f & 0x18
-	   is 0x08, so long entries are skipped too) */
+	/* 0x08 볼륨 이름, 0x10 디렉터리, 0x0f 긴 이름 항목
+	   (0x0f & 0x18 == 0x08이라 긴 이름 항목도 같이 걸러진다) */
 	return finfo->name[0] != 0xe5 && (finfo->type & 0x18) == 0;
 }
 
@@ -360,7 +368,7 @@ static uint8_t short_checksum(const uint8_t name11[FD64_NAME_LEN])
 	return sum;
 }
 
-/* byte offset of long-name unit `i` inside a 32-byte entry */
+/* 32바이트 항목 안에서 긴 이름 `i`번째 단위의 바이트 위치 */
 static uint32_t lfn_unit_offset(int i)
 {
 	if (i < 5) {
@@ -372,7 +380,7 @@ static uint32_t lfn_unit_offset(int i)
 	return 28 + ((uint32_t) i - 11) * 2;
 }
 
-/* renders the 8.3 name as text, applying the NT lower-case hints */
+/* NT 소문자 힌트를 적용해 8.3 이름을 글자로 옮긴다 */
 static void short_name_text(const struct FDINFO64 *finfo, char *out, size_t out_size)
 {
 	size_t n;
@@ -417,7 +425,7 @@ static void lfn_collect(struct LFN64_STATE *st, const uint8_t *raw)
 	if ((raw[0] & LFN_LAST) != 0) {
 		lfn_reset(st);
 		if (ord == 0 || ord > LFN_MAX_ENTRIES) {
-			return;		/* longer than this kernel accepts */
+			return;		/* 이 커널이 받는 길이를 넘었다 */
 		}
 		st->checksum = raw[13];
 		st->units_total = ord * LFN_UNITS_PER_ENTRY;
@@ -436,7 +444,7 @@ static void lfn_collect(struct LFN64_STATE *st, const uint8_t *raw)
 	st->next_ord = (uint8_t) (ord - 1);
 }
 
-/* 1 when a complete long name whose checksum matches `finfo` was collected */
+/* 검사합이 `finfo`와 맞는 긴 이름을 온전히 모았으면 1 */
 static int lfn_finish(const struct LFN64_STATE *st, const struct FDINFO64 *finfo,
 	char *out, size_t out_size)
 {
@@ -457,9 +465,9 @@ static int lfn_finish(const struct LFN64_STATE *st, const struct FDINFO64 *finfo
 	return utf16_to_utf8_64(st->units, units, out, (int) out_size) > 0;
 }
 
-/* Returns the next real file entry at or after *pos, leaving *pos on the slot
-   after it. `at` receives the 8.3 entry's location, `name` its long name when
-   it has one and its 8.3 name otherwise. */
+/* *pos 이후(그 자리 포함)의 진짜 파일 항목을 찾아 돌려주고, *pos를 그 다음
+   자리로 옮긴다. `at`에는 8.3 항목의 위치가, `name`에는 긴 이름이(없으면
+   8.3 이름이) 담긴다. */
 static int dir_scan_next(struct FDPOS64 *pos, struct FDINFO64 *out,
 	struct FDPOS64 *at, char *name, size_t name_size)
 {
@@ -545,14 +553,14 @@ int fd64_init(void)
 	if (total_sectors <= data_lba) {
 		return -1;
 	}
-	/* the BPB is on-disk data: refuse to mount a volume that claims more
-	   sectors than the drive has, rather than writing past its end */
+	/* BPB는 디스크에서 읽어 온 값이다. 드라이브보다 큰 섹터 수를 주장하는
+	   볼륨은 끝을 넘어 쓰기 전에 마운트를 거절한다. */
 	device_sectors = block64_sector_count();
 	if (device_sectors != 0 && total_sectors > device_sectors) {
 		return -1;
 	}
 	max_cluster = (total_sectors - data_lba) / sectors_per_cluster + 1;
-	/* never index past the FAT itself, however large the volume claims to be */
+	/* 볼륨이 아무리 크다고 우겨도 FAT 자체를 넘어서 접근하지 않는다 */
 	fat_capacity = sectors_per_fat * (bytes_per_sector / 4) - 1;
 	if (max_cluster > fat_capacity) {
 		max_cluster = fat_capacity;
@@ -578,9 +586,9 @@ uint32_t fd64_file_count(void)
 	return count;
 }
 
-/* ponytail: rescans from the first entry per call, so listing a directory is
-   quadratic in its entry count; fine for the tens of files this OS holds,
-   worth an iterator if a listing ever gets slow. */
+/* ponytail: 부를 때마다 첫 항목부터 다시 훑으므로 목록 보기가 항목 수의
+   제곱이다. 이 OS가 담는 수십 개 파일에는 문제가 없고, 목록이 느려지면
+   그때 반복자를 만든다. */
 int fd64_file_at(uint32_t index, struct FDINFO64 *out, char *name, size_t name_size)
 {
 	struct FDPOS64 pos;
@@ -617,8 +625,8 @@ int fd64_open(struct FDHANDLE64 *fh, const char *name)
 	make_name83(name83, name);
 	dir_first(&pos);
 	while (dir_scan_next(&pos, &entry, &at, found, sizeof(found)) != 0) {
-		/* match the long name first, then the 8.3 name, so a file can be
-		   opened by either spelling */
+		/* 긴 이름을 먼저, 그다음 8.3 이름을 견준다. 어느 쪽 철자로도 파일을
+		   열 수 있게 하기 위해서다. */
 		if (name_eq_ci(found, name) != 0 || name_eq83(&entry, name83) != 0) {
 			fh->info = entry;
 			fh->dir = at;
@@ -649,7 +657,7 @@ size_t fd64_read(struct FDHANDLE64 *fh, void *dst, size_t request_size)
 	read_size = 0;
 	while (request_size > 0 && fh->pos < fh->info.size && cluster_valid(fh->cluster)) {
 		offset = fh->pos % cb;
-		/* one cached sector at a time -- a cluster is not contiguous in RAM */
+		/* 캐시된 섹터 하나씩 다룬다. 클러스터가 메모리에서 이어져 있지 않다. */
 		chunk = request_size;
 		limit = bytes_per_sector - offset % bytes_per_sector;
 		if (chunk > limit) {
@@ -716,7 +724,7 @@ int fd64_seek(struct FDHANDLE64 *fh, int64_t offset, int whence)
 	return 0;
 }
 
-/* maps one character into the 8.3 charset; 0 when it has no representation */
+/* 글자 하나를 8.3 문자 집합으로 옮긴다. 옮길 수 없으면 0. */
 static char shortname_char(char c)
 {
 	const char *ok = "$%'-_@~`!(){}^#&";
@@ -736,8 +744,8 @@ static char shortname_char(char c)
 	return 0;
 }
 
-/* Builds the 8.3 name. *lossy is set when the result does not spell the
-   original back, which is exactly when long entries are needed. */
+/* 8.3 이름을 만든다. 결과를 되읽어도 원래 이름이 나오지 않으면 *lossy를
+   세우는데, 그때가 바로 긴 항목이 필요한 경우다. */
 static void make_shortname(uint8_t out[FD64_NAME_LEN], const char *name, int *lossy)
 {
 	uint32_t i;
@@ -752,7 +760,7 @@ static void make_shortname(uint8_t out[FD64_NAME_LEN], const char *name, int *lo
 	dot = 0;
 	for (i = 0; name[i] != '\0'; i++) {
 		if (name[i] == '.') {
-			dot = i;		/* last dot separates the extension */
+			dot = i;		/* 마지막 점이 확장자를 가른다 */
 		}
 	}
 	n = 0;
@@ -802,7 +810,7 @@ static int name_eq(const char *a, const char *b)
 	return *a == *b;
 }
 
-/* NT_LOWER_* for whichever half of the name carries no upper-case ASCII */
+/* 이름의 두 부분 중 대문자 ASCII가 없는 쪽에 NT_LOWER_*를 세운다 */
 static uint8_t shortname_case_flags(const char *name)
 {
 	uint8_t flags;
@@ -836,7 +844,7 @@ static int shortname_taken(const uint8_t name11[FD64_NAME_LEN])
 	return 0;
 }
 
-/* rewrites the basis name as BASE~N until it is unique; 0 when it cannot be */
+/* 겹치지 않을 때까지 이름을 BASE~N 꼴로 바꾼다. 못 만들면 0. */
 static int shortname_unique(uint8_t name11[FD64_NAME_LEN])
 {
 	uint8_t basis[FD64_NAME_LEN];
@@ -892,9 +900,9 @@ static int lfn_write_entry(const struct FDPOS64 *pos, const uint16_t *units,
 		if (index < units_total) {
 			unit = units[index];
 		} else if (index == units_total) {
-			unit = 0x0000;		/* terminator */
+			unit = 0x0000;		/* 끝 표시 */
 		} else {
-			unit = 0xffff;		/* padding */
+			unit = 0xffff;		/* 채움 */
 		}
 		offset = lfn_unit_offset(i);
 		raw[offset] = (uint8_t) unit;
@@ -903,8 +911,8 @@ static int lfn_write_entry(const struct FDPOS64 *pos, const uint16_t *units,
 	return 0;
 }
 
-/* Finds `need` consecutive free slots, growing the directory chain when the
-   run does not fit in what already exists. */
+/* 비어 있는 자리 `need`개가 잇달아 있는 곳을 찾는다. 지금 있는 디렉터리
+   안에 그만한 자리가 없으면 사슬을 늘려서 만든다. */
 static int dir_find_run(struct FDPOS64 *start, uint32_t need)
 {
 	struct FDPOS64 pos;
@@ -961,14 +969,14 @@ int fd64_create(struct FDHANDLE64 *fh, const char *name)
 	}
 	units_total = utf8_to_utf16_64(name, units, FD64_LFN_MAX_UNITS);
 	if (units_total <= 0) {
-		return 0;		/* empty, or longer than this kernel accepts */
+		return 0;		/* 비었거나, 이 커널이 받는 길이를 넘었다 */
 	}
 	make_shortname(name11, name, &lossy);
 	for (j = 0; j < sizeof(struct FDINFO64); j++) {
 		((uint8_t *) &fh->info)[j] = 0;
 	}
-	/* An 8.3 name that spells the request back exactly needs no long
-	   entries; a pure case difference is carried by the NT hints instead. */
+	/* 8.3 이름만으로 요청한 철자가 그대로 되살아나면 긴 항목이 필요 없다.
+	   대소문자만 다른 경우는 NT 힌트가 대신 실어 나른다. */
 	entries = 0;
 	if (lossy == 0) {
 		probe = fh->info;
@@ -1048,8 +1056,8 @@ size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
 		}
 		info_set_cluster(&fh->info, cluster);
 	}
-	/* ponytail: walk the chain from the start once per call to find the
-	   cluster holding fh->pos; cache it in the handle if appends get hot. */
+	/* ponytail: fh->pos가 든 클러스터를 찾으려고 부를 때마다 사슬을 처음부터
+	   따라간다. 이어 쓰기가 잦아지면 핸들에 이 값을 기억해 두면 된다. */
 	cluster = info_cluster(&fh->info);
 	for (index = fh->pos / cb; index > 0; index--) {
 		next = fd64_next_cluster(cluster);
@@ -1100,9 +1108,9 @@ size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
 	if (dir_write(fh) != 0) {
 		return 0;
 	}
-	/* ponytail: write through on every call -- no flush syscall, no data
-	   lost to a QEMU kill. Batch behind an explicit fd64_sync() if PIO
-	   write cost ever shows up. */
+	/* ponytail: 부를 때마다 디스크까지 바로 쓴다. 따로 flush 시스템 콜이 없고,
+	   QEMU를 강제로 끊어도 잃는 데이터가 없다. PIO 쓰기 비용이 문제가 되면
+	   그때 fd64_sync()로 모아서 내보내면 된다. */
 	if (fd64_sync() < 0) {
 		return 0;
 	}

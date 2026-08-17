@@ -1,3 +1,9 @@
+/*
+ * elf64_loader.c -- 정적 ELF64 적재기
+ *
+ * ET_EXEC, EM_X86_64, PT_LOAD 세그먼트만 다룬다. 동적 링크도, 재배치도 없다.
+ * 이미지는 [USER_IMAGE_MIN, USER_IMAGE_MAX) 창 안에만 놓을 수 있다.
+ */
 #include <elf64_loader.h>
 #include <fd64.h>
 #include <memory64.h>

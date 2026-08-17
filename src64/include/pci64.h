@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-/* bus:device:function packed as (bus << 8) | (device << 3) | function */
+/* 버스:장치:기능을 (bus << 8) | (device << 3) | function 으로 묶은 값 */
 #define PCI64_NONE 0xffffffff
 
 #define PCI64_REG_COMMAND 0x04
@@ -14,7 +14,7 @@
 
 uint32_t pci64_read32(uint32_t bdf, uint8_t offset);
 void pci64_write32(uint32_t bdf, uint8_t offset, uint32_t value);
-/* first device matching class/subclass, PCI64_NONE when there is none */
+/* 클래스/서브클래스가 맞는 첫 장치. 없으면 PCI64_NONE. */
 uint32_t pci64_find_class(uint8_t class_code, uint8_t subclass);
 
 #endif

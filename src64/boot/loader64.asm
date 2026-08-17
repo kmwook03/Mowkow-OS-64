@@ -54,17 +54,15 @@ print_string:
 .done:
 	ret
 
-; BIOS int 13h AH=42h caps a single extended-read request at 128 sectors
-; (64 KiB) on this BIOS -- confirmed empirically, request silently fails
-; past that. Loop in <=128-sector chunks to support any KERNEL_SECTORS size.
+; 이 BIOS의 int 13h AH=42h는 한 번에 128섹터(64KiB)까지만 읽는다. 실제로
+; 시험해 확인했고, 그보다 크게 요청하면 아무 말 없이 실패한다. 그래서
+; KERNEL_SECTORS가 얼마든 128섹터 이하로 잘라 가며 돈다.
 ;
-; int 0x13 does NOT preserve EAX across calls (SeaBIOS uses it internally
-; for LBA math) -- confirmed empirically via DAP dumps: keeping the running
-; LBA accumulator live in eax across the interrupt made it revert to a
-; stale value after the 3rd call (49,177,305,177,305,... instead of
-; continuing 433,561,689,817,...), corrupting every chunk from the 4th
-; onward. CX (sectors left) and BX (segment) verified to survive fine, so
-; only the LBA accumulator needs to move to memory.
+; int 0x13은 EAX를 보존하지 않는다(SeaBIOS가 내부 LBA 계산에 쓴다). DAP를
+; 찍어 보며 확인했다. 진행 중인 LBA 값을 eax에 담아 둔 채 인터럽트를 부르면
+; 세 번째 호출 뒤부터 예전 값으로 돌아갔고(433,561,689,817,... 로 이어지지
+; 않고 49,177,305,177,305,...), 네 번째 덩어리부터 전부 깨졌다. CX(남은 섹터
+; 수)와 BX(세그먼트)는 살아남는 것을 확인했으므로, LBA 값만 메모리로 옮긴다.
 read_kernel:
 	mov cx, KERNEL_SECTORS
 	mov bx, kernel_load_real >> 4

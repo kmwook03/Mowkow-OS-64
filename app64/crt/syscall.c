@@ -1,3 +1,9 @@
+/*
+ * syscall.c -- 앱에서 쓰는 시스템 콜 감싸개
+ *
+ * 번호를 rax에, 인수를 rdi/rsi/rdx/r10/r8/r9에 넣고 int 0x80을 부른다.
+ * 커널과 맞춰야 하는 규약은 src64/include/syscall64.h에 있다.
+ */
 #include <mowos.h>
 #include <syscall.h>
 

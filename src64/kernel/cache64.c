@@ -1,7 +1,12 @@
-/* Writeback sector cache. Direct-mapped, 4 KiB blocks, 4 MiB total.
-   ponytail: direct-mapped; go 2-way set-associative only if profiling shows
-   thrash. FAT blocks sit at low LBAs and file data at high ones, so aliasing
-   pressure is low. */
+/*
+ * cache64.c -- 섹터 캐시 (되쓰기 방식)
+ *
+ * 4KiB 블록, 전체 4MiB, 직접 사상. 블록마다 metadata 표시가 있어서
+ * fd64_sync가 데이터와 메타데이터를 나눠 내보낼 수 있다.
+ *
+ * ponytail: 직접 사상이다. 충돌이 잦다고 측정되면 그때 2-way로 바꾼다.
+ * FAT 블록은 낮은 LBA, 파일 데이터는 높은 LBA에 있어 겹칠 일이 적다.
+ */
 #include <block64.h>
 #include <cache64.h>
 #include <memory64.h>
@@ -25,7 +30,7 @@ static uint8_t *block_data(uint32_t index)
 	return cache_data + (size_t) index * BLOCK_BYTES;
 }
 
-/* returns sectors written, 0 if nothing to do, -1 on I/O error */
+/* 내보낸 섹터 수를 돌려준다. 할 일이 없으면 0, 입출력 오류면 -1. */
 static int write_back(uint32_t index)
 {
 	if (blocks[index].valid == 0 || blocks[index].dirty == 0) {
@@ -85,8 +90,8 @@ uint8_t *cache64_get(uint32_t lba, int mode)
 	}
 	if (mode != CACHE64_READ) {
 		blocks[index].dirty = 1;
-		/* sticky: a block holding any metadata flushes in the metadata
-		   phase, even if it also holds file data */
+		/* 한 번 metadata로 표시된 블록은 파일 데이터를 같이 담고 있어도
+		   메타데이터 단계에서 내보낸다. */
 		if (mode == CACHE64_WRITE_META) {
 			blocks[index].meta = 1;
 		}

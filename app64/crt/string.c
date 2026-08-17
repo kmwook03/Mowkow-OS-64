@@ -1,3 +1,8 @@
+/*
+ * string.c -- 앱용 최소 문자열/메모리 함수
+ *
+ * libc가 없으므로 앱이 쓰는 만큼만 직접 둔다.
+ */
 #include <mowos.h>
 
 size_t strlen(const char *s)

@@ -1,3 +1,12 @@
+/*
+ * process64.c -- 유저 프로세스
+ *
+ * ELF64를 올리고, 스택과 힙을 붙이고, 링 3으로 들어갔다가 돌아오는 자리다.
+ * 열린 파일 표도 프로세스마다 하나씩 갖고 있다.
+ *
+ * 페이즈 1(주소 공간 분리) 전이라 상주 프로세스는 한 번에 하나뿐이고,
+ * 이미지는 모두 같은 고정 창에 올라간다.
+ */
 #include <asmfunc64.h>
 #include <console64.h>
 #include <dsctbl64.h>
@@ -112,8 +121,8 @@ int process64_current_exit_status(void)
 	return current_process != NULL ? current_process->exit_status : -1;
 }
 
-/* returns the initial user rsp: below the argv block, so the app's own
-   frames cannot overwrite its arguments. */
+/* 유저 스택의 첫 rsp를 돌려준다. argv 묶음보다 아래라 앱이 쌓는 스택
+   프레임이 자기 인수를 덮어쓰지 않는다. */
 static uintptr_t setup_args(struct PROCESS64 *process, const char *cmdline, uint64_t *argc_out, uintptr_t *argv_out)
 {
 	uintptr_t sp;
@@ -263,8 +272,8 @@ int process64_exec_file(const char *path, const char *cmdline)
 	struct TASK64 *task;
 	int status;
 
-	/* "cat test.txt" arrives as one string: the executable is the first
-	   token, the rest is argv for setup_args(). */
+	/* "cat test.txt"는 한 문자열로 들어온다. 앞 토큰이 실행 파일이고 나머지는
+	   setup_args()에 넘길 argv다. */
 	for (name_len = 0; name_len < sizeof(name) - 1; name_len++) {
 		if (path[name_len] == '\0' || path[name_len] == ' ') {
 			break;

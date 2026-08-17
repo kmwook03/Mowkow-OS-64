@@ -1,5 +1,10 @@
-/* Transport selection and partition offset. Everything above this file works
-   in filesystem-relative LBAs and never learns which controller answered. */
+/*
+ * block64.c -- 저장 장치 전송 계층 고르기와 파티션 시작 위치
+ *
+ * 위쪽(캐시, 파일 시스템)은 파일 시스템 기준 LBA만 쓰고, 어느 컨트롤러가
+ * 응답했는지는 끝까지 모른다. 전송 계층을 하나 더 붙이려면 struct
+ * BLOCK64_OPS만 채우면 되고 위쪽은 그대로 둔다.
+ */
 #include <block64.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -15,13 +20,13 @@ static uint32_t read32(const uint8_t *p)
 
 static int looks_like_fat(const uint8_t *sector)
 {
-	/* filesystem type strings: FAT12/16 at 0x36, FAT32 at 0x52 */
+	/* 파일 시스템 종류 문자열: FAT12/16은 0x36, FAT32는 0x52에 있다. */
 	return (sector[54] == 'F' && sector[55] == 'A' && sector[56] == 'T') ||
 		(sector[82] == 'F' && sector[83] == 'A' && sector[84] == 'T');
 }
 
-/* Sets part_base from the MBR when sector 0 carries one. The shipped image is
-   a superfloppy (filesystem at LBA 0), so the common answer is 0. */
+/* 0번 섹터에 MBR이 있으면 거기서 part_base를 정한다. 우리가 만드는 이미지는
+   슈퍼플로피(LBA 0부터 파일 시스템)라서 보통은 0이 답이다. */
 static void find_partition(void)
 {
 	uint8_t sector[BLOCK64_SECTOR_SIZE];
@@ -42,8 +47,8 @@ static void find_partition(void)
 		if (entry[4] == 0x00 || start == 0) {
 			continue;
 		}
-		/* trust the entry only if a filesystem really starts there: our own
-		   boot sector also ends in 0x55aa and must not be read as an MBR */
+		/* 그 자리에 진짜 파일 시스템이 있을 때만 믿는다. 우리 부트 섹터도
+		   0x55aa로 끝나므로 MBR로 잘못 읽으면 안 된다. */
 		if (ops->read(start, 1, sector) != 0 || looks_like_fat(sector) == 0) {
 			continue;
 		}

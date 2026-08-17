@@ -6,14 +6,12 @@
 
 #define MEMMAN64_FREES 4090
 /*
- * Raised from 0x200000 (Stage 4, python_porting.md): with the MicroPython
- * GC heap now baked into the kernel's .bss, the old 2MiB boundary left
- * only ~250KiB of headroom for it. Nothing else is hardcoded against this
- * address (identity-mapped 2MB pages cover the whole range regardless) --
- * it's purely a policy line for where kernel-static .bss ends and the
- * dynamically-managed early allocator begins. 4MiB is generous against a
- * 512MB system, matching the same "budget generously" approach as
- * KERNEL64_SECTORS (Stage 0.3).
+ * 0x200000에서 올렸다(Stage 4, python_porting.md). MicroPython GC 힙이
+ * 커널 .bss에 들어오면서 예전 2MiB 경계로는 여유가 250KiB밖에 남지 않았다.
+ * 이 주소에 맞춰 고정된 것은 아무것도 없다(항등 사상 2MB 페이지가 어차피
+ * 전 범위를 덮는다). 커널 정적 .bss가 끝나고 초기 할당기가 시작하는 자리를
+ * 어디로 볼지 정하는 정책 값일 뿐이다. 512MB 시스템에서 4MiB는 넉넉하며,
+ * KERNEL64_SECTORS와 같은 "넉넉하게 잡는다" 방침을 따른다(Stage 0.3).
  */
 /*
  * 0x00800000에서 시작하는 이유: 유저 이미지 창 [0x400000, 0x800000)은

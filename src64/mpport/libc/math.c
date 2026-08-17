@@ -3,21 +3,18 @@
 #include <stdint.h>
 
 /*
- * Every function here is called (from objfloat.c, formatfloat.c,
- * modbuiltins.c, ...) as a plain out-of-line call -- with -ffreestanding,
- * GCC does NOT implicitly treat a bare `isnan(x)` call in another
- * translation unit as equivalent to __builtin_isnan, so a real exported
- * symbol is required regardless of how simple the operation is. Confirmed
- * by the link failing on all of these once MICROPY_PY_BUILTINS_FLOAT was
- * turned on (Stage 4).
+ * 여기 있는 함수들은 코어(objfloat.c, formatfloat.c, modbuiltins.c 등)에서
+ * 평범한 함수 호출로 불린다. -ffreestanding에서는 다른 번역 단위의
+ * `isnan(x)` 호출을 GCC가 __builtin_isnan으로 알아서 바꿔 주지 않으므로,
+ * 아무리 간단한 연산이라도 진짜 심볼이 있어야 한다.
+ * MICROPY_PY_BUILTINS_FLOAT을 켜자 이 이름들이 전부 링크 오류로 나온 것으로
+ * 확인했다(Stage 4).
  *
- * Within a function that defines the identically-named symbol, though,
- * __builtin_X reliably compiles to a real inline instruction (sqrtsd,
- * andpd, fprem, ...) for all of these except pow/nan, which have no
- * hardware equivalent and would otherwise degrade to calling a libm
- * function of the same name -- i.e. calling straight back into us
- * (confirmed: compiled to an infinite self-jump). Those two get real
- * implementations instead of a __builtin_ wrapper.
+ * 반대로 같은 이름의 함수 안에서 부르는 __builtin_X는 진짜 명령(sqrtsd,
+ * andpd, fprem, ...)으로 잘 내려간다. 다만 pow와 nan은 대응하는 명령이 없어
+ * 같은 이름의 libm 함수 호출로 바뀌는데, 그러면 자기 자신을 다시 부르게
+ * 된다(무한히 자기에게 뛰는 코드로 컴파일되는 것을 확인했다). 그 둘은
+ * __builtin_ 감싸개 대신 직접 구현한다.
  */
 
 int isnan(double x)
@@ -51,15 +48,15 @@ double fabs(double x)
 }
 
 /*
- * __builtin_sqrt/__builtin_fmod only lower to real instructions (sqrtsd,
- * fprem) at higher optimization levels -- our real build flags (X64_CFLAGS)
- * carry no -O, i.e. -O0, where GCC emits a call to an external "sqrt"/
- * "fmod" instead, straight back into us. Same self-reference class of bug
- * as pow/nan/nearbyint, just level-dependent rather than always-broken --
- * caught by disassembling the actual build64/upy object, not a -O2 test
- * build. Direct inline asm sidesteps the optimization-level dependency
- * entirely. Both verified bit-exact against glibc across several cases
- * (including negative/fractional fmod operands) before use here.
+ * __builtin_sqrt/__builtin_fmod는 최적화 수준이 높을 때만 진짜 명령
+ * (sqrtsd, fprem)으로 내려간다. 우리 빌드 옵션(X64_CFLAGS)에는 -O가 없어
+ * 사실상 -O0이고, 그러면 GCC가 외부 "sqrt"/"fmod" 호출을 내보내 결국
+ * 자기 자신을 다시 부른다. pow/nan/nearbyint와 같은 종류의 자기 참조
+ * 문제인데, 늘 깨지는 것이 아니라 최적화 수준에 따라 달라진다. -O2 시험
+ * 빌드가 아니라 실제 build64/upy 오브젝트를 역어셈블해서 잡았다. 인라인
+ * 어셈블리로 직접 쓰면 최적화 수준과 무관해진다. 두 함수 모두 쓰기 전에
+ * glibc와 비트 단위로 같은지 여러 경우로 확인했다(음수와 소수 fmod 인수
+ * 포함).
  */
 double sqrt(double x)
 {
@@ -77,11 +74,11 @@ double fmod(double x, double y)
 		"fldl %2\n\t"          /* st0 = y */
 		"fldl %1\n\t"          /* st0 = x, st1 = y */
 		"1:\n\t"
-		"fprem\n\t"            /* st0 = partial remainder of st0/st1 */
+		"fprem\n\t"            /* st0 = st0/st1의 부분 나머지 */
 		"fnstsw %%ax\n\t"
-		"testb $4, %%ah\n\t"   /* C2: reduction incomplete, needs another pass */
+		"testb $4, %%ah\n\t"   /* C2: 아직 덜 줄었다, 한 번 더 */
 		"jnz 1b\n\t"
-		"fstp %%st(1)\n\t"     /* pop y, remainder stays in st0 */
+		"fstp %%st(1)\n\t"     /* y를 버린다, 나머지는 st0에 남는다 */
 		"fstpl %0\n\t"
 		: "=m" (result)
 		: "m" (x), "m" (y)
@@ -91,15 +88,12 @@ double fmod(double x, double y)
 }
 
 /*
- * __builtin_nearbyint compiles to a call to an external "nearbyint" (no
- * SSE4.1 roundsd assumed on this baseline target) -- same self-reference
- * problem as pow/nan, caught the same way: a real crash under `round()`
- * in a live QEMU test (infinite #UD-or-similar fault loop, our exception
- * handler stuck re-printing the same faulting rip). frndint is x87's
- * direct "round per FPU control word" instruction
- * instruction (default: round-to-nearest-even) -- verified bit-exact
- * against glibc's nearbyint() across half-to-even, negative, and zero
- * cases before use here.
+ * __builtin_nearbyint는 외부 "nearbyint" 호출로 컴파일된다(이 기본 대상
+ * 에서는 SSE4.1 roundsd를 가정하지 않는다). pow/nan과 같은 자기 참조
+ * 문제이고 잡은 방식도 같다. QEMU에서 round()를 부르자 실제로 죽었다
+ * (같은 rip를 계속 다시 찍는 예외 반복). frndint는 FPU 제어 워드에 따라
+ * 반올림하는 x87 명령이다(기본값은 짝수로 반올림). 쓰기 전에 glibc의
+ * nearbyint()와 비트 단위로 같은지 확인했다(0.5 경계, 음수, 0 포함).
  */
 double nearbyint(double x)
 {
@@ -124,15 +118,15 @@ double nan(const char *tagp)
 	} v;
 
 	(void) tagp;
-	v.bits = 0x7ff8000000000000ULL; /* quiet NaN, payload unused */
+	v.bits = 0x7ff8000000000000ULL; /* quiet NaN, 페이로드는 쓰지 않는다 */
 	return v.value;
 }
 
 /*
- * x^y = 2^(y*log2(x)), computed via the classic x87 fyl2x/f2xm1/fscale
- * sequence -- verified against glibc's pow() for a spread of integer,
- * fractional, and negative exponents (all bit-exact) before use here.
- * Only valid for x > 0; special cases handled in C below.
+ * x^y = 2^(y*log2(x)). x87의 고전적인 fyl2x/f2xm1/fscale 차례로 계산한다.
+ * 쓰기 전에 정수, 소수, 음수 지수를 두루 넣어 glibc의 pow()와 비트 단위로
+ * 같은지 확인했다. x > 0에서만 맞고, 나머지 경우는 아래 C 코드에서 따로
+ * 처리한다.
  */
 static double pow_positive(double x, double y)
 {
@@ -145,12 +139,12 @@ static double pow_positive(double x, double y)
 		"fld %%st(0)\n\t"             /* st0 = st1 = y*log2(x) */
 		"frndint\n\t"                 /* st0 = round(y*log2(x)), st1 = y*log2(x) */
 		"fxch %%st(1)\n\t"            /* st0 = y*log2(x), st1 = round(...) */
-		"fsub %%st(1), %%st(0)\n\t"   /* st0 = fractional part, in [-0.5, 0.5] */
+		"fsub %%st(1), %%st(0)\n\t"   /* st0 = 소수부, [-0.5, 0.5] */
 		"f2xm1\n\t"                   /* st0 = 2^frac - 1 */
 		"fld1\n\t"
 		"faddp\n\t"                   /* st0 = 2^frac */
 		"fscale\n\t"                  /* st0 = 2^frac * 2^round(...) */
-		"fstp %%st(1)\n\t"            /* drop the leftover integer part */
+		"fstp %%st(1)\n\t"            /* 남은 정수부를 버린다 */
 		"fstpl %0\n\t"
 		: "=m" (result)
 		: "m" (y), "m" (x)
@@ -175,8 +169,7 @@ double pow(double x, double y)
 		double r = pow_positive(-x, y);
 
 		if (iy != y) {
-			/* Negative base with a non-integer exponent has no
-			 * real result. */
+			/* 밑이 음수인데 지수가 정수가 아니면 실수 해가 없다. */
 			return nan("");
 		}
 		return (((int64_t) iy) & 1) ? -r : r;

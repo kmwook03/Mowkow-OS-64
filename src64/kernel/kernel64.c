@@ -1,3 +1,13 @@
+/*
+ * kernel64.c -- 커널 진입점
+ *
+ * loader64.asm이 롱 모드로 들어온 뒤 여기로 뛴다. 초기화 순서에는 의존
+ * 관계가 있다. GDT/IDT -> 메모리 -> 파일 시스템 -> 글꼴 -> 콘솔 -> 태스크
+ * -> 이벤트 큐와 PIT/키보드 -> PIC -> sti.
+ *
+ * 콘솔이 뜨기 전에는 COM1(시리얼)이 유일한 출력 통로다. 그래서 각 단계의
+ * 점검 결과를 여기서 시리얼로 찍는다. 부팅이 이상하면 이 출력을 먼저 본다.
+ */
 #include <asmfunc64.h>
 #include <block64.h>
 #include <bootinfo64.h>
@@ -101,8 +111,8 @@ static void serial_fat32_smoke(void)
 	serial_print("\r\n");
 }
 
-/* Phase 0 check: create, write, sync, read back. Runs every boot, so a
-   regression in the FAT32 write path shows up on COM1 before the console. */
+/* 페이즈 0 점검: 만들고, 쓰고, 내보내고, 다시 읽는다. 부팅마다 돌기 때문에
+   FAT32 쓰기 경로가 망가지면 콘솔이 뜨기도 전에 COM1에 드러난다. */
 static void serial_fat32_write_smoke(void)
 {
 	struct FDHANDLE64 fh;
@@ -135,9 +145,9 @@ static void serial_fat32_write_smoke(void)
 	serial_print(n == len ? "[len-ok]\r\n" : "[len-bad]\r\n");
 }
 
-/* The cache made writes cross sector boundaries and grow cluster chains, so
-   the boot smoke covers a file bigger than one cluster: 1500 bytes of a
-   position-derived pattern, read back and compared byte for byte. */
+/* 캐시가 생기면서 쓰기가 섹터 경계를 넘고 클러스터 사슬을 늘리게 되었다.
+   그래서 부팅 점검은 클러스터 하나보다 큰 파일을 다룬다. 위치에서 만든
+   무늬 1500바이트를 쓰고 다시 읽어 바이트마다 견준다. */
 #define CHAIN_SMOKE_SIZE 1500
 
 static uint8_t chain_smoke_buf[CHAIN_SMOKE_SIZE];
@@ -175,8 +185,8 @@ static void serial_fat32_chain_smoke(void)
 	serial_print(ok ? "fat32 chain=ok\r\n" : "fat32 chain=FAIL\r\n");
 }
 
-/* VFAT check: a name that cannot be spelled in 8.3 has to survive a create,
-   a reopen by the same name, and a directory listing. */
+/* VFAT 점검: 8.3으로 적을 수 없는 이름이 만들기, 같은 이름으로 다시 열기,
+   목록에 나오기를 모두 견뎌야 한다. */
 static void serial_fat32_lfn_smoke(void)
 {
 	static const char *lfn_name = "한글이름.txt";
