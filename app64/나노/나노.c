@@ -261,7 +261,7 @@ static int load_file(const char *path)
 			int len = i - start;
 
 			if (len > 0 && load_buf[start + len - 1] == '\r') {
-				len--;                  /* CRLF */
+				len--;                  /* CRLF 줄바꿈 */
 			}
 			if (i == total && len == 0 && nlines > 0) {
 				break;                  /* 끝의 개행 하나는 줄이 아니다 */

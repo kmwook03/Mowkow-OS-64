@@ -6,16 +6,11 @@
 
 /*
  * sqrt/fabs/floor/fmod/isnan/isinf/signbit/copysign/nearbyint/pow/nan:
- * real bodies in math.c (Stage 4) -- each compiles to a genuine SSE2/x87
- * instruction (sqrtsd, andpd, fprem, ...) via __builtin_*, except pow/nan
- * which have no hardware equivalent and need real implementations (their
- * __builtin_* forms degrade to calling a libm function of the same name,
- * i.e. calling straight back into us).
- *
- * Everything else here (sin/cos/tan/atan/atan2/log/log10/exp/trunc/
- * frexp/ldexp/modf/ceil): still declarations-only dead code, gated behind
- * MICROPY_PY_MATH which stays off (Stage 1.3/1.4's math.h note still
- * applies to these).
+ * 실제 몸체는 math.c에 있다(Stage 4). 대부분 __builtin_*을 거쳐 진짜
+ * SSE2/x87 명령(sqrtsd, andpd, fprem, ...)으로 내려간다. pow와 nan만은
+ * 대응하는 명령이 없어 직접 구현해야 한다. 그 둘의 __builtin_* 형태는
+ * 같은 이름의 libm 함수 호출로 바뀌는데, 그러면 우리 자신을 다시 부르게
+ * 된다.
  */
 double sqrt(double x);
 double pow(double x, double y);

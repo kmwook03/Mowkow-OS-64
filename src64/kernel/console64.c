@@ -1,3 +1,14 @@
+/*
+ * console64.c -- 한글 콘솔과 명령 해석기
+ *
+ * 화면에 글자를 찍는 일, 키를 받아 두벌식으로 조합하는 일, 명령 한 줄을
+ * 해석하는 일이 여기 모여 있다. 콘솔은 시트 하나 위에 그려지므로 전체 화면
+ * 이든 창 안이든 같은 코드로 동작한다.
+ *
+ * 두벌식 조합기는 커널 쪽인 이 파일이 갖고 있다(roadmap64.md 결정 11).
+ * 앱은 완성된 글자와 조합 중인 글자를 SYS_TTY로 받을 뿐, 자모 상태는 보지
+ * 않는다.
+ */
 #include <asmfunc64.h>
 #include <bootinfo64.h>
 #include <console64.h>
@@ -732,8 +743,8 @@ static void clear_screen(void)
 	cursor_y = 0;
 }
 
-/* Loads and runs cmdline's first token as an app. Returns 0 when there is no
-   such file, so the caller can report an unknown command instead. */
+/* cmdline의 첫 토큰을 앱으로 보고 불러 실행한다. 그런 파일이 없으면 0을
+   돌려주므로, 부른 쪽이 '모르는 명령'이라고 알릴 수 있다. */
 static int run_program(const char *cmdline)
 {
 	int status;
@@ -757,15 +768,15 @@ static void execute_command(void)
 		prompt();
 		return;
 	}
-	if (str_eq(input_line, "help")) {
-		console64_puts("commands: help clear ticks mem tasks ls 목록 type readme.txt py py FILE.PY xwindow 창\n");
-		console64_puts("apps: type the file name, e.g. HELLO or 나노 FILE.TXT\n");
+	if (str_eq(input_line, "help") || str_eq(input_line, "도움말")) {
+		console64_puts("명령어: 도움말 지우기 틱 메모리 태스크 목록 치기 readme.txt 파이썬 FILE.PY 창\n");
+		console64_puts("앱: 파일 이름 입력, e.g. HELLO or 나노 FILE.TXT\n");
 	} else if (str_eq(input_line, "xwindow") || str_eq(input_line, "window") ||
 			str_eq(input_line, "창")) {
 		gui64_toggle_window();
 	} else if (str_eq(input_line, "clear") || str_eq(input_line, "지우기")) {
 		clear_screen();
-	} else if (str_eq(input_line, "ticks")) {
+	} else if (str_eq(input_line, "ticks") || str_eq(input_line, "틱")) {
 		console64_puts("ticks ");
 		print_uint64(timerctl64.count);
 		console64_puts("\n");
@@ -804,9 +815,9 @@ static void execute_command(void)
 			}
 		}
 		if (count == 0) {
-			console64_puts("no files\n");
+			console64_puts("파일 없음\n");
 		}
-	} else if (str_eq(input_line, "type readme.txt") || str_eq(input_line, "읽기 readme.txt")) {
+	} else if (str_eq(input_line, "type readme.txt") || str_eq(input_line, "출력 readme.txt")) {
 		struct FDHANDLE64 fh;
 		char buf[65];
 		size_t n;
@@ -826,19 +837,19 @@ static void execute_command(void)
 	} else if (str_starts_with(input_line, "run ") || str_starts_with(input_line, "실행 ")) {
 		const char *args;
 
-		/* "실행 " is 7 bytes of UTF-8, "run " is 4: a fixed offset would cut
-		   the Korean form mid-character. */
+		/* "실행 "은 UTF-8로 7바이트, "run "은 4바이트다. 한 값으로 고정해 건너뛰면
+		   한글 쪽이 글자 중간에서 잘린다. */
 		args = input_line + (input_line[0] == 'r' ? 4 : 7);
 		if (run_program(args) == 0) {
-			console64_puts("file not found\n");
+			console64_puts("파일 없음\n");
 		}
 	} else if (str_eq(input_line, "py") || str_eq(input_line, "파이썬")) {
 		mpport_repl();
 	} else if (str_starts_with(input_line, "py ")) {
 		mpport_run_file(input_line + 3);
 	} else if (run_program(input_line) == 0) {
-		/* not a builtin and no such executable */
-		console64_puts("unknown command\n");
+		/* 내장 명령도 아니고 그런 실행 파일도 없다 */
+		console64_puts("알 수 없는 명령어\n");
 	}
 	input_len = 0;
 	prompt();
@@ -899,9 +910,7 @@ void console64_init(const struct BOOTINFO64 *boot_info)
 	} else {
 		clear_screen();
 	}
-	// console64_puts("Mowkow OS x86_64 console\n");
 	console64_puts("머꼬 OS x86_64 콘솔\n");
-	// console64_puts("Hangul input is default. Shift+Space toggles English.\n");
 	console64_puts("한글 입력이 기본입니다. Shift+Space로 영어 입력으로 전환합니다.\n");
 	prompt();
 }
@@ -945,11 +954,6 @@ static int normalize_ext_key(uint16_t *key)
 	return 0;
 }
 
-/*
- * 키보드 이벤트 하나를 기다린다. FIFO가 비면 태스크를 재운다.
- * i8042 포트를 직접 돌려보지 않으므로 IRQ 핸들러와 스캔코드를 다투지 않고,
- * 기다리는 동안 다른 태스크가 돈다.
- */
 /*
  * FIFO에서 이벤트 하나만 처리한다. 키보드 스캔코드였으면 *key에 담고 1.
  * 비어 있으면 태스크를 재운다.

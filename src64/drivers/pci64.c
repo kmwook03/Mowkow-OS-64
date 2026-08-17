@@ -1,5 +1,9 @@
-/* PCI configuration space through the 0xCF8/0xCFC port pair. Enough to find a
-   controller and read its BARs -- no enumeration, no resource assignment. */
+/*
+ * pci64.c -- 0xCF8/0xCFC 포트 쌍으로 읽는 PCI 설정 공간
+ *
+ * 컨트롤러를 찾고 BAR를 읽는 데까지만 한다. 장치 목록을 만들지도, 자원을
+ * 나눠 주지도 않는다. 지금 필요한 것은 AHCI 컨트롤러 하나를 찾는 일뿐이다.
+ */
 #include <asmfunc64.h>
 #include <pci64.h>
 #include <stdint.h>
@@ -38,9 +42,9 @@ uint32_t pci64_find_class(uint8_t class_code, uint8_t subclass)
 	uint32_t id;
 	uint32_t classes;
 
-	/* brute force over bus 0-255, device 0-31, function 0-7: a few thousand
-	   port reads once at boot, versus a bridge walk that would need more
-	   code than the scan saves */
+	/* 버스 0-255, 장치 0-31, 기능 0-7을 그냥 다 훑는다. 부팅 때 한 번 포트를
+	   몇천 번 읽을 뿐이고, 브리지를 따라가는 코드는 그렇게 아낀 시간보다
+	   길다. */
 	for (bdf = 0; bdf < 0x10000; bdf++) {
 		id = pci64_read32(bdf, 0x00);
 		if ((id & 0xffff) == 0xffff) {

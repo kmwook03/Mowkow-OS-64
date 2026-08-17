@@ -8,12 +8,11 @@
 #define SEEK_END 2
 
 /*
- * Declarations only, for a handful of debug-only / disabled-feature call
- * sites in the MicroPython core (DEBUG_PRINTF, MICROPY_DEBUG_PRINTERS
- * dumps, persistentcode.c's mmap save path). None of these are reachable
- * in this port's config (rom level MINIMUM, debug printers off), so no
- * definitions are provided -- if that ever changes, the linker will say
- * so and it gets implemented then.
+ * 선언만 둔다. MicroPython 코어에서 디버그 전용이거나 꺼 놓은 기능의 호출
+ * 자리(DEBUG_PRINTF, MICROPY_DEBUG_PRINTERS 덤프, persistentcode.c의 mmap
+ * 저장 경로) 때문에 필요하다. 이 포트 설정(rom level MINIMUM, 디버그 출력
+ * 꺼짐)에서는 어느 것도 닿지 않으므로 정의는 두지 않는다. 달라지면 링커가
+ * 알려 줄 것이고, 그때 구현하면 된다.
  */
 typedef struct FILE FILE;
 

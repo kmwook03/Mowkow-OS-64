@@ -1,3 +1,8 @@
+/*
+ * cat.c -- 파일 내용을 그대로 콘솔에 쏟는다
+ *
+ * 쓰임새: cat README.TXT
+ */
 #include <mowos.h>
 
 int main(int argc, char **argv)

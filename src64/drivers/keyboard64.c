@@ -1,3 +1,9 @@
+/*
+ * keyboard64.c -- PS/2 키보드, IRQ1
+ *
+ * 스캔코드를 해독해 이벤트 큐에 넣는다. 확장 키(e0 접두)는 KEY64_EXT 비트를
+ * 달아 한 값으로 만들어 주므로, 위쪽에서는 스캔코드 상태를 다시 볼 일이 없다.
+ */
 #include <asmfunc64.h>
 #include <int64.h>
 #include <keyboard64.h>

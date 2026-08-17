@@ -12,7 +12,7 @@
 #define SYS_TICKS  9
 #define SYS_TTY    10
 
-/* SYS_OPEN flags (no separate SYS_CREATE) */
+/* SYS_OPEN 플래그 (따로 SYS_CREATE를 두지 않는다) */
 #define O_CREAT 1
 #define O_TRUNC 2
 
@@ -24,8 +24,8 @@
 #define TTY_MODE    0   /* rsi: 1이면 raw, 0이면 cooked */
 #define TTY_READKEY 1   /* 키 이벤트 하나를 기다렸다가 묶어서 돌려준다 */
 #define TTY_SIZE    2   /* 칸 단위 크기와 세대 값 */
-#define TTY_MOVE    3   /* rsi=row, rdx=col */
-#define TTY_CLEAR   4   /* rsi=row, rdx=col, r10=rows, r8=cols */
+#define TTY_MOVE    3   /* rsi=행, rdx=열 */
+#define TTY_CLEAR   4   /* rsi=행, rdx=열, r10=행 수, r8=열 수 */
 #define TTY_ATTR    5   /* rsi=글자색, rdx=배경색 (팔레트 인덱스) */
 #define TTY_FLUSH   6   /* 모아 둔 갱신 영역을 화면에 올린다 */
 

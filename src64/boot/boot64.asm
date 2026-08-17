@@ -1,7 +1,7 @@
 bits 16
 org 0x7c00
 
-; every BPB value below comes from tools/mkfat32_64.py via the Makefile
+; 아래 BPB 값은 모두 Makefile을 거쳐 tools/mkfat32_64.py에서 온다
 %ifndef STAGE2_SECTORS
 %define STAGE2_SECTORS 16
 %endif

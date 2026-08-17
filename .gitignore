@@ -22,6 +22,7 @@ Makefile.orig
 .txt
 AGENTS.md
 .agents/
+.claude/
 CLAUDE.md
-.codex
+.codex/
 py64/

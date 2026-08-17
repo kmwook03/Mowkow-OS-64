@@ -1,8 +1,14 @@
+/*
+ * wtest.c -- FAT32 쓰기 자체 점검
+ *
+ * 만들고, 쓰고, 다시 열어 확인한다. 한 번 실행한 뒤 재부팅해서 cat으로
+ * 읽어 보면 내용이 캐시가 아니라 디스크까지 갔는지 알 수 있다.
+ */
 #include <mowos.h>
 
-/* FAT12 write self-check: create, write, reopen, verify.
-   Run it once ("run WTEST"), reboot, then "run CAT TEST.TXT" to confirm the
-   contents reached the medium and not just the RAM image. */
+/* FAT32 쓰기 자체 점검: 만들기, 쓰기, 다시 열기, 확인하기.
+   한 번 실행("wtest")한 뒤 재부팅하고 "cat TEST.TXT"로 읽어 보면 내용이
+   RAM 캐시가 아니라 매체까지 갔는지 알 수 있다. */
 
 #define BIG_SIZE 1500
 #define CHUNK_SIZE 4096
@@ -49,8 +55,8 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	/* multi-cluster: 1500 bytes spans three 512-byte clusters, so this
-	   covers free-cluster allocation and chain extension */
+	/* 여러 클러스터에 걸치는 경우: 1500바이트는 512바이트 클러스터 세 개에
+	   걸치므로 빈 클러스터 찾기와 사슬 잇기까지 함께 확인한다. */
 	fd = open("BIG.TXT", O_CREAT | O_TRUNC);
 	if (fd < 0) {
 		puts("wtest: FAIL big create");

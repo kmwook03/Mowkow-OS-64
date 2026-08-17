@@ -1,21 +1,26 @@
-/* AHCI (SATA) transport: PCI probe, one port, 48-bit DMA read/write.
-   Polled, one command at a time -- there is no interrupt path and no queueing,
-   which is all the single-threaded filesystem above ever asks for.
-   ponytail: first usable port only; multi-port or NCQ would need a real
-   request queue, and nothing here has one. */
+/*
+ * ahci64.c -- AHCI(SATA) 전송 계층
+ *
+ * PCI로 컨트롤러를 찾고, 포트 하나를 열어 48비트 DMA로 읽고 쓴다. 인터럽트
+ * 없이 기다리며 한 번에 명령 하나만 보낸다. 위쪽 파일 시스템이 한 줄로만
+ * 요청하므로 그 이상은 필요 없다.
+ *
+ * ponytail: 쓸 수 있는 첫 포트만 쓴다. 여러 포트나 NCQ를 쓰려면 진짜 요청
+ * 큐가 있어야 하는데, 여기에는 없다.
+ */
 #include <block64.h>
 #include <memory64.h>
 #include <pci64.h>
 #include <stddef.h>
 #include <stdint.h>
 
-/* HBA registers */
+/* HBA 레지스터 */
 #define HBA_GHC 0x04
 #define HBA_PI 0x0c
 #define GHC_AE 0x80000000u
 #define GHC_IE 0x00000002u
 
-/* port registers, relative to 0x100 + port * 0x80 */
+/* 포트 레지스터. 0x100 + 포트 번호 * 0x80 을 기준으로 한 상대 위치다. */
 #define PORT_CLB 0x00
 #define PORT_CLBU 0x04
 #define PORT_FB 0x08
@@ -46,8 +51,8 @@
 #define ATA_CMD_IDENTIFY 0xec
 
 #define AHCI_TIMEOUT 10000000
-/* one command covers at most this many sectors; a single PRDT entry could do
-   8192, but the cache never asks for more than a block at a time */
+/* 명령 하나가 옮기는 최대 섹터 수. PRDT 항목 하나로 8192섹터까지 되지만,
+   캐시는 한 번에 블록 하나보다 많이 요청하지 않는다. */
 #define AHCI_MAX_SECTORS 128
 
 static volatile uint8_t *abar;
@@ -114,8 +119,8 @@ static void port_start(void)
 	port_write(PORT_CMD, port_read(PORT_CMD) | CMD_ST);
 }
 
-/* Builds one command and waits for it. `write` selects the direction, `buffer`
-   is the DMA target, `bytes` its length. */
+/* 명령 하나를 만들고 끝날 때까지 기다린다. `write`가 방향, `buffer`가 DMA
+   대상, `bytes`가 그 길이다. */
 static int run_command(uint8_t command, uint64_t lba, uint32_t sectors,
 	void *buffer, uint32_t bytes, int write)
 {
@@ -138,23 +143,23 @@ static int run_command(uint8_t command, uint64_t lba, uint32_t sectors,
 	port_write(PORT_IS, port_read(PORT_IS));
 	port_write(PORT_SERR, port_read(PORT_SERR));
 
-	/* slot 0: commands are issued one at a time */
+	/* 슬롯 0만 쓴다. 명령을 한 번에 하나씩만 보내기 때문이다. */
 	header = command_list;
 	zero(header, 32);
-	/* command FIS length in dwords, write flag, one PRDT entry */
+	/* 명령 FIS 길이(dword 단위), 쓰기 표시, PRDT 항목 한 개 */
 	write32(header, 5 | (write != 0 ? (1u << 6) : 0) | (1u << 16));
 	write32(header + 8, (uint32_t) (uintptr_t) command_table);
 	write32(header + 12, (uint32_t) ((uint64_t) (uintptr_t) command_table >> 32));
 
 	zero(command_table, 128 + 16);
 	fis = command_table;
-	fis[0] = 0x27;			/* host to device */
-	fis[1] = 0x80;			/* this is a command */
+	fis[0] = 0x27;			/* 호스트에서 장치로 */
+	fis[1] = 0x80;			/* 명령이라는 표시 */
 	fis[2] = command;
 	fis[4] = (uint8_t) lba;
 	fis[5] = (uint8_t) (lba >> 8);
 	fis[6] = (uint8_t) (lba >> 16);
-	fis[7] = 0x40;			/* LBA mode */
+	fis[7] = 0x40;			/* LBA 모드 */
 	fis[8] = (uint8_t) (lba >> 24);
 	fis[9] = (uint8_t) (lba >> 32);
 	fis[10] = (uint8_t) (lba >> 40);
@@ -164,7 +169,7 @@ static int run_command(uint8_t command, uint64_t lba, uint32_t sectors,
 	prdt = command_table + 128;
 	write32(prdt, (uint32_t) (uintptr_t) buffer);
 	write32(prdt + 4, (uint32_t) ((uint64_t) (uintptr_t) buffer >> 32));
-	write32(prdt + 12, bytes - 1);	/* byte count is zero-based */
+	write32(prdt + 12, bytes - 1);	/* 바이트 수는 0부터 센다 */
 
 	port_write(PORT_CI, 1);
 	for (timeout = 0; timeout < AHCI_TIMEOUT; timeout++) {
@@ -222,17 +227,17 @@ static int identify(void)
 	uint64_t total;
 	int i;
 
-	buffer = command_table + 256;	/* scratch inside the same page */
+	buffer = command_table + 256;	/* 같은 페이지 안의 임시 버퍼 */
 	zero(buffer, BLOCK64_SECTOR_SIZE);
 	if (run_command(ATA_CMD_IDENTIFY, 0, 0, buffer, BLOCK64_SECTOR_SIZE, 0) != 0) {
 		return -1;
 	}
 	total = 0;
-	for (i = 0; i < 4; i++) {	/* words 100..103: 48-bit sector count */
+	for (i = 0; i < 4; i++) {	/* 워드 100..103: 48비트 섹터 수 */
 		total |= (uint64_t) ((uint16_t) buffer[200 + i * 2] |
 			((uint16_t) buffer[201 + i * 2] << 8)) << (i * 16);
 	}
-	if (total == 0) {		/* fall back to the 28-bit count */
+	if (total == 0) {		/* 없으면 28비트 값으로 */
 		total = (uint64_t) buffer[120] | ((uint64_t) buffer[121] << 8) |
 			((uint64_t) buffer[122] << 16) | ((uint64_t) buffer[123] << 24);
 	}
@@ -252,7 +257,7 @@ int ahci64_probe(void)
 	if (ready != 0) {
 		return 0;
 	}
-	bdf = pci64_find_class(0x01, 0x06);	/* mass storage, AHCI */
+	bdf = pci64_find_class(0x01, 0x06);	/* 대용량 저장 장치, AHCI */
 	if (bdf == PCI64_NONE) {
 		return -1;
 	}
@@ -260,18 +265,18 @@ int ahci64_probe(void)
 	if (abar == NULL) {
 		return -1;
 	}
-	/* QEMU leaves bus mastering off until someone asks for it, and without it
-	   every DMA transfer silently moves nothing */
+	/* QEMU는 누가 켜 달라고 하기 전까지 버스 마스터링을 꺼 둔다. 켜지 않으면
+	   DMA 전송이 아무 말 없이 아무것도 옮기지 않는다. */
 	command = pci64_read32(bdf, PCI64_REG_COMMAND);
 	pci64_write32(bdf, PCI64_REG_COMMAND,
 		command | PCI64_COMMAND_MEMORY | PCI64_COMMAND_MASTER);
 
 	page = memman64_alloc_4k(&memman64, MEMMAN64_PAGE_SIZE);
 	if (page == 0 || (page & 0x3ff) != 0) {
-		return -1;		/* the structures need 1 KiB alignment */
+		return -1;		/* 구조체들이 1KiB 경계에 맞아야 한다 */
 	}
-	/* one page holds all three: command list (1 KiB, 1 KiB aligned), received
-	   FIS (256 B, 256 aligned), command table plus scratch (128 aligned) */
+	/* 한 페이지에 셋을 다 넣는다. 명령 목록(1KiB, 1KiB 정렬), 받은 FIS
+	   (256B, 256 정렬), 명령 테이블과 임시 버퍼(128 정렬). */
 	command_list = (uint8_t *) page;
 	received_fis = command_list + 1024;
 	command_table = command_list + 1280;

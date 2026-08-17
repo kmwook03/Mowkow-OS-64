@@ -1,3 +1,10 @@
+/*
+ * mphalport.c -- MicroPython이 요구하는 HAL 구현
+ *
+ * 표준 입출력은 콘솔(console64)로, 시간은 PIT 틱으로 잇는다. 우리 콘솔은
+ * VT100 escape를 해석하지 않으므로 커서 이동과 지우기는 백스페이스와
+ * 공백으로 대신한다(mpconfigport.h의 MICROPY_HAL_HAS_VT100=0).
+ */
 #include "py/mphal.h"
 
 #include <asmfunc64.h>
@@ -18,8 +25,8 @@ mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len)
 
 void mp_hal_stdout_tx_strn_cooked(const char *str, size_t len)
 {
-	/* console64_write already handles newline translation; same
-	 * reasoning as ports/unix's own cooked == uncooked forwarding. */
+	/* console64_write가 줄바꿈 변환을 이미 해 준다. ports/unix가 cooked와
+		 * uncooked를 같은 함수로 넘기는 것과 같은 이유다. */
 	mp_hal_stdout_tx_strn(str, len);
 }
 
@@ -44,9 +51,9 @@ void mp_hal_delay_ms(mp_uint_t ms)
 }
 
 /*
- * MICROPY_HAL_HAS_VT100=0 (mpconfigport.h): our console doesn't parse
- * escape sequences, so move the cursor and erase with plain backspaces
- * and spaces instead of VT100 codes.
+ * MICROPY_HAL_HAS_VT100=0 (mpconfigport.h): 우리 콘솔은 escape 열을
+ * 해석하지 않는다. 그래서 커서 이동과 지우기를 VT100 코드가 아니라
+ * 백스페이스와 공백으로 처리한다.
  */
 void mp_hal_move_cursor_back(unsigned int pos)
 {
