@@ -19,6 +19,7 @@ SRC64_DIR = src64
 APP64_DIR = app64
 BUILD64_DIR = build64
 IMG64_DIR = img64
+PY64_DIR = py64
 
 MPY_DIR = third_party/micropython
 MPY_PY_DIR = $(MPY_DIR)/py

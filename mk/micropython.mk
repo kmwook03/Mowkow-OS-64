@@ -34,9 +34,13 @@ MPY_CORE_SRCS = $(addprefix $(MPY_PY_DIR)/, $(addsuffix .c, $(MPY_CORE_BASENAMES
 # 쓰고, shared/readline/readline.c는 기록 버퍼용 MP_REGISTER_ROOT_POINTER()가
 # 있다. 둘 다 훑지 않으면 qstrdefs.generated.h / genhdr/root_pointers.h에
 # 빠진 채로 생성된다.
+# src64/mpport/modmowio.c는 MP_REGISTER_MODULE과 MP_QSTR_를 쓰므로 여기도
+# 훑어야 한다. 안 그러면 mowio가 genhdr/moduledefs.h에 안 들어가 import가
+# 실패한다. 나머지 포팅 파일에는 아직 그런 토큰이 없다.
 MPY_QSTR_SRCS = $(filter-out $(MPY_PY_DIR)/nlr%.c, $(MPY_CORE_SRCS)) \
 	$(MPY_DIR)/shared/runtime/pyexec.c \
-	$(MPY_DIR)/shared/readline/readline.c
+	$(MPY_DIR)/shared/readline/readline.c \
+	$(SRC64_DIR)/mpport/modmowio.c
 
 MPY_PORT_SRCS = $(wildcard $(SRC64_DIR)/mpport/*.c) $(wildcard $(SRC64_DIR)/mpport/libc/*.c)
 
