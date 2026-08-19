@@ -3,8 +3,13 @@
 
 #include <stdint.h>
 
-/* 최소 설정에서 시작해서, 아래에 적은 것만 따로 켠다. */
-#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_MINIMUM)
+/*
+ * 머꼬(mowkow_porting.md) 이식이 CORE 등급 기능을 여럿 쓴다: 왈러스(:=),
+ * 슬라이스, enumerate. 하나씩 켜는 대신 등급을 CORE_FEATURES로 올린다.
+ * 한 줄이면 되고, 업스트림 파이썬 코드가 대체로 가정하는
+ * MICROPY_CPYTHON_COMPAT도 같이 딸려 온다. EXTRA로는 올리지 않는다.
+ */
+#define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_CORE_FEATURES)
 
 #define MICROPY_ENABLE_COMPILER (1)
 #define MICROPY_ENABLE_GC       (1)
@@ -55,7 +60,8 @@
  * OS/파일 시스템 냄새가 나는 하위 기능만 끈다.
  */
 #define MICROPY_PY_SYS_MODULES         (0)
-#define MICROPY_PY_SYS_EXIT            (0)
+/* 머꼬 REPL의 exit() 종료 경로(mowkow_porting.md 결정 8)에 필요하다. */
+#define MICROPY_PY_SYS_EXIT            (1)
 #define MICROPY_PY_SYS_PATH            (0)
 #define MICROPY_PY_SYS_ARGV            (0)
 #define MICROPY_ENABLE_EXTERNAL_IMPORT (0)
@@ -72,6 +78,23 @@
 #define MICROPY_PY_BUILTINS_COMPLEX (0)
 
 /*
+ * ROM 등급을 CORE_FEATURES로 올리면 math 모듈이 딸려 오는데, 그러면
+ * mpport/libc/math.c에 없는 libm 함수가 통째로 필요해진다(acos/asin은
+ * 선언조차 없어 컴파일이 멈추고, sin/cos/tan/log/exp는 선언만 있어 링크에서
+ * 터진다). 머꼬는 math를 쓰지 않으므로(업스트림 어디에도 import math가
+ * 없다) 모듈째 끈다. 필요해지면 그때 libm을 채운다.
+ */
+#define MICROPY_PY_MATH (0)
+
+/*
+ * io도 같은 이유로 끈다. modio.c의 open은 포트가 mp_builtin_open_obj를
+ * 내놓아야 링크되는데(modio.c:208) 우리에게는 POSIX 파일이 없다. 머꼬의
+ * 파일 읽기는 io.open이 아니라 mowio.readfile(fd64)로 간다
+ * (mowkow_porting.md 5단계).
+ */
+#define MICROPY_PY_IO (0)
+
+/*
  * x86_64-elf-gcc는 _Float16을 기본으로 지원한다(__FLT16_MAX__를 정의한다).
  * 그런데 그 변환에는 compiler-rt/libgcc의 __extendhfsf2/__truncsfhf2가
  * 필요한데 우리는 그것들을 링크하지 않는다(-nostdlib, -lgcc 없음). 링크
@@ -86,6 +109,14 @@
  * 있는 alloca() 자리를 GC 힙으로 돌린다.
  */
 #define MICROPY_NO_ALLOCA (1)
+
+/*
+ * EXTRA 등급 기능이지만 하나만 따로 켠다. 머꼬 파서의 0육 16진 리터럴이
+ * s[:2] == "0육"과 enumerate("ㄱㄴㄷㄹㅁㅂ")로 한글을 문자 단위로 다룬다
+ * (_parse.py:217-220). 이게 없으면 s[:2]가 두 '바이트'라 분기가 아예 안
+ * 걸리고 0육ㄱ이 조용히 심볼이 된다. 오류가 아니라 틀린 답이 나온다.
+ */
+#define MICROPY_PY_BUILTINS_STR_UNICODE (1)
 
 /* REPL 배너에 찍히는 이름 */
 #define MICROPY_HW_BOARD_NAME "머꼬 OS"

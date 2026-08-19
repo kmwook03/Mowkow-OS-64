@@ -28,7 +28,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define CONSOLE_INPUT_MAX 256
+/* 한글은 한 글자에 3바이트라 256이면 85자밖에 안 된다. 1024면 340자쯤 되고,
+   .bss는 768바이트만 더 쓴다. console64.h의 CONSOLE64_LINE_MAX와 같아야 한다. */
+#define CONSOLE_INPUT_MAX 1024
 #define COLOR_BG_DEFAULT 0
 /* 32비트 트리와 같은 값(COL8_FFFFFF). init_palette64가 15를 어두운 회색으로
    바꾸므로, 예전처럼 15를 쓰면 검정 배경에 어두운 회색 글씨가 된다. */
@@ -114,6 +116,18 @@ static uint32_t repl_queue_head;
 static uint32_t repl_queue_tail;
 static int repl_active;
 static struct FIFO64 *console_event_fifo;
+
+/*
+ * mowio.readline이 줄 편집기를 빌려 쓰는 동안 켜진다. 켜져 있으면 Enter가
+ * execute_command() 대신 줄을 호출자에게 돌려주고, Ctrl-C/Ctrl-D가 줄을
+ * 끝낸다. 그 밖의 키는 평소 명령줄과 똑같은 길을 간다 - 한글 조합을 그리는
+ * 코드도, 자모 하나씩 지우는 백스페이스도, Shift+Space 전환도 그대로다
+ * (mowkow_porting.md 결정 5: 그리는 쪽과 조합하는 쪽이 같은 코드여야 한다).
+ */
+static int line_capture;
+static int line_done;
+static int line_result;         /* 0 = 줄 완성, -1 = Ctrl-C, -2 = Ctrl-D */
+static int line_full_warned;    /* 줄이 꽉 찼다고 이미 알렸는가 */
 
 /*
  * raw 모드: 콘솔 줄 편집기와 에코를 끄고, 키 이벤트를 앱에게 그대로 넘긴다.
@@ -420,6 +434,12 @@ static int append_input(const char *s, int len)
 		return 0;
 	}
 	if (input_len + len >= CONSOLE_INPUT_MAX) {
+		/* 말없이 키를 무시하면 자판이 고장 난 것처럼 보인다. 한 줄에 한 번만
+		   알린다 - 안 그러면 남은 타자마다 같은 말이 쏟아진다. */
+		if (line_full_warned == 0) {
+			line_full_warned = 1;
+			console64_puts("\n줄이 너무 깁니다\n");
+		}
 		return 0;
 	}
 	for (i = 0; i < len; i++) {
@@ -852,6 +872,7 @@ static void execute_command(void)
 		console64_puts("알 수 없는 명령어\n");
 	}
 	input_len = 0;
+	line_full_warned = 0;
 	prompt();
 }
 
@@ -1152,7 +1173,29 @@ void console64_process_key(uint16_t scancode)
 	if ((scancode & 0x80) != 0) {
 		return;
 	}
-	if (repl_active) {
+	if (line_capture) {
+		if (scancode == 0x1c) {
+			line_result = 0;
+			line_done = 1;
+			return;
+		}
+		if (ctrl_down) {
+			c = translate_key(scancode);
+			if (c == 'c' || c == 'C') {
+				line_result = -1;
+				line_done = 1;
+				return;
+			}
+			if (c == 'd' || c == 'D') {
+				line_result = -2;
+				line_done = 1;
+				return;
+			}
+		}
+	}
+	/* readline이 잡고 있는 동안에는 py REPL 안이라도 키가 줄 편집기로 가야
+	   한다. 그래야 py REPL에서 부르든 스크립트에서 부르든 똑같이 동작한다. */
+	if (repl_active && line_capture == 0) {
 		if (scancode == 0x1c) {
 			repl_queue_push('\r');
 			return;
@@ -1388,6 +1431,48 @@ void console64_repl_set_active(int active)
 	repl_active = active;
 	repl_queue_head = 0;
 	repl_queue_tail = 0;
+}
+
+/*
+ * 명령줄 편집기를 그대로 빌려서 한 줄을 읽어 온다. 완성된 줄의 바이트 수,
+ * Ctrl-C면 -1, Ctrl-D면 -2를 돌려준다(mowkow_porting.md 결정 8).
+ *
+ * 편집 버퍼(input_line)는 명령줄과 같은 것을 쓴다. 그리기와 백스페이스가
+ * 전부 그 버퍼를 보고 있어서 따로 두면 코드가 갈라진다. 대신 부르는 쪽은
+ * input_line을 가리키는 문자열(execute_command가 넘긴 인자 같은 것)을
+ * 여기 오기 전에 자기 쪽으로 복사해 두어야 한다.
+ */
+int64_t console64_read_line(char *dst, uint64_t max)
+{
+	uint64_t n;
+	uint64_t i;
+
+	line_capture = 1;
+	line_done = 0;
+	line_result = 0;
+	input_len = 0;
+	line_full_warned = 0;
+	while (line_done == 0) {
+		console64_process_key(wait_key_event());
+	}
+	line_capture = 0;
+	flush_composing();
+	newline();
+	if (line_result != 0) {
+		input_len = 0;
+		line_full_warned = 0;
+		return line_result;
+	}
+	n = input_len;
+	if (n > max) {
+		n = max;
+	}
+	for (i = 0; i < n; i++) {
+		dst[i] = input_line[i];
+	}
+	input_len = 0;
+	line_full_warned = 0;
+	return (int64_t) n;
 }
 
 int console64_repl_getchar(void)

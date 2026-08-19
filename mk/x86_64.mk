@@ -36,6 +36,9 @@ LOADER64_BIN = $(BUILD64_DIR)/boot/loader64.bin
 IMG64_FILE = $(IMG64_DIR)/mowkow64.img
 
 # -- 앱 찾기 (app64/ 아래 디렉터리 하나가 앱 하나, 공용 런타임 crt는 뺀다) --
+# -- 이미지에 넣을 파이썬 소스 (py64/ 바로 아래, 이름이 곧 파일 이름) --
+PY64_FILES = $(wildcard $(PY64_DIR)/*.PY) $(wildcard $(PY64_DIR)/*.SCM)
+
 APP64_DIRS = $(wildcard $(APP64_DIR)/*/)
 APP64_NAMES = $(filter-out crt,$(notdir $(patsubst %/,%,$(APP64_DIRS))))
 APP64_TARGETS = $(foreach app, $(APP64_NAMES), $(BUILD64_DIR)/app/$(app)/$(app).elf)
@@ -106,9 +109,9 @@ $(foreach app,$(APP64_NAMES),$(eval $(call APP64_RULES,$(app))))
 # -- 이미지 만들기 --
 # 부트 섹터, 2단계 로더, 커널은 예약 영역에 넣고 나머지는 파일로 넣는다.
 # app=경로 꼴로 넘기면 그 이름이 파일 이름이 된다(한글 이름은 VFAT 긴 이름).
-$(IMG64_FILE) : $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(APP64_TARGETS) $(MKFAT32)
+$(IMG64_FILE) : $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(APP64_TARGETS) $(PY64_FILES) $(MKFAT32)
 	@$(MKDIR) $(IMG64_DIR)
-	$(PYTHON) $(MKFAT32) $@ $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(foreach app,$(APP64_NAMES),$(app)=$(BUILD64_DIR)/app/$(app)/$(app).elf)
+	$(PYTHON) $(MKFAT32) $@ $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(foreach app,$(APP64_NAMES),$(app)=$(BUILD64_DIR)/app/$(app)/$(app).elf) $(foreach f,$(PY64_FILES),$(notdir $(f))=$(f))
 
 # -- 명령 --
 x86_64 : $(IMG64_FILE)
