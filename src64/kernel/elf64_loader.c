@@ -163,15 +163,17 @@ static int load_image(const char *path, struct PROCESS64 *process)
 
 int elf64_load_process(const char *path, struct PROCESS64 *process)
 {
+	uint64_t flags;
 	int status;
 
+	flags = io_load_rflags();
 	io_cli();
 	if (image_owner != NULL) {
-		io_sti();
+		io_store_rflags(flags);
 		return -8;
 	}
 	image_owner = process;
-	io_sti();
+	io_store_rflags(flags);
 	status = load_image(path, process);
 	if (status != 0) {
 		image_owner = NULL;
