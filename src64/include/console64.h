@@ -7,6 +7,9 @@ struct BOOTINFO64;
 struct FIFO64;
 struct SHEET64;
 
+/* 콘솔 인스턴스. 내부 구조는 console64.c만 안다. */
+struct CONSOLE64;
+
 void console64_set_hangul_font(const uint8_t *font);
 const uint8_t *console64_hangul_font(void);
 void console64_attach_sheet(struct SHEET64 *sht, uint16_t ox, uint16_t oy,
