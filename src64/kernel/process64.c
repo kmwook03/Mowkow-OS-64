@@ -166,7 +166,8 @@ static void process_free_memory(struct PROCESS64 *process)
 	}
 }
 
-int process64_exec_file(const char *path, const char *cmdline)
+int process64_exec_file(const char *path, const char *cmdline,
+	struct CONSOLE64 *console)
 {
 	char name[16];
 	size_t name_len;
@@ -208,6 +209,7 @@ int process64_exec_file(const char *path, const char *cmdline)
 	process->heap.base = heap;
 	process->heap.size = USER_HEAP_SIZE;
 	process->heap_next = heap;
+	process->console = console;
 	user_rsp = setup_args(process, cmdline != NULL ? cmdline : path, &argc, &argv);
 	task = task_now64();
 	if (task == NULL) {

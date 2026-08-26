@@ -713,7 +713,7 @@ static void execute_command(struct CONSOLE64 *con)
 	} else if (str_starts_with(con->input_line, "run ") || str_starts_with(con->input_line, "실행 ")) {
 		int status;
 
-		status = process64_exec_file(con->input_line + 4, con->input_line + 4);
+		status = process64_exec_file(con->input_line + 4, con->input_line + 4, con);
 		puts_con(con, "exit ");
 		print_uint64(con, (uint64_t) status);
 		puts_con(con, "\n");
@@ -728,6 +728,11 @@ static void execute_command(struct CONSOLE64 *con)
 	prompt(con);
 }
 
+struct CONSOLE64 *console64_active(void)
+{
+	return console_active;
+}
+
 void console64_set_hangul_font(const uint8_t *font)
 {
 	hangul_font = font;
@@ -738,11 +743,9 @@ const uint8_t *console64_hangul_font(void)
 	return hangul_font;
 }
 
-void console64_attach_sheet(struct SHEET64 *sht, uint16_t ox, uint16_t oy,
-	uint16_t w, uint16_t h)
+void console64_attach_sheet(struct CONSOLE64 *con, struct SHEET64 *sht,
+	uint16_t ox, uint16_t oy, uint16_t w, uint16_t h)
 {
-	struct CONSOLE64 *con = console_active;
-
 	con->sheet = sht;
 	con->ox = ox;
 	con->oy = oy;
@@ -774,7 +777,8 @@ void console64_init(const struct BOOTINFO64 *boot_info)
 	   실패하면 지금까지처럼 LFB에 직접 그린다. */
 	sht = gui64_init(boot_info);
 	if (sht != NULL) {
-		console64_attach_sheet(sht, 0, 0, con->width, con->height);
+		gui64_bind_console(sht, con);
+		console64_attach_sheet(con, sht, 0, 0, con->width, con->height);
 	} else {
 		clear_screen(con);
 	}
@@ -792,13 +796,22 @@ void console64_puts(const char *s)
 
 void console64_write(const char *s, uint64_t len)
 {
-	put_bytes(console_active, s, (size_t) len);
+	console64_write_con(console_active, s, len);
+}
+
+void console64_write_con(struct CONSOLE64 *con, const char *s, uint64_t len)
+{
+	put_bytes(con, s, (size_t) len);
 }
 
 uint64_t console64_read(char *dst, uint64_t len)
 {
+	return console64_read_con(console_active, dst, len);
+}
+
+uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
+{
 	uint64_t count;
-	struct CONSOLE64 *con = console_active;
 	uint8_t scancode;
 	char c;
 
@@ -840,10 +853,9 @@ uint64_t console64_read(char *dst, uint64_t len)
 	}
 }
 
-void console64_process_key(uint8_t scancode)
+void console64_process_key(struct CONSOLE64 *con, uint8_t scancode)
 {
 	char c;
-	struct CONSOLE64 *con = console_active;
 
 	if (keyboard64_track_modifier(scancode) != 0) {
 		return;
@@ -926,7 +938,7 @@ int console64_repl_getchar(void)
 		if (repl_event_fifo != NULL && fifo64_get(repl_event_fifo, &event) == 0) {
 			io_sti();
 			if (event.type == EVENT64_KEYBOARD) {
-				console64_process_key((uint8_t) event.data);
+				console64_process_key(con, (uint8_t) event.data);
 			}
 		} else {
 			task_sleep64(task_now64());

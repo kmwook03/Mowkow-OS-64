@@ -57,6 +57,7 @@ struct GUI64_WIN {
 	struct SHEET64 *sht;
 	int decorated;      /* 타이틀 바가 있으면 1 */
 	int is_console;
+	struct CONSOLE64 *console;  /* is_console일 때만 유효 */
 	const uint8_t *colormap;    /* 활성일 때 걸 색표, 없으면 NULL */
 };
 
@@ -249,7 +250,8 @@ void gui64_toggle_window(void)
 		gui_console->vy0 = GUI64_WIN_Y;
 		gui_mode = GUI64_MODE_WINDOW;
 		gui_wins[0].decorated = 1;
-		console64_attach_sheet(gui_console, GUI64_PAD_X, GUI64_PAD_Y,
+		console64_attach_sheet(gui_wins[0].console, gui_console,
+			GUI64_PAD_X, GUI64_PAD_Y,
 			GUI64_WIN_W - GUI64_PAD_W, GUI64_WIN_H - GUI64_PAD_H);
 	} else {
 		sheet64_setbuf(gui_console, gui_console_buf, gui_scrnx, gui_scrny, -1);
@@ -257,7 +259,7 @@ void gui64_toggle_window(void)
 		gui_console->vy0 = 0;
 		gui_mode = GUI64_MODE_FULL;
 		gui_wins[0].decorated = 0;
-		console64_attach_sheet(gui_console, 0, 0,
+		console64_attach_sheet(gui_wins[0].console, gui_console, 0, 0,
 			(uint16_t) gui_scrnx, (uint16_t) gui_scrny);
 	}
 
@@ -302,9 +304,29 @@ static void keywin_on(struct SHEET64 *sht)
 	}
 }
 
-int gui64_console_has_focus(void)
+void gui64_bind_console(struct SHEET64 *sht, struct CONSOLE64 *con)
 {
-	return gui_key_win == NULL || gui_key_win == gui_console;
+	struct GUI64_WIN *win = find_win(sht);
+
+	if (win != NULL) {
+		win->console = con;
+	}
+}
+
+struct CONSOLE64 *gui64_focused_console(void)
+{
+	struct GUI64_WIN *win;
+
+	if (gui_ctl == NULL || gui_win_count == 0) {
+		/* 컴포지터가 못 떴다 -- 콘솔이 LFB에 직접 그리는 상태다.
+		   창이 없으니 포커스도 없고, 키는 부팅 콘솔로 간다. */
+		return console64_active();
+	}
+	win = find_win(gui_key_win != NULL ? gui_key_win : gui_console);
+	if (win == NULL || win->is_console == 0) {
+		return NULL;
+	}
+	return win->console;
 }
 
 /* 클릭 지점에서 가장 위에 있는 창을 찾는다. 배경(높이 0)은 제외하고,

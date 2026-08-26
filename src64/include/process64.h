@@ -18,6 +18,8 @@ struct PROCESS64_FILE {
 	struct FDHANDLE64 fh;
 };
 
+struct CONSOLE64;
+
 struct PROCESS64 {
 	uint32_t pid;
 	uintptr_t entry;
@@ -29,9 +31,13 @@ struct PROCESS64 {
 	int exited;
 	int exit_status;
 	struct PROCESS64_FILE files[PROCESS64_MAX_FILES];
+	/* stdin/stdout이 향할 콘솔. 앱을 띄운 콘솔이지 그때그때 활성인 콘솔이
+	   아니다 -- 콘솔 2에서 띄운 앱이 콘솔 1에 찍으면 안 된다. */
+	struct CONSOLE64 *console;
 };
 
-int process64_exec_file(const char *path, const char *cmdline);
+int process64_exec_file(const char *path, const char *cmdline,
+	struct CONSOLE64 *console);
 struct PROCESS64 *process64_current(void);
 int process64_user_range_valid(const void *ptr, size_t size);
 void process64_exit_current(int status);
