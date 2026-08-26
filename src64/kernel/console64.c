@@ -24,12 +24,10 @@
 #define FONT_W 8
 #define FONT_H 16
 #define HANGUL_W 16
-#define KBD_STATUS_PORT 0x64
-#define KBD_DATA_PORT   0x60
-
 extern const uint8_t hankaku64[4096];
 
 #define REPL_QUEUE_SIZE 64
+#define CONSOLE64_KEY_BUF 64
 
 /*
  * 콘솔 상태 전부. 예전에는 파일 스코프 전역이었지만 콘솔이 여러 개가 되면
@@ -60,6 +58,12 @@ struct CONSOLE64 {
 	uint32_t repl_queue_head;
 	uint32_t repl_queue_tail;
 	int repl_active;
+	/* 콘솔마다 자기 태스크와 키 큐를 갖는다. 예전에는 커널 이벤트 루프가
+	   직접 process_key를 불렀기 때문에 run/py가 도는 동안 마우스도 화면도
+	   멈췄다 (console_plan.md 5단계). */
+	struct TASK64 *task;
+	struct FIFO64 keys;
+	struct EVENT64 key_buf[CONSOLE64_KEY_BUF];
 };
 
 static struct CONSOLE64 console0;
@@ -67,6 +71,38 @@ static struct CONSOLE64 console0;
 static struct CONSOLE64 *console_active = &console0;
 
 static const uint8_t *hangul_font;
+
+/* 지금 도는 태스크의 콘솔. MicroPython처럼 인스턴스를 모르는 호출자가
+   자기를 띄운 콘솔에 찍도록 해 준다. 콘솔 태스크가 아니면 부팅 콘솔. */
+static struct CONSOLE64 *console_self(void)
+{
+	struct TASK64 *task = task_now64();
+
+	if (task != NULL && console0.task == task) {
+		return &console0;
+	}
+	return console_active;
+}
+
+/* 키가 올 때까지 잔다. 자는 동안 다른 태스크가 돈다 -- 이게 5단계의 요점이다.
+   깨우기는 fifo64_put이 알아서 한다. */
+static uint8_t console_wait_key(struct CONSOLE64 *con)
+{
+	struct EVENT64 event;
+
+	for (;;) {
+		io_cli();
+		if (fifo64_get(&con->keys, &event) == 0) {
+			io_sti();
+			if (event.type == EVENT64_KEYBOARD) {
+				return (uint8_t) event.data;
+			}
+		} else {
+			task_sleep64(con->task);
+			io_sti();
+		}
+	}
+}
 
 static void console_flush(struct CONSOLE64 *con, int32_t x, int32_t y, int32_t w, int32_t h)
 {
@@ -77,7 +113,6 @@ static void console_flush(struct CONSOLE64 *con, int32_t x, int32_t y, int32_t w
 		con->ox + x + w, con->oy + y + h);
 }
 
-static struct FIFO64 *repl_event_fifo;
 
 static void repl_queue_push(struct CONSOLE64 *con, char c)
 {
@@ -791,12 +826,12 @@ void console64_init(const struct BOOTINFO64 *boot_info)
 
 void console64_puts(const char *s)
 {
-	puts_con(console_active, s);
+	puts_con(console_self(), s);
 }
 
 void console64_write(const char *s, uint64_t len)
 {
-	console64_write_con(console_active, s, len);
+	console64_write_con(console_self(), s, len);
 }
 
 void console64_write_con(struct CONSOLE64 *con, const char *s, uint64_t len)
@@ -806,7 +841,7 @@ void console64_write_con(struct CONSOLE64 *con, const char *s, uint64_t len)
 
 uint64_t console64_read(char *dst, uint64_t len)
 {
-	return console64_read_con(console_active, dst, len);
+	return console64_read_con(console_self(), dst, len);
 }
 
 uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
@@ -820,9 +855,7 @@ uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 	}
 	count = 0;
 	for (;;) {
-		while ((io_in8(KBD_STATUS_PORT) & 0x01) == 0) {
-		}
-		scancode = io_in8(KBD_DATA_PORT);
+		scancode = console_wait_key(con);
 		if (keyboard64_track_modifier(scancode) != 0) {
 			continue;
 		}
@@ -910,9 +943,43 @@ void console64_process_key(struct CONSOLE64 *con, uint8_t scancode)
 	}
 }
 
-void console64_set_event_fifo(struct FIFO64 *fifo)
+static void console_task_main(void)
 {
-	repl_event_fifo = fifo;
+	struct CONSOLE64 *con = console_self();
+
+	for (;;) {
+		console64_process_key(con, console_wait_key(con));
+	}
+}
+
+void console64_post_key(struct CONSOLE64 *con, uint8_t scancode)
+{
+	struct EVENT64 event;
+
+	event.type = EVENT64_KEYBOARD;
+	event.data = scancode;
+	fifo64_put(&con->keys, event);
+}
+
+int console64_start_task(struct CONSOLE64 *con)
+{
+	struct TASK64 *task;
+	uintptr_t stack;
+
+	task = task_alloc64();
+	stack = memman64_alloc_4k(&memman64, TASK64_STACK_SIZE);
+	if (task == NULL || stack == 0) {
+		return -1;
+	}
+	/* console_self()가 태스크로 콘솔을 찾으므로 돌리기 전에 이어 둔다. */
+	con->task = task;
+	fifo64_init(&con->keys, CONSOLE64_KEY_BUF, con->key_buf, task);
+	if (task_set_entry64(task, console_task_main, stack, TASK64_STACK_SIZE) != 0) {
+		con->task = NULL;
+		return -1;
+	}
+	task_run64(task, 0, 2);
+	return 0;
 }
 
 void console64_repl_set_active(int active)
@@ -926,23 +993,13 @@ void console64_repl_set_active(int active)
 
 int console64_repl_getchar(void)
 {
-	struct EVENT64 event;
-	struct CONSOLE64 *con = console_active;
+	struct CONSOLE64 *con = console_self();
 	char c;
 
 	for (;;) {
 		if (repl_queue_pop(con, &c)) {
 			return (unsigned char) c;
 		}
-		io_cli();
-		if (repl_event_fifo != NULL && fifo64_get(repl_event_fifo, &event) == 0) {
-			io_sti();
-			if (event.type == EVENT64_KEYBOARD) {
-				console64_process_key(con, (uint8_t) event.data);
-			}
-		} else {
-			task_sleep64(task_now64());
-			io_sti();
-		}
+		console64_process_key(con, console_wait_key(con));
 	}
 }

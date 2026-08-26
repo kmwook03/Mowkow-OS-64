@@ -1,4 +1,5 @@
 #include <mpport64.h>
+#include <mtask64.h>
 
 #include "py/builtin.h"
 #include "py/compile.h"
@@ -39,13 +40,25 @@ static void mpport_init(void)
 {
 	int here;
 	size_t available;
+	struct TASK64 *task;
 
 	/*
 	 * Real remaining C stack from here down to stack_bottom (asmfunc64.asm),
 	 * not a guessed constant -- matches python_porting.md Stage 0.4/0.6's
 	 * "conservative bound computed from the known stack range."
 	 */
-	available = (size_t) ((uintptr_t) &here - (uintptr_t) stack_bottom);
+	/*
+	 * 콘솔이 자기 태스크에서 돌면 (console_plan.md 5단계) 그 스택은
+	 * memman64가 준 64KiB지 커널 메인 스택이 아니다. stack_bottom으로
+	 * 재면 몇 MiB가 남은 줄 알고 넘침 검사가 걸리지 않아, 깊은 재귀가
+	 * 조용히 태스크 스택을 뭉갠다.
+	 */
+	task = task_now64();
+	if (task != NULL && task->stack_base != 0) {
+		available = (size_t) ((uintptr_t) &here - task->stack_base);
+	} else {
+		available = (size_t) ((uintptr_t) &here - (uintptr_t) stack_bottom);
+	}
 	mp_cstack_init_with_sp_here(available);
 	gc_init(gc_heap, gc_heap + sizeof(gc_heap));
 	mp_init();
@@ -158,3 +171,4 @@ void nlr_jump_fail(void *val)
 	for (;;) {
 	}
 }
+
