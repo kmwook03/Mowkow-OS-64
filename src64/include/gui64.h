@@ -25,6 +25,11 @@ void gui64_bind_console(struct SHEET64 *sht, struct CONSOLE64 *con);
    않는다 (숨은 콘솔에 몰래 들어가면 안 된다). */
 struct CONSOLE64 *gui64_focused_console(void);
 
+/* 콘솔용 창을 하나 연다. 버퍼와 시트를 만들고 창을 그린 뒤 콘솔을 붙이고
+   포커스를 준다. 실패하면 -1. 콘솔 0의 전체 화면 창과 달리 창 크기 버퍼만
+   잡는다 (화면 크기 버퍼는 콘솔 0 하나로 족하다). */
+int gui64_open_console_window(struct CONSOLE64 *con, const char *title);
+
 /* F11 -- 맨 아래 창을 위로. */
 void gui64_raise_bottom_window(void);
 

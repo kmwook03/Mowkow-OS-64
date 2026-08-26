@@ -32,6 +32,9 @@ void console64_process_key(struct CONSOLE64 *con, uint8_t scancode);
    이때부터 run/py는 커널 이벤트 루프가 아니라 이 태스크에서 돈다. */
 int console64_start_task(struct CONSOLE64 *con);
 
+/* 콘솔을 하나 더 띄운다: 창 + 태스크 + 프롬프트. 자리가 없으면 NULL. */
+struct CONSOLE64 *console64_create(void);
+
 /* 스캔코드를 콘솔의 키 FIFO에 넣고, 자고 있으면 깨운다.
    커널 이벤트 루프가 포커스에 따라 부른다. */
 void console64_post_key(struct CONSOLE64 *con, uint8_t scancode);

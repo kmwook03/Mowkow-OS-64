@@ -193,9 +193,12 @@ int process64_exec_file(const char *path, const char *cmdline,
 	if (process == NULL) {
 		return -1;
 	}
-	if (elf64_load_process(name, process) != 0) {
+	status = elf64_load_process(name, process);
+	if (status != 0) {
 		process->pid = 0;
-		return -2;
+		/* -8은 "이미지 창을 다른 앱이 쓰는 중"이다. 콘솔이 여럿이면
+		   실제로 일어나므로 뭉개지 않고 그대로 올려보낸다. */
+		return status == -8 ? -8 : -2;
 	}
 	stack = memman64_alloc_4k(&memman64, USER_STACK_SIZE);
 	heap = memman64_alloc_4k(&memman64, USER_HEAP_SIZE);

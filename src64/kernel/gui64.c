@@ -40,7 +40,7 @@
 #define GUI64_DEMO_X  450
 #define GUI64_DEMO_Y  487
 
-#define GUI64_MAX_WINS 4
+#define GUI64_MAX_WINS 8
 
 /* 타이틀 바 판정 (32비트 bootpack.c:349,356과 같은 범위). */
 #define GUI64_TITLE_Y0  3
@@ -304,6 +304,57 @@ static void keywin_on(struct SHEET64 *sht)
 	}
 }
 
+/* 새 창은 콘솔 0 자리에서 조금씩 어긋나게 놓는다. 완전히 겹치면 두 개가
+   떠 있는지 눈으로 확인할 수 없다. */
+#define GUI64_CASCADE 24
+
+int gui64_open_console_window(struct CONSOLE64 *con, const char *title)
+{
+	struct SHEET64 *sht;
+	uintptr_t buf;
+	int32_t slot;
+	int32_t step;
+
+	if (gui_ctl == NULL || gui_win_count >= GUI64_MAX_WINS) {
+		return -1;
+	}
+	buf = memman64_alloc_4k(&memman64, (size_t) GUI64_WIN_W * (size_t) GUI64_WIN_H);
+	if (buf == 0) {
+		return -1;
+	}
+	sht = sheet64_alloc(gui_ctl);
+	if (sht == NULL) {
+		memman64_free_4k(&memman64, buf,
+			(size_t) GUI64_WIN_W * (size_t) GUI64_WIN_H);
+		return -1;
+	}
+	sheet64_setbuf(sht, (uint8_t *) buf, GUI64_WIN_W, GUI64_WIN_H, -1);
+	make_window64((uint8_t *) buf, GUI64_WIN_W, GUI64_WIN_H, title, 1);
+	boxfill64((uint8_t *) buf, GUI64_WIN_W, COL64_000000,
+		GUI64_PAD_X, GUI64_PAD_Y,
+		GUI64_WIN_W - GUI64_PAD_W + GUI64_PAD_X - 1,
+		GUI64_WIN_H - GUI64_PAD_H + GUI64_PAD_Y - 1);
+
+	slot = gui_win_count;
+	step = slot * GUI64_CASCADE;
+	sht->vx0 = GUI64_WIN_X + step;
+	sht->vy0 = GUI64_WIN_Y + step;
+	gui_wins[slot].sht = sht;
+	gui_wins[slot].decorated = 1;
+	gui_wins[slot].is_console = 1;
+	gui_wins[slot].console = con;
+	gui_wins[slot].colormap = NULL;
+	gui_win_count++;
+
+	console64_attach_sheet(con, sht, GUI64_PAD_X, GUI64_PAD_Y,
+		GUI64_WIN_W - GUI64_PAD_W, GUI64_WIN_H - GUI64_PAD_H);
+	sheet64_updown(sht, gui_ctl->top - 1);   /* 커서 바로 아래 */
+	keywin_off(gui_key_win);
+	gui_key_win = sht;
+	keywin_on(gui_key_win);
+	return 0;
+}
+
 void gui64_bind_console(struct SHEET64 *sht, struct CONSOLE64 *con)
 {
 	struct GUI64_WIN *win = find_win(sht);
@@ -352,6 +403,23 @@ static struct SHEET64 *hit_test(int32_t mx, int32_t my, int32_t *bx, int32_t *by
 	return NULL;
 }
 
+/* 숨긴 창 다음으로 키를 받을 창. 보이는 창 중 가장 위. 하나도 없으면
+   바탕화면이 받는다 -- 즉 아무 데도 가지 않는다. 숨은 콘솔에 몰래 넣지
+   않는 게 중요하다. */
+static struct SHEET64 *focus_after_hide(const struct SHEET64 *hidden)
+{
+	struct SHEET64 *sht;
+	int32_t j;
+
+	for (j = gui_ctl->top - 1; j > 0; j--) {
+		sht = gui_ctl->sheets[j];
+		if (sht != hidden && sht != gui_cursor && find_win(sht) != NULL) {
+			return sht;
+		}
+	}
+	return gui_back;
+}
+
 static void handle_close(struct SHEET64 *sht)
 {
 	struct GUI64_WIN *win = find_win(sht);
@@ -359,22 +427,11 @@ static void handle_close(struct SHEET64 *sht)
 	if (win == NULL) {
 		return;
 	}
-	if (win->is_console != 0) {
-		/* 32비트에서는 콘솔 창을 숨기지만, 여기서는 콘솔이 하나뿐이라
-		   숨기면 키를 받을 곳이 없어진다. 전체 화면으로 되돌린다. */
-		if (gui_mode == GUI64_MODE_WINDOW) {
-			gui64_toggle_window();
-			/* 전환하면 화면이 지워진다. xwindow 명령으로 왔을 때는
-			   execute_command가 곧바로 프롬프트를 찍지만, 이 경로는
-			   마우스 이벤트라 아무도 찍어 주지 않는다. 그대로 두면
-			   빈 화면만 남아 멈춘 것처럼 보인다. */
-			console64_prompt();
-		}
-		return;
-	}
+	/* 창만 닫는다. 콘솔 태스크는 그대로 돌고 상태도 남는다
+	   (console_plan.md 6단계). 콘솔이든 아니든 숨기는 건 같다. */
 	keywin_off(sht);
 	sheet64_updown(sht, -1);
-	gui_key_win = gui_console;
+	gui_key_win = focus_after_hide(sht);
 	keywin_on(gui_key_win);
 }
 

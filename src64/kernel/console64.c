@@ -28,6 +28,16 @@ extern const uint8_t hankaku64[4096];
 
 #define REPL_QUEUE_SIZE 64
 #define CONSOLE64_KEY_BUF 64
+/*
+ * 콘솔 태스크 스택. 기본 TASK64_STACK_SIZE(64KiB)로는 py가 예전보다 약해진다
+ * -- 5단계 전에는 커널 메인 스택 128KiB에서 돌았다. MicroPython 파서는
+ * 재귀에 스택 검사를 걸지 않으므로(guard는 런타임 경로에만 있다) 깊이 한계는
+ * 순전히 스택 크기가 정한다.
+ *
+ * ponytail: 스택을 키워 한계를 밀어낼 뿐 없애지는 못한다. 진짜 해결은
+ * parse.c에 mp_cstack_check()를 넣는 것이고, 그건 서브모듈을 건드린다.
+ */
+#define CONSOLE64_STACK_SIZE (256 * 1024)
 
 /*
  * 콘솔 상태 전부. 예전에는 파일 스코프 전역이었지만 콘솔이 여러 개가 되면
@@ -66,9 +76,11 @@ struct CONSOLE64 {
 	struct EVENT64 key_buf[CONSOLE64_KEY_BUF];
 };
 
-static struct CONSOLE64 console0;
-/* 키 입력과 앱 출력이 향하는 콘솔. 4단계에서 포커스를 따라간다. */
-static struct CONSOLE64 *console_active = &console0;
+/* 콘솔 0은 부팅 콘솔이다 -- 전체 화면 토글과 화면 크기 버퍼를 가진 유일한
+   콘솔이고, 나머지는 `new`로 뜨는 창 전용 콘솔이다. */
+#define CONSOLE64_MAX 4
+static struct CONSOLE64 console_table[CONSOLE64_MAX];
+static struct CONSOLE64 *console_active = &console_table[0];
 
 static const uint8_t *hangul_font;
 
@@ -78,8 +90,14 @@ static struct CONSOLE64 *console_self(void)
 {
 	struct TASK64 *task = task_now64();
 
-	if (task != NULL && console0.task == task) {
-		return &console0;
+	int32_t i;
+
+	if (task != NULL) {
+		for (i = 0; i < CONSOLE64_MAX; i++) {
+			if (console_table[i].task == task) {
+				return &console_table[i];
+			}
+		}
 	}
 	return console_active;
 }
@@ -659,7 +677,7 @@ static void prompt(struct CONSOLE64 *con)
 
 void console64_prompt(void)
 {
-	struct CONSOLE64 *con = console_active;
+	struct CONSOLE64 *con = console_self();
 
 	prompt(con);
 }
@@ -681,10 +699,16 @@ static void execute_command(struct CONSOLE64 *con)
 		return;
 	}
 	if (str_eq(con->input_line, "help")) {
-		puts_con(con, "commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY xwindow 창\n");
+		puts_con(con, "commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY xwindow 창 new 새창\n");
 	} else if (str_eq(con->input_line, "xwindow") || str_eq(con->input_line, "window") ||
 			str_eq(con->input_line, "창")) {
-		gui64_toggle_window();
+		/* 전체 화면 토글은 콘솔 0 전용이다 -- 화면 크기 버퍼를 가진 건
+		   콘솔 0뿐이다 (console_plan.md 결정). */
+		if (con != console_active) {
+			puts_con(con, "fullscreen is console 0 only\n");
+		} else {
+			gui64_toggle_window();
+		}
 	} else if (str_eq(con->input_line, "clear") || str_eq(con->input_line, "지우기")) {
 		clear_screen(con);
 	} else if (str_eq(con->input_line, "ticks")) {
@@ -704,12 +728,31 @@ static void execute_command(struct CONSOLE64 *con)
 		if (addr != 0) {
 			memman64_free_4k(&memman64, addr, 4096);
 		}
+	} else if (str_eq(con->input_line, "new") || str_eq(con->input_line, "새창")) {
+		if (console64_create() == NULL) {
+			puts_con(con, "no free console slot\n");
+		}
 	} else if (str_eq(con->input_line, "tasks") || str_eq(con->input_line, "태스크")) {
+		uint32_t i;
+
 		puts_con(con, "switches ");
 		print_uint64(con, taskctl64.switches);
 		puts_con(con, " current-level ");
 		print_uint64(con, taskctl64.now_lv);
 		puts_con(con, "\n");
+		/* 숨긴 콘솔이 살아 있는지 보려면 태스크별 전환 수가 필요하다. */
+		for (i = 0; i < MAX_TASKS64; i++) {
+			if (taskctl64.tasks0[i].flags == TASK64_FLAGS_UNUSED) {
+				continue;
+			}
+			puts_con(con, "  task ");
+			print_uint64(con, i);
+			puts_con(con, " lv ");
+			print_uint64(con, taskctl64.tasks0[i].level);
+			puts_con(con, " switches ");
+			print_uint64(con, taskctl64.tasks0[i].switches);
+			puts_con(con, "\n");
+		}
 	} else if (str_eq(con->input_line, "ls") || str_eq(con->input_line, "목록")) {
 		uint32_t i;
 		uint32_t count;
@@ -749,9 +792,13 @@ static void execute_command(struct CONSOLE64 *con)
 		int status;
 
 		status = process64_exec_file(con->input_line + 4, con->input_line + 4, con);
-		puts_con(con, "exit ");
-		print_uint64(con, (uint64_t) status);
-		puts_con(con, "\n");
+		if (status == -8) {
+			puts_con(con, "another program is running\n");
+		} else {
+			puts_con(con, "exit ");
+			print_uint64(con, (uint64_t) status);
+			puts_con(con, "\n");
+		}
 	} else if (str_eq(con->input_line, "py") || str_eq(con->input_line, "파이썬")) {
 		mpport_repl();
 	} else if (str_starts_with(con->input_line, "py ")) {
@@ -952,6 +999,51 @@ static void console_task_main(void)
 	}
 }
 
+struct CONSOLE64 *console64_create(void)
+{
+	static const char base[] = "머꼬 콘솔 ";
+	char title[sizeof(base) + 2];
+	struct CONSOLE64 *con;
+	int32_t slot;
+	uint32_t i;
+
+	con = NULL;
+	for (slot = 1; slot < CONSOLE64_MAX; slot++) {
+		if (console_table[slot].task == NULL) {
+			con = &console_table[slot];
+			break;
+		}
+	}
+	if (con == NULL) {
+		return NULL;
+	}
+	con->cursor_x = 0;
+	con->cursor_y = 0;
+	con->input_len = 0;
+	con->lang_hangul = 1;
+	con->repl_active = 0;
+	con->repl_queue_head = 0;
+	con->repl_queue_tail = 0;
+	hangul64_init(&con->composing);
+
+	for (i = 0; i < sizeof(base) - 1; i++) {
+		title[i] = base[i];
+	}
+	title[i++] = (char) ('0' + slot);
+	title[i] = '\0';
+
+	if (gui64_open_console_window(con, title) != 0) {
+		return NULL;
+	}
+	if (console64_start_task(con) != 0) {
+		/* 창은 남는다. 콘솔 상한이 4라 실제로 닿을 일은 없고,
+		   창을 되돌리려면 컴포지터에 파괴 경로가 필요하다. */
+		return NULL;
+	}
+	prompt(con);
+	return con;
+}
+
 void console64_post_key(struct CONSOLE64 *con, uint8_t scancode)
 {
 	struct EVENT64 event;
@@ -967,14 +1059,14 @@ int console64_start_task(struct CONSOLE64 *con)
 	uintptr_t stack;
 
 	task = task_alloc64();
-	stack = memman64_alloc_4k(&memman64, TASK64_STACK_SIZE);
+	stack = memman64_alloc_4k(&memman64, CONSOLE64_STACK_SIZE);
 	if (task == NULL || stack == 0) {
 		return -1;
 	}
 	/* console_self()가 태스크로 콘솔을 찾으므로 돌리기 전에 이어 둔다. */
 	con->task = task;
 	fifo64_init(&con->keys, CONSOLE64_KEY_BUF, con->key_buf, task);
-	if (task_set_entry64(task, console_task_main, stack, TASK64_STACK_SIZE) != 0) {
+	if (task_set_entry64(task, console_task_main, stack, CONSOLE64_STACK_SIZE) != 0) {
 		con->task = NULL;
 		return -1;
 	}
@@ -984,7 +1076,9 @@ int console64_start_task(struct CONSOLE64 *con)
 
 void console64_repl_set_active(int active)
 {
-	struct CONSOLE64 *con = console_active;
+	/* REPL을 켜는 건 MicroPython을 돌리는 그 콘솔이다. console_active로
+	   두면 콘솔 1에서 py를 띄웠는데 콘솔 0이 REPL 모드가 된다. */
+	struct CONSOLE64 *con = console_self();
 
 	con->repl_active = active;
 	con->repl_queue_head = 0;
