@@ -81,8 +81,8 @@ uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame)
 	if (nr == SYS_WRITE) {
 		if (process64_user_range_valid((const void *) a1, (size_t) a2) == 0) {
 			frame->rax = (uint64_t) -1;
-		} else if (a0 == 1 || a0 == 2) {
-			console64_write((const char *) a1, a2);
+		} else if ((a0 == 1 || a0 == 2) && process->console != NULL) {
+			console64_write_con(process->console, (const char *) a1, a2);
 			frame->rax = a2;
 		} else if (a0 >= 3 && a0 < PROCESS64_MAX_FILES && process->files[a0].used != 0) {
 			frame->rax = fd64_write(&process->files[a0].fh, (const void *) a1, (size_t) a2);
@@ -96,8 +96,9 @@ uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame)
 		return 0;
 	}
 	if (nr == SYS_READ) {
-		if (a0 == 0 && process64_user_range_valid((void *) a1, (size_t) a2) != 0) {
-			frame->rax = console64_read((char *) a1, a2);
+		if (a0 == 0 && process->console != NULL &&
+				process64_user_range_valid((void *) a1, (size_t) a2) != 0) {
+			frame->rax = console64_read_con(process->console, (char *) a1, a2);
 		} else if (a0 < PROCESS64_MAX_FILES && process->files[a0].used != 0 &&
 				process64_user_range_valid((void *) a1, (size_t) a2) != 0) {
 			frame->rax = fd64_read(&process->files[a0].fh, (void *) a1, (size_t) a2);

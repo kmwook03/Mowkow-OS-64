@@ -451,59 +451,10 @@ static int lfn_finish(const struct LFN64_STATE *st, const struct FDINFO64 *finfo
 	uint8_t name11[FD64_NAME_LEN];
 	int units;
 
-	if (st->units_total == 0 || st->next_ord != 0) {
-		return 0;
-	}
-	entry_name11(finfo, name11);
-	if (short_checksum(name11) != st->checksum) {
-		return 0;
-	}
-	units = 0;
-	while (units < st->units_total && st->units[units] != 0x0000) {
-		units++;
-	}
-	return utf16_to_utf8_64(st->units, units, out, (int) out_size) > 0;
-}
-
-/* *pos 이후(그 자리 포함)의 진짜 파일 항목을 찾아 돌려주고, *pos를 그 다음
-   자리로 옮긴다. `at`에는 8.3 항목의 위치가, `name`에는 긴 이름이(없으면
-   8.3 이름이) 담긴다. */
-static int dir_scan_next(struct FDPOS64 *pos, struct FDINFO64 *out,
-	struct FDPOS64 *at, char *name, size_t name_size)
-{
-	struct LFN64_STATE lfn;
-	struct FDINFO64 entry;
-	const struct FDINFO64 *e;
-	uint32_t guard;
-
-	lfn_reset(&lfn);
-	for (guard = 0; guard < DIR_SCAN_LIMIT; guard++) {
-		e = dir_at(pos, CACHE64_READ);
-		if (e == NULL || e->name[0] == 0x00) {
-			return 0;
-		}
-		if (e->name[0] != 0xe5 && e->type == LFN_ATTR) {
-			lfn_collect(&lfn, (const uint8_t *) e);
-		} else if (is_file_entry(e) != 0) {
-			entry = *e;
-			if (out != NULL) {
-				*out = entry;
-			}
-			if (at != NULL) {
-				*at = *pos;
-			}
-			if (name != NULL && name_size > 0) {
-				if (lfn_finish(&lfn, &entry, name, name_size) == 0) {
-					short_name_text(&entry, name, name_size);
-				}
-			}
-			dir_advance(pos, 0);
-			return 1;
-		} else {
-			lfn_reset(&lfn);
-		}
-		if (dir_advance(pos, 0) == 0) {
-			return 0;
+	for (c = 2; c < max_cluster; c++) {
+		if (fd64_next_cluster(c) == 0) {
+			fat_set(c, 0x0fff);
+			return c;
 		}
 	}
 	return 0;
@@ -1056,9 +1007,8 @@ size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
 		}
 		info_set_cluster(&fh->info, cluster);
 	}
-	/* ponytail: fh->pos가 든 클러스터를 찾으려고 부를 때마다 사슬을 처음부터
-	   따라간다. 이어 쓰기가 잦아지면 핸들에 이 값을 기억해 두면 된다. */
-	cluster = info_cluster(&fh->info);
+
+	cluster = fh->finfo->clustno;
 	for (index = fh->pos / cb; index > 0; index--) {
 		next = fd64_next_cluster(cluster);
 		if (cluster_valid(next) == 0) {
@@ -1103,14 +1053,7 @@ size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
 			fh->cluster = next;
 		}
 	}
-	fh->info.date = FD64_FIXED_DATE;
-	fh->info.time = FD64_FIXED_TIME;
-	if (dir_write(fh) != 0) {
-		return 0;
-	}
-	/* ponytail: 부를 때마다 디스크까지 바로 쓴다. 따로 flush 시스템 콜이 없고,
-	   QEMU를 강제로 끊어도 잃는 데이터가 없다. PIO 쓰기 비용이 문제가 되면
-	   그때 fd64_sync()로 모아서 내보내면 된다. */
+	
 	if (fd64_sync() < 0) {
 		return 0;
 	}

@@ -53,6 +53,7 @@ struct TASK64 *task_alloc64(void);
 int task_set_entry64(struct TASK64 *task, void (*entry)(void), uintptr_t stack_base, size_t stack_size);
 void task_run64(struct TASK64 *task, int level, int priority);
 void task_sleep64(struct TASK64 *task);
+int task_kill64(struct TASK64 *task);
 void task_switch64(void);
 
 #endif

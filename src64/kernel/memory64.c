@@ -1,12 +1,4 @@
-/*
- * memory64.c -- 물리 메모리 관리자
- *
- * 빈 구간 목록을 크기가 아니라 주소 순서로 들고 있다가, 요청이 오면 앞에서
- * 부터 맞는 구간을 잘라 준다. 돌려받은 구간은 이웃과 다시 합친다.
- *
- * 페이징은 아직 로더가 만든 항등 사상 그대로다. 여기서 주는 주소가 곧
- * 물리 주소이자 가상 주소다.
- */
+#include <asmfunc64.h>
 #include <memory64.h>
 
 struct MEMMAN64 memman64;
@@ -64,7 +56,10 @@ void memman64_init(struct MEMMAN64 *man)
 	man->losts = 0;
 }
 
-size_t memman64_total(const struct MEMMAN64 *man)
+static uintptr_t memman64_alloc_at_4k_nolock(struct MEMMAN64 *man, uintptr_t addr,
+	size_t size);
+
+static size_t memman64_total_nolock(const struct MEMMAN64 *man)
 {
 	uint32_t i;
 	size_t total;
@@ -76,7 +71,7 @@ size_t memman64_total(const struct MEMMAN64 *man)
 	return total;
 }
 
-uintptr_t memman64_alloc(struct MEMMAN64 *man, size_t size)
+static uintptr_t memman64_alloc_nolock(struct MEMMAN64 *man, size_t size)
 {
 	uint32_t i;
 	uintptr_t addr;
@@ -101,7 +96,7 @@ uintptr_t memman64_alloc(struct MEMMAN64 *man, size_t size)
 	return 0;
 }
 
-int memman64_free(struct MEMMAN64 *man, uintptr_t addr, size_t size)
+static int memman64_free_nolock(struct MEMMAN64 *man, uintptr_t addr, size_t size)
 {
 	uint32_t i;
 	uint32_t j;
@@ -147,13 +142,69 @@ int memman64_free(struct MEMMAN64 *man, uintptr_t addr, size_t size)
 	return -1;
 }
 
+/*
+ * 프리 리스트는 재진입 불가다. 태스크가 여럿이면 (콘솔마다 하나 --
+ * console_plan.md) 할당 도중 PIT가 선점해 다른 태스크가 같은 리스트를
+ * 건드릴 수 있다. 전환 원인이 PIT IRQ뿐이므로 인터럽트를 막으면 충분하다.
+ * rflags를 저장/복원하는 이유는 이미 꺼져 있는 곳에서 불러도 안전하게
+ * 하기 위해서다 -- io_sti로 켜 버리면 인터럽트 문맥에서 사고가 난다.
+ * 규칙: 이 구간 안에서는 task_sleep64를 부르지 않는다.
+ */
+size_t memman64_total(const struct MEMMAN64 *man)
+{
+	uint64_t flags;
+	size_t total;
+
+	flags = io_load_rflags();
+	io_cli();
+	total = memman64_total_nolock(man);
+	io_store_rflags(flags);
+	return total;
+}
+
+uintptr_t memman64_alloc(struct MEMMAN64 *man, size_t size)
+{
+	uint64_t flags;
+	uintptr_t addr;
+
+	flags = io_load_rflags();
+	io_cli();
+	addr = memman64_alloc_nolock(man, size);
+	io_store_rflags(flags);
+	return addr;
+}
+
+int memman64_free(struct MEMMAN64 *man, uintptr_t addr, size_t size)
+{
+	uint64_t flags;
+	int status;
+
+	flags = io_load_rflags();
+	io_cli();
+	status = memman64_free_nolock(man, addr, size);
+	io_store_rflags(flags);
+	return status;
+}
+
+uintptr_t memman64_alloc_at_4k(struct MEMMAN64 *man, uintptr_t addr, size_t size)
+{
+	uint64_t flags;
+	uintptr_t result;
+
+	flags = io_load_rflags();
+	io_cli();
+	result = memman64_alloc_at_4k_nolock(man, addr, size);
+	io_store_rflags(flags);
+	return result;
+}
+
 uintptr_t memman64_alloc_4k(struct MEMMAN64 *man, size_t size)
 {
 	size = (size_t) align_up64((uintptr_t) size, MEMMAN64_PAGE_SIZE);
 	return memman64_alloc(man, size);
 }
 
-uintptr_t memman64_alloc_at_4k(struct MEMMAN64 *man, uintptr_t addr, size_t size)
+static uintptr_t memman64_alloc_at_4k_nolock(struct MEMMAN64 *man, uintptr_t addr, size_t size)
 {
 	uint32_t i;
 	uintptr_t end;

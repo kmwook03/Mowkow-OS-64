@@ -32,7 +32,6 @@
 
 static struct PROCESS64 process_table[4];
 static uint32_t next_pid = 1;
-static struct PROCESS64 *current_process;
 
 static void memzero(void *ptr, size_t size)
 {
@@ -81,44 +80,52 @@ static int range_contains(const struct PROCESS64_RANGE *range, uintptr_t ptr, si
 	return ptr >= range->base && end >= ptr && end <= range->base + range->size;
 }
 
+/* 실행 중인 프로세스는 태스크마다 다르다. 콘솔이 여러 개면 전역 하나로는
+   서로의 saved_kernel_rsp를 덮어쓴다 (console_plan.md 블로커 2). */
 struct PROCESS64 *process64_current(void)
 {
-	return current_process;
+	struct TASK64 *task = task_now64();
+
+	return task != NULL ? (struct PROCESS64 *) task->process : NULL;
 }
 
 int process64_user_range_valid(const void *ptr, size_t size)
 {
+	struct PROCESS64 *process = process64_current();
 	uintptr_t p;
 
-	if (current_process == NULL || ptr == NULL) {
+	if (process == NULL || ptr == NULL) {
 		return 0;
 	}
 	p = (uintptr_t) ptr;
-	return range_contains(&current_process->image, p, size) != 0 ||
-		range_contains(&current_process->stack, p, size) != 0 ||
-		range_contains(&current_process->heap, p, size) != 0;
+	return range_contains(&process->image, p, size) != 0 ||
+		range_contains(&process->stack, p, size) != 0 ||
+		range_contains(&process->heap, p, size) != 0;
 }
 
 void process64_exit_current(int status)
 {
-	if (current_process == NULL) {
+	struct PROCESS64 *process = process64_current();
+
+	if (process == NULL) {
 		return;
 	}
-	current_process->exited = 1;
-	current_process->exit_status = status;
-	/* raw 모드는 프로세스 상태다. 앱이 정리하지 않고 나가도 콘솔이 다시
-	   줄 편집기로 돌아오게 커널이 되돌린다. */
-	console64_set_raw(0);
+	process->exited = 1;
+	process->exit_status = status;
 }
 
 uintptr_t process64_current_exit_rsp(void)
 {
-	return current_process != NULL ? current_process->saved_kernel_rsp : 0;
+	struct PROCESS64 *process = process64_current();
+
+	return process != NULL ? process->saved_kernel_rsp : 0;
 }
 
 int process64_current_exit_status(void)
 {
-	return current_process != NULL ? current_process->exit_status : -1;
+	struct PROCESS64 *process = process64_current();
+
+	return process != NULL ? process->exit_status : -1;
 }
 
 /* 유저 스택의 첫 rsp를 돌려준다. argv 묶음보다 아래라 앱이 쌓는 스택
@@ -168,8 +175,9 @@ static uintptr_t setup_args(struct PROCESS64 *process, const char *cmdline, uint
 
 static void process_free_memory(struct PROCESS64 *process)
 {
-	/* image는 memman64가 아니라 고정 유저 이미지 창에서 온다(elf64_loader.c).
-	   memman64에 돌려주면 커널 힙이 그 창을 나눠주게 되므로 건드리지 않는다. */
+	/* 이미지는 풀 밖의 고정 창이라 memman에 돌려주는 게 아니라
+	   소유권만 놓는다 (console_plan.md 1.5단계). */
+	elf64_release_process(process);
 	if (process->stack.base != 0 && process->stack.size != 0) {
 		memman64_free_4k(&memman64, process->stack.base, process->stack.size);
 	}
@@ -178,88 +186,8 @@ static void process_free_memory(struct PROCESS64 *process)
 	}
 }
 
-/*
- * 스택과 힙을 얼마나 썼는지 COM1으로 알린다.
- *
- * 힙은 커널이 정확히 안다: SYS_ALLOC이 범프라 heap_next - heap.base가 곧
- * 최대 사용량이다. 스택은 알 수 없으므로 들어가기 전에 무늬를 칠해 두고
- * 나올 때 어디까지 지워졌는지 본다.
- * USER_STACK_SIZE와 USER_HEAP_SIZE를 짐작이 아니라 실측으로 정하기 위한 것.
- */
-#define STACK_PAINT 0xa5
-
-static void stack_paint(struct PROCESS64 *process)
-{
-	uint8_t *p;
-	size_t i;
-
-	p = (uint8_t *) process->stack.base;
-	for (i = 0; i < process->stack.size; i++) {
-		p[i] = STACK_PAINT;
-	}
-}
-
-static size_t stack_used(const struct PROCESS64 *process)
-{
-	const uint8_t *p;
-	size_t i;
-
-	p = (const uint8_t *) process->stack.base;
-	for (i = 0; i < process->stack.size; i++) {
-		if (p[i] != STACK_PAINT) {
-			break;                  /* 스택은 위에서 아래로 자란다 */
-		}
-	}
-	return process->stack.size - i;
-}
-
-static void serial_out(char c)
-{
-	while ((io_in8(0x3f8 + 5) & 0x20) == 0) {
-	}
-	io_out8(0x3f8, (uint8_t) c);
-}
-
-static void serial_dec(uint64_t v)
-{
-	char buf[20];
-	int i;
-
-	if (v == 0) {
-		serial_out('0');
-		return;
-	}
-	i = 0;
-	while (v != 0 && i < 20) {
-		buf[i++] = (char) ('0' + v % 10);
-		v /= 10;
-	}
-	while (i > 0) {
-		serial_out(buf[--i]);
-	}
-}
-
-static void serial_text(const char *s)
-{
-	while (*s != '\0') {
-		serial_out(*s++);
-	}
-}
-
-static void report_usage(const struct PROCESS64 *process)
-{
-	serial_text("proc usage heap=");
-	serial_dec(process->heap_next - process->heap.base);
-	serial_text("/");
-	serial_dec(process->heap.size);
-	serial_text(" stack=");
-	serial_dec(stack_used(process));
-	serial_text("/");
-	serial_dec(process->stack.size);
-	serial_text("\r\n");
-}
-
-int process64_exec_file(const char *path, const char *cmdline)
+int process64_exec_file(const char *path, const char *cmdline,
+	struct CONSOLE64 *console)
 {
 	char name[FD64_NAME_MAX];
 	size_t name_len;
@@ -285,9 +213,12 @@ int process64_exec_file(const char *path, const char *cmdline)
 	if (process == NULL) {
 		return -1;
 	}
-	if (elf64_load_process(name, process) != 0) {
+	status = elf64_load_process(name, process);
+	if (status != 0) {
 		process->pid = 0;
-		return -2;
+		/* -8은 "이미지 창을 다른 앱이 쓰는 중"이다. 콘솔이 여럿이면
+		   실제로 일어나므로 뭉개지 않고 그대로 올려보낸다. */
+		return status == -8 ? -8 : -2;
 	}
 	stack = memman64_alloc_4k(&memman64, USER_STACK_SIZE);
 	heap = memman64_alloc_4k(&memman64, USER_HEAP_SIZE);
@@ -301,29 +232,27 @@ int process64_exec_file(const char *path, const char *cmdline)
 	process->heap.base = heap;
 	process->heap.size = USER_HEAP_SIZE;
 	process->heap_next = heap;
-	stack_paint(process);
+	process->console = console;
 	user_rsp = setup_args(process, cmdline != NULL ? cmdline : path, &argc, &argv);
-	current_process = process;
 	task = task_now64();
-	if (task != NULL) {
-		task->process = process;
-		task->is_user = 1;
+	if (task == NULL) {
+		/* 프로세스 소유자는 태스크다. 태스크가 없으면 syscall이 자기
+		   프로세스를 찾을 수 없으므로 진입 자체를 막는다. */
+		process_free_memory(process);
+		process->pid = 0;
+		return -4;
 	}
+	task->process = process;
+	task->is_user = 1;
 	status = enter_user_mode64(process->entry, user_rsp,
 		argc, argv, GDT64_USER_CODE, GDT64_USER_DATA, &process->saved_kernel_rsp);
-	if (task != NULL) {
-		task->kernel_rsp = process->saved_kernel_rsp;
-	}
+	task->kernel_rsp = process->saved_kernel_rsp;
 	if (process->exited != 0) {
 		status = process->exit_status;
 	}
-	if (task != NULL) {
-		task->process = NULL;
-		task->is_user = 0;
-		task->kernel_rsp = 0;
-	}
-	current_process = NULL;
-	report_usage(process);
+	task->process = NULL;
+	task->is_user = 0;
+	task->kernel_rsp = 0;
 	process_free_memory(process);
 	process->pid = 0;
 	return status;
