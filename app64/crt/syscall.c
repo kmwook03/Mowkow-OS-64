@@ -1,3 +1,9 @@
+/*
+ * syscall.c -- 앱에서 쓰는 시스템 콜 감싸개
+ *
+ * 번호를 rax에, 인수를 rdi/rsi/rdx/r10/r8/r9에 넣고 int 0x80을 부른다.
+ * 커널과 맞춰야 하는 규약은 src64/include/syscall64.h에 있다.
+ */
 #include <mowos.h>
 #include <syscall.h>
 
@@ -113,6 +119,41 @@ void free_alloc(void *ptr, size_t size)
 unsigned long ticks(void)
 {
 	return (unsigned long) syscall0(SYS_TICKS);
+}
+
+void tty_raw(int on)
+{
+	syscall2(SYS_TTY, TTY_MODE, on);
+}
+
+unsigned long tty_readkey(void)
+{
+	return (unsigned long) syscall1(SYS_TTY, TTY_READKEY);
+}
+
+unsigned long tty_size(void)
+{
+	return (unsigned long) syscall1(SYS_TTY, TTY_SIZE);
+}
+
+void tty_move(int row, int col)
+{
+	syscall3(SYS_TTY, TTY_MOVE, row, col);
+}
+
+void tty_clear(int row, int col, int rows, int cols)
+{
+	syscall5(SYS_TTY, TTY_CLEAR, row, col, rows, cols);
+}
+
+void tty_attr(int fg, int bg)
+{
+	syscall3(SYS_TTY, TTY_ATTR, fg, bg);
+}
+
+void tty_flush(void)
+{
+	syscall1(SYS_TTY, TTY_FLUSH);
 }
 
 int puts(const char *s)

@@ -22,14 +22,8 @@ Makefile.orig
 .txt
 AGENTS.md
 .agents/
-report.md
-porting.md
-abi_plan.md
-hangulplan.md
-python_porting.md
+.claude/
 CLAUDE.md
-.codex
-mowkow_porting.md
-roadmap64.md
+.codex/
 py64/
 console_plan.md

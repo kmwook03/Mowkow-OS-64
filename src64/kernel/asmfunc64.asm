@@ -67,10 +67,10 @@ extern process64_current_exit_rsp
 extern process64_current_exit_status
 
 section .text
-; copy_kernel (loader64.asm) always copies a fixed KERNEL_SECTORS*512-byte
-; block from disk, which now reaches past .bss's LMA and fills it with
-; whatever file data sits there on disk instead of zeros. Zero it explicitly
-; before any C code touches globals.
+; copy_kernel(loader64.asm)은 디스크에서 늘 KERNEL_SECTORS*512바이트를 통째로
+; 옮긴다. 그 범위가 .bss의 적재 주소를 넘어서기 때문에, .bss 자리에 0이 아니라
+; 디스크에 있던 파일 내용이 들어온다. C 코드가 전역 변수를 건드리기 전에
+; 여기서 직접 0으로 채운다.
 _start:
 	cli
 	cld
@@ -345,8 +345,8 @@ syscall_common:
 	cmp rax, 1
 	je syscall_exit_to_kernel
 
-	; restore the user data selectors before popping rax: doing it after
-	; clobbers the low 16 bits of every syscall return value with 0x2b.
+	; rax를 꺼내기 전에 유저 데이터 셀렉터를 되돌린다. 순서를 바꾸면 모든
+	; 시스템 콜 반환값의 아래 16비트가 0x2b로 덮인다.
 	mov ax, USER_DATA_SEL
 	mov ds, ax
 	mov es, ax

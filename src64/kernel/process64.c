@@ -1,4 +1,14 @@
+/*
+ * process64.c -- 유저 프로세스
+ *
+ * ELF64를 올리고, 스택과 힙을 붙이고, 링 3으로 들어갔다가 돌아오는 자리다.
+ * 열린 파일 표도 프로세스마다 하나씩 갖고 있다.
+ *
+ * 페이즈 1(주소 공간 분리) 전이라 상주 프로세스는 한 번에 하나뿐이고,
+ * 이미지는 모두 같은 고정 창에 올라간다.
+ */
 #include <asmfunc64.h>
+#include <console64.h>
 #include <dsctbl64.h>
 #include <elf64_loader.h>
 #include <memory64.h>
@@ -7,8 +17,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/*
+ * 실측으로 정한 값 (roadmap64.md Phase 4 step 7). report_usage가 프로세스마다
+ * COM1에 실제 사용량을 찍는다.
+ *
+ * 힙: 나노의 사용량은 파일 크기가 아니라 줄 수를 따라간다 - 줄마다 최소
+ * 64바이트다. 8 KiB짜리 4000줄 파일이 256 KiB의 98.5%를 먹었다. 1 MiB면
+ * 같은 파일이 25% 언저리고, 64 KiB(MAX_FILE) 소스 파일도 편집할 여유가 남는다.
+ * 스택: 나노가 472바이트, 다른 앱은 그보다 적게 썼다. 64 KiB는 135배 여유라
+ * 줄일 이유가 없어 그대로 둔다. 페이즈 1이 여기에 가드 페이지를 붙인다.
+ */
 #define USER_STACK_SIZE (64 * 1024)
-#define USER_HEAP_SIZE  (256 * 1024)
+#define USER_HEAP_SIZE  (1024 * 1024)
 
 static struct PROCESS64 process_table[4];
 static uint32_t next_pid = 1;
@@ -108,8 +128,8 @@ int process64_current_exit_status(void)
 	return process != NULL ? process->exit_status : -1;
 }
 
-/* returns the initial user rsp: below the argv block, so the app's own
-   frames cannot overwrite its arguments. */
+/* 유저 스택의 첫 rsp를 돌려준다. argv 묶음보다 아래라 앱이 쌓는 스택
+   프레임이 자기 인수를 덮어쓰지 않는다. */
 static uintptr_t setup_args(struct PROCESS64 *process, const char *cmdline, uint64_t *argc_out, uintptr_t *argv_out)
 {
 	uintptr_t sp;
@@ -169,7 +189,7 @@ static void process_free_memory(struct PROCESS64 *process)
 int process64_exec_file(const char *path, const char *cmdline,
 	struct CONSOLE64 *console)
 {
-	char name[16];
+	char name[FD64_NAME_MAX];
 	size_t name_len;
 	struct PROCESS64 *process;
 	uintptr_t stack;
@@ -180,8 +200,8 @@ int process64_exec_file(const char *path, const char *cmdline,
 	struct TASK64 *task;
 	int status;
 
-	/* "cat test.txt" arrives as one string: the executable is the first
-	   token, the rest is argv for setup_args(). */
+	/* "cat test.txt"는 한 문자열로 들어온다. 앞 토큰이 실행 파일이고 나머지는
+	   setup_args()에 넘길 argv다. */
 	for (name_len = 0; name_len < sizeof(name) - 1; name_len++) {
 		if (path[name_len] == '\0' || path[name_len] == ' ') {
 			break;

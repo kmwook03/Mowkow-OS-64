@@ -1,3 +1,14 @@
+/*
+ * console64.c -- 한글 콘솔과 명령 해석기
+ *
+ * 화면에 글자를 찍는 일, 키를 받아 두벌식으로 조합하는 일, 명령 한 줄을
+ * 해석하는 일이 여기 모여 있다. 콘솔은 시트 하나 위에 그려지므로 전체 화면
+ * 이든 창 안이든 같은 코드로 동작한다.
+ *
+ * 두벌식 조합기는 커널 쪽인 이 파일이 갖고 있다(roadmap64.md 결정 11).
+ * 앱은 완성된 글자와 조합 중인 글자를 SYS_TTY로 받을 뿐, 자모 상태는 보지
+ * 않는다.
+ */
 #include <asmfunc64.h>
 #include <bootinfo64.h>
 #include <console64.h>
@@ -11,16 +22,19 @@
 #include <gui64.h>
 #include <process64.h>
 #include <sheet64.h>
+#include <syscall64.h>
 #include <timer64.h>
 #include <utf864.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define CONSOLE_INPUT_MAX 256
-#define COLOR_BG 0
+/* 한글은 한 글자에 3바이트라 256이면 85자밖에 안 된다. 1024면 340자쯤 되고,
+   .bss는 768바이트만 더 쓴다. console64.h의 CONSOLE64_LINE_MAX와 같아야 한다. */
+#define CONSOLE_INPUT_MAX 1024
+#define COLOR_BG_DEFAULT 0
 /* 32비트 트리와 같은 값(COL8_FFFFFF). init_palette64가 15를 어두운 회색으로
    바꾸므로, 예전처럼 15를 쓰면 검정 배경에 어두운 회색 글씨가 된다. */
-#define COLOR_FG 7
+#define COLOR_FG_DEFAULT 7
 #define FONT_W 8
 #define FONT_H 16
 #define HANGUL_W 16
@@ -83,6 +97,8 @@ static struct CONSOLE64 console_table[CONSOLE64_MAX];
 static struct CONSOLE64 *console_active = &console_table[0];
 
 static const uint8_t *hangul_font;
+static uint8_t color_fg = COLOR_FG_DEFAULT;
+static uint8_t color_bg = COLOR_BG_DEFAULT;
 
 /* 지금 도는 태스크의 콘솔. MicroPython처럼 인스턴스를 모르는 호출자가
    자기를 띄운 콘솔에 찍도록 해 준다. 콘솔 태스크가 아니면 부팅 콘솔. */
@@ -245,7 +261,7 @@ static void draw_ascii(struct CONSOLE64 *con, uint16_t x, uint16_t y, char c)
 		p = con->vram + (uint32_t) (y + row) * con->stride + x;
 		for (bit = 0; bit < FONT_W; bit++) {
 			if ((d & (0x80 >> bit)) != 0) {
-				p[bit] = COLOR_FG;
+				p[bit] = color_fg;
 			}
 		}
 	}
@@ -447,9 +463,17 @@ static void not_korean(struct CONSOLE64 *con, char key)
 	}
 }
 
-static int is_double_cho(int cho)
+/*
+ * 받침이 될 수 없는 쌍자음: ㄸ(4), ㅃ(8), ㅉ(13). 이 셋은 앞 글자에 붙이지
+ * 못하므로 새 글자를 열어야 한다.
+ *
+ * ㄲ(1)과 ㅆ(10)은 여기 들어가면 안 된다. 둘 다 멀쩡한 받침이라(종성 2번과
+ * 20번), 쌍자음이라는 이유로 함께 막으면 있, 닦, 밖, 겪 같은 글자를 아예 칠
+ * 수 없게 된다.
+ */
+static int cho_cannot_be_jong(int cho)
 {
-	return cho == 1 || cho == 4 || cho == 8 || cho == 10 || cho == 13;
+	return cho == 4 || cho == 8 || cho == 13;
 }
 
 static void process_hangul_key(struct CONSOLE64 *con, char key)
@@ -612,7 +636,7 @@ static int str_starts_with(const char *s, const char *prefix)
 
 static void print_file_name(struct CONSOLE64 *con, const struct FDINFO64 *finfo)
 {
-	uint16_t i;
+	uint16_t n;
 
 	for (i = 0; i < 8; i++) {
 		if (finfo->name[i] != ' ') {
@@ -627,6 +651,7 @@ static void print_file_name(struct CONSOLE64 *con, const struct FDINFO64 *finfo)
 			}
 		}
 	}
+	put_bytes(name, n);
 }
 
 static void print_uint64(struct CONSOLE64 *con, uint64_t value)
@@ -756,7 +781,8 @@ static void execute_command(struct CONSOLE64 *con)
 	} else if (str_eq(con->input_line, "ls") || str_eq(con->input_line, "목록")) {
 		uint32_t i;
 		uint32_t count;
-		const struct FDINFO64 *finfo;
+		struct FDINFO64 finfo;
+		char name[FD64_NAME_MAX];
 
 		count = fd64_file_count();
 		for (i = 0; i < count; i++) {
@@ -864,9 +890,7 @@ void console64_init(const struct BOOTINFO64 *boot_info)
 	} else {
 		clear_screen(con);
 	}
-	// console64_puts("Mowkow OS x86_64 console\n");
 	console64_puts("머꼬 OS x86_64 콘솔\n");
-	// console64_puts("Hangul input is default. Shift+Space toggles English.\n");
 	console64_puts("한글 입력이 기본입니다. Shift+Space로 영어 입력으로 전환합니다.\n");
 	prompt(con);
 }
@@ -886,6 +910,69 @@ void console64_write_con(struct CONSOLE64 *con, const char *s, uint64_t len)
 	put_bytes(con, s, (size_t) len);
 }
 
+/*
+ * 확장 키를 콘솔이 아는 코드로 바꾼다. 소비자가 없는 키면 0을 돌려준다.
+ */
+static int normalize_ext_key(uint16_t *key)
+{
+	if ((*key & KEY64_EXT) == 0) {
+		return 1;
+	}
+	if (*key == KEY64_KPENTER) {
+		*key = 0x1c;                /* 키패드 Enter는 Enter와 같게 */
+		return 1;
+	}
+	if (*key == (KEY64_EXT | 0x35)) {
+		*key = 0x35;                /* 키패드 / 는 그냥 '/' */
+		return 1;
+	}
+	/* 화살표, Home/End, Delete 등: 아직 콘솔에 소비자가 없다. */
+	return 0;
+}
+
+/*
+ * FIFO에서 이벤트 하나만 처리한다. 키보드 스캔코드였으면 *key에 담고 1.
+ * 비어 있으면 태스크를 재운다.
+ *
+ * 한 번에 하나씩 돌려주는 이유: 마우스로 창 모드를 바꾸면 그 처리 도중
+ * console64_attach_sheet가 raw 큐에 TTY_KIND_RESIZE를 넣는다. 키보드
+ * 이벤트가 올 때까지 여기서 계속 돌면 그 RESIZE는 다음 타자를 칠 때까지
+ * 큐에 갇힌다 - 앱은 지워진 화면을 그대로 보고 있게 된다.
+ */
+static int pump_event(uint16_t *key)
+{
+	struct EVENT64 event;
+
+	io_cli();
+	if (console_event_fifo == NULL || fifo64_get(console_event_fifo, &event) != 0) {
+		task_sleep64(task_now64());
+		io_sti();
+		return 0;
+	}
+	io_sti();
+	/* 마우스와 F11은 앱이 콘솔을 쥐고 있어도 살아 있어야 한다.
+	   메인 루프와 같은 처리기를 쓴다. */
+	if (gui64_handle_system_event(&event) != 0) {
+		return 0;
+	}
+	if (event.type == EVENT64_KEYBOARD) {
+		*key = (uint16_t) event.data;
+		return 1;
+	}
+	return 0;
+}
+
+static uint16_t wait_key_event(void)
+{
+	uint16_t key;
+
+	for (;;) {
+		if (pump_event(&key) != 0) {
+			return key;
+		}
+	}
+}
+
 uint64_t console64_read(char *dst, uint64_t len)
 {
 	return console64_read_con(console_self(), dst, len);
@@ -894,7 +981,7 @@ uint64_t console64_read(char *dst, uint64_t len)
 uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 {
 	uint64_t count;
-	uint8_t scancode;
+	uint16_t key;
 	char c;
 
 	if (dst == 0 || len == 0) {
@@ -906,15 +993,15 @@ uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 		if (keyboard64_track_modifier(scancode) != 0) {
 			continue;
 		}
-		if ((scancode & 0x80) != 0) {
+		if ((key & 0x80) != 0) {
 			continue;
 		}
-		if (scancode == 0x1c) {
+		if (key == 0x1c) {
 			dst[count++] = '\n';
 			put_utf8_char(con, "\n", 1);
 			return count;
 		}
-		if (scancode == 0x0e) {
+		if (key == 0x0e) {
 			if (count > 0) {
 				count--;
 				erase_prev_visual(con, FONT_W);
@@ -1101,6 +1188,48 @@ void console64_repl_set_active(int active)
 	con->repl_active = active;
 	con->repl_queue_head = 0;
 	con->repl_queue_tail = 0;
+}
+
+/*
+ * 명령줄 편집기를 그대로 빌려서 한 줄을 읽어 온다. 완성된 줄의 바이트 수,
+ * Ctrl-C면 -1, Ctrl-D면 -2를 돌려준다(mowkow_porting.md 결정 8).
+ *
+ * 편집 버퍼(input_line)는 명령줄과 같은 것을 쓴다. 그리기와 백스페이스가
+ * 전부 그 버퍼를 보고 있어서 따로 두면 코드가 갈라진다. 대신 부르는 쪽은
+ * input_line을 가리키는 문자열(execute_command가 넘긴 인자 같은 것)을
+ * 여기 오기 전에 자기 쪽으로 복사해 두어야 한다.
+ */
+int64_t console64_read_line(char *dst, uint64_t max)
+{
+	uint64_t n;
+	uint64_t i;
+
+	line_capture = 1;
+	line_done = 0;
+	line_result = 0;
+	input_len = 0;
+	line_full_warned = 0;
+	while (line_done == 0) {
+		console64_process_key(wait_key_event());
+	}
+	line_capture = 0;
+	flush_composing();
+	newline();
+	if (line_result != 0) {
+		input_len = 0;
+		line_full_warned = 0;
+		return line_result;
+	}
+	n = input_len;
+	if (n > max) {
+		n = max;
+	}
+	for (i = 0; i < n; i++) {
+		dst[i] = input_line[i];
+	}
+	input_len = 0;
+	line_full_warned = 0;
+	return (int64_t) n;
 }
 
 int console64_repl_getchar(void)

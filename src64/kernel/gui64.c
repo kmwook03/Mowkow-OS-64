@@ -12,6 +12,7 @@
 #include <gui64.h>
 #include <kstring64.h>
 #include <memory64.h>
+#include <mouse64.h>
 #include <sheet64.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -81,6 +82,7 @@ static struct SHEET64 *gui_taskbar;
 static uint8_t *gui_taskbar_buf;
 static struct SHEET64 *gui_cursor;
 static uint8_t gui_cursor_buf[GUI64_CURSOR_SIZE * GUI64_CURSOR_SIZE];
+static struct MOUSE_DEC64 gui_mdec;
 static int32_t gui_mx;
 static int32_t gui_my;
 static int32_t gui_scrnx;
@@ -639,4 +641,30 @@ void gui64_raise_bottom_window(void)
 		return;
 	}
 	raise_win(gui_ctl->sheets[1]);
+}
+
+/*
+ * 마우스와 창 관리 키는 콘솔이 어떤 모드든 똑같이 동작해야 한다.
+ * 커널 메인 루프와 raw 모드의 키 대기 루프가 둘 다 이 함수를 먼저 부른다.
+ * 마우스 디코더가 여기 있는 이유: 예전에는 kernel64.c의 static이라
+ * 메인 루프만 접근할 수 있었고, raw 모드에서 마우스가 그대로 멈췄다.
+ */
+int gui64_handle_system_event(const struct EVENT64 *event)
+{
+	if (event->type == EVENT64_MOUSE) {
+		if (mouse64_decode(&gui_mdec, (uint8_t) event->data) != 0) {
+			gui64_mouse_event(gui_mdec.x, gui_mdec.y, gui_mdec.btn);
+		}
+		return 1;
+	}
+	if (event->type == EVENT64_KEYBOARD && event->data == 0x57) {   /* F11 */
+		gui64_raise_bottom_window();
+		return 1;
+	}
+	return 0;
+}
+
+struct MOUSE_DEC64 *gui64_mouse_dec(void)
+{
+	return &gui_mdec;
 }

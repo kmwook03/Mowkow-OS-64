@@ -1,3 +1,9 @@
+/*
+ * mpport_main.c -- 커널에 넣은 MicroPython의 시작과 끝
+ *
+ * GC 힙, 스택 한계, REPL과 스크립트 실행 진입점이 여기 있다. 파일 시스템과
+ * 콘솔로 이어 주는 부분은 mphalport.c에 있다.
+ */
 #include <mpport64.h>
 #include <mtask64.h>
 
@@ -21,15 +27,14 @@
 #include <stdint.h>
 
 /*
- * Right-sized (Stage 4, python_porting.md) from a real measured workload
- * rather than the Stage 0.6 guess: a synthetic script mixing recursion
- * (fib(15)), a 200-entry dict of small lists, a 300-element list
- * comprehension, 100 class instances, string-building, and exception
- * handling peaked at ~153KiB of the old 256KiB heap (gc.mem_free() before
- * vs after gc.collect()). 512KiB gives ~3x headroom over that peak,
- * matching the original 512KiB-1MiB range python_porting.md's Stage 0.6
- * suggested (this port under-shot it for .bss-headroom reasons that
- * MEMMAN64_EARLY_START being raised alongside this, memory64.h, resolves).
+ * 짐작이 아니라 실측으로 정한 크기다(Stage 4, python_porting.md). 재귀
+ * (fib(15)), 작은 리스트 200개가 든 딕셔너리, 원소 300개짜리 리스트 표기,
+ * 클래스 인스턴스 100개, 문자열 잇기, 예외 처리를 섞은 스크립트를 돌렸더니
+ * 예전 256KiB 힙에서 최대 153KiB쯤 썼다(gc.collect() 앞뒤의 gc.mem_free()
+ * 차이). 512KiB면 그 최댓값의 세 배쯤 여유가 있고, python_porting.md
+ * Stage 0.6이 제안한 512KiB~1MiB 범위와도 맞는다. 처음에 그보다 적게 잡았던
+ * 이유는 .bss 여유 때문이었는데, 그 문제는 MEMMAN64_EARLY_START를 함께
+ * 올리면서 풀렸다(memory64.h).
  */
 #define MPPORT_GC_HEAP_SIZE (512 * 1024)
 
@@ -126,7 +131,7 @@ void mpport_run_file(const char *path)
 		return;
 	}
 
-	size = fh.finfo->size;
+	size = fh.info.size;
 	buf_addr = memman64_alloc_4k(&memman64, size);
 	if (buf_addr == 0) {
 		console64_puts("out of memory\n");
@@ -164,11 +169,11 @@ void mpport_run_file(const char *path)
 }
 
 /*
- * Required by the linked-in core (py/lexer.h): with MICROPY_READER_POSIX
- * and MICROPY_READER_VFS both off (Stage 1.3), the port must supply this.
- * No fd64-backed mp_reader exists yet (Stage 3's job) -- matches upstream's
- * own ports/minimal/main.c reference for exactly this situation: raise
- * ENOENT rather than silently returning an invalid lexer.
+ * 링크된 코어(py/lexer.h)가 요구한다. MICROPY_READER_POSIX와
+ * MICROPY_READER_VFS가 둘 다 꺼져 있으므로(Stage 1.3) 포트가 직접 줘야
+ * 한다. fd64로 읽는 mp_reader는 아직 없다(Stage 3에서 만든다). 업스트림
+ * ports/minimal/main.c와 같은 선택으로, 잘못된 lexer를 조용히 돌려주는
+ * 대신 ENOENT를 낸다.
  */
 mp_lexer_t *mp_lexer_new_from_file(qstr filename)
 {
@@ -177,10 +182,10 @@ mp_lexer_t *mp_lexer_new_from_file(qstr filename)
 }
 
 /*
- * Required by the linked-in core (py/builtin.h) since MICROPY_VFS is off.
- * No filesystem-backed import exists yet (and MICROPY_ENABLE_EXTERNAL_IMPORT
- * is off per Stage 1.3 regardless) -- always report "not found", matching
- * upstream's own ports/minimal/main.c reference.
+ * MICROPY_VFS가 꺼져 있으므로 링크된 코어(py/builtin.h)가 요구한다. 파일
+ * 시스템을 쓰는 import는 아직 없고(어차피 Stage 1.3에서
+ * MICROPY_ENABLE_EXTERNAL_IMPORT도 꺼 두었다) 늘 "없음"이라고 답한다.
+ * 업스트림 ports/minimal/main.c와 같다.
  */
 mp_import_stat_t mp_import_stat(const char *path)
 {
@@ -189,11 +194,11 @@ mp_import_stat_t mp_import_stat(const char *path)
 }
 
 /*
- * Required by the linked-in core (py/gc.c) regardless of whether the REPL
- * is active yet. gc_helper_collect_regs_and_stack() is vendored as-is
- * (shared/runtime/gchelper_generic.c) -- has a real x86_64 register-capture
- * path needing no arch-specific asm. Relies on MP_STATE_THREAD(stack_top),
- * which mp_cstack_init_with_sp_here() sets above.
+ * REPL을 쓰든 안 쓰든 링크된 코어(py/gc.c)가 요구한다.
+ * gc_helper_collect_regs_and_stack()는 업스트림 그대로 가져다 쓴다
+ * (shared/runtime/gchelper_generic.c). x86_64용 레지스터 저장 경로가 이미
+ * 있어 아키텍처별 어셈블리가 필요 없다. 위의 mp_cstack_init_with_sp_here()
+ * 가 설정하는 MP_STATE_THREAD(stack_top)에 기댄다.
  */
 void gc_collect(void)
 {
@@ -203,10 +208,10 @@ void gc_collect(void)
 }
 
 /*
- * Required by the linked-in core (py/nlr.c): called only if nlr_jump() is
- * reached with no active NLR context to jump to -- an internal MicroPython
- * bug, not a normal Python exception (those always have a context). No
- * recovery is possible; halt rather than continue with corrupted state.
+ * 링크된 코어(py/nlr.c)가 요구한다. 뛰어갈 NLR 문맥이 없는데 nlr_jump()에
+ * 닿았을 때만 불린다. 보통의 파이썬 예외는 늘 문맥이 있으므로, 이건
+ * MicroPython 내부의 버그다. 되살릴 방법이 없으니 망가진 상태로 계속
+ * 가느니 멈춘다.
  */
 void nlr_jump_fail(void *val)
 {

@@ -43,5 +43,9 @@ void console64_destroy(struct CONSOLE64 *con);
 void console64_post_key(struct CONSOLE64 *con, uint8_t scancode);
 void console64_repl_set_active(int active);
 int console64_repl_getchar(void);
+/* 명령줄 편집기(한글 조합 포함)로 한 줄을 읽는다. 바이트 수, Ctrl-C면 -1,
+   Ctrl-D면 -2. 부르기 전에 input_line을 가리키는 인자는 복사해 두어야 한다. */
+int64_t console64_read_line(char *dst, uint64_t max);
+#define CONSOLE64_LINE_MAX 1024
 
 #endif

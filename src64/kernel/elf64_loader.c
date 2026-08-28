@@ -103,7 +103,7 @@ static int load_image(const char *path, struct PROCESS64 *process)
 	if (fd64_open(&fh, path) == 0) {
 		return -1;
 	}
-	file_size = fh.finfo->size;
+	file_size = fh.info.size;
 	file = (uint8_t *) memman64_alloc_4k(&memman64, file_size);
 	if (file == NULL) {
 		return -2;
@@ -145,6 +145,10 @@ static int load_image(const char *path, struct PROCESS64 *process)
 		memman64_free_4k(&memman64, (uintptr_t) file, file_size);
 		return -6;
 	}
+	/* [USER_IMAGE_MIN, USER_IMAGE_MAX)는 memman64가 다루지 않는 유저 이미지
+	   창이다(memory64.h의 MEMMAN64_EARLY_START 주석). 위의 범위 검사가 그
+	   창 안이라는 것을 이미 보장하므로 여기서 따로 할당하지 않는다.
+	   페이즈 1 전까지는 상주 프로세스가 하나뿐이라 겹칠 상대도 없다. */
 	image_base = align_down64(low, MEMMAN64_PAGE_SIZE);
 	image_size = (size_t) (align_up64(high, MEMMAN64_PAGE_SIZE) - image_base);
 	zero_bytes((void *) image_base, image_size);

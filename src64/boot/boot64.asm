@@ -1,8 +1,36 @@
 bits 16
 org 0x7c00
 
+; 아래 BPB 값은 모두 Makefile을 거쳐 tools/mkfat32_64.py에서 온다
 %ifndef STAGE2_SECTORS
 %define STAGE2_SECTORS 16
+%endif
+%ifndef STAGE2_LBA
+%define STAGE2_LBA 8
+%endif
+%ifndef TOTAL_SECTORS
+%define TOTAL_SECTORS 131072
+%endif
+%ifndef RESERVED_SECTORS
+%define RESERVED_SECTORS 1024
+%endif
+%ifndef FAT_COUNT
+%define FAT_COUNT 2
+%endif
+%ifndef SECTORS_PER_FAT
+%define SECTORS_PER_FAT 1001
+%endif
+%ifndef ROOT_CLUSTER
+%define ROOT_CLUSTER 2
+%endif
+%ifndef FSINFO_LBA
+%define FSINFO_LBA 1
+%endif
+%ifndef BACKUP_BOOT_LBA
+%define BACKUP_BOOT_LBA 6
+%endif
+%ifndef VOLUME_ID
+%define VOLUME_ID 0x646b776d
 %endif
 
 stage2_addr equ 0x8000
@@ -11,44 +39,58 @@ start:
 	jmp short after_bpb
 	nop
 
-oem_name:
+oem_name:                       ; 0x03
 	db "MOWKOW64"
-bytes_per_sector:
+bytes_per_sector:               ; 0x0b
 	dw 512
-sectors_per_cluster:
+sectors_per_cluster:            ; 0x0d
 	db 1
-reserved_sectors:
-	dw 17
-fat_count:
-	db 2
-root_entries:
-	dw 224
-total_sectors16:
-	dw 2880
-media_type:
-	db 0xf0
-sectors_per_fat:
-	dw 9
-sectors_per_track:
-	dw 18
-heads:
-	dw 2
-hidden_sectors:
+reserved_sectors:               ; 0x0e
+	dw RESERVED_SECTORS
+fat_count:                      ; 0x10
+	db FAT_COUNT
+root_entries:                   ; 0x11 FAT32: 항상 0
+	dw 0
+total_sectors16:                ; 0x13 FAT32: 항상 0
+	dw 0
+media_type:                     ; 0x15 고정 디스크
+	db 0xf8
+sectors_per_fat16:              ; 0x16 FAT32: 항상 0
+	dw 0
+sectors_per_track:              ; 0x18
+	dw 63
+heads:                          ; 0x1a
+	dw 255
+hidden_sectors:                 ; 0x1c
 	dd 0
-total_sectors32:
-	dd 0
-drive_number:
+total_sectors32:                ; 0x20
+	dd TOTAL_SECTORS
+sectors_per_fat32:              ; 0x24
+	dd SECTORS_PER_FAT
+ext_flags:                      ; 0x28 FAT 사본 모두 미러링
+	dw 0
+filesystem_version:             ; 0x2a
+	dw 0
+root_cluster:                   ; 0x2c
+	dd ROOT_CLUSTER
+fsinfo_sector:                  ; 0x30
+	dw FSINFO_LBA
+backup_boot_sector:             ; 0x32
+	dw BACKUP_BOOT_LBA
+reserved2:                      ; 0x34
+	times 12 db 0
+drive_number:                   ; 0x40
+	db 0x80
+reserved1:                      ; 0x41
 	db 0
-reserved1:
-	db 0
-boot_signature:
+boot_signature:                 ; 0x42
 	db 0x29
-volume_id:
-	dd 0x646b776d
-volume_label:
+volume_id:                      ; 0x43
+	dd VOLUME_ID
+volume_label:                   ; 0x47
 	db "MOWKOW64   "
-filesystem_type:
-	db "FAT12   "
+filesystem_type:                ; 0x52
+	db "FAT32   "
 
 after_bpb:
 	jmp 0x0000:boot_start
@@ -109,7 +151,7 @@ stage2_packet:
 	dw STAGE2_SECTORS
 	dw stage2_addr
 	dw 0x0000
-	dd 1
+	dd STAGE2_LBA
 	dd 0
 
 times 510 - ($ - $$) db 0

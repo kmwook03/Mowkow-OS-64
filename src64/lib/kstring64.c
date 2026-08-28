@@ -1,3 +1,9 @@
+/*
+ * kstring64.c -- 커널이 쓰는 최소 문자열/메모리 함수
+ *
+ * 자유 실행(freestanding) 빌드라 libc가 없다. 컴파일러가 memcpy/memset을
+ * 알아서 불러 쓰기도 하므로 이름과 반환값은 표준 그대로 맞춘다.
+ */
 #include <kstring64.h>
 #include <stdint.h>
 

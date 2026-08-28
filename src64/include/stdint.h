@@ -14,9 +14,8 @@ typedef __INTPTR_TYPE__ intptr_t;
 typedef __UINTPTR_TYPE__ uintptr_t;
 
 /*
- * Fixed-width and pointer-width limit macros, via GCC's own builtin
- * __*_MAX__ macros (always available, no libc needed). Required by
- * third_party/micropython/py/mpconfig.h's MP_INT_MAX/SIZE_MAX checks.
+ * 고정 폭과 포인터 폭 한계값 매크로. GCC가 스스로 정의하는 __*_MAX__를
+ * 그대로 쓰므로 이 툴체인에서 값이 어긋날 일이 없다.
  */
 #define INT8_MAX   __INT8_MAX__
 #define INT16_MAX  __INT16_MAX__
