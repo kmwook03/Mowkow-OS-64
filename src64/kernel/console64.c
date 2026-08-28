@@ -1001,7 +1001,7 @@ static void console_task_main(void)
 
 struct CONSOLE64 *console64_create(void)
 {
-	static const char base[] = "머꼬 콘솔 ";
+	static const char base[] = "터미널";
 	char title[sizeof(base) + 2];
 	struct CONSOLE64 *con;
 	int32_t slot;
@@ -1029,7 +1029,6 @@ struct CONSOLE64 *console64_create(void)
 	for (i = 0; i < sizeof(base) - 1; i++) {
 		title[i] = base[i];
 	}
-	title[i++] = (char) ('0' + slot);
 	title[i] = '\0';
 
 	if (gui64_open_console_window(con, title) != 0) {
@@ -1042,6 +1041,25 @@ struct CONSOLE64 *console64_create(void)
 	}
 	prompt(con);
 	return con;
+}
+
+/* 콘솔을 없앤다. 창을 닫을 때 컴포지터가 부른다 -- 태스크를 죽이고 슬롯을
+   비워야 `new`가 그 번호를 다시 쓴다. task == NULL이 빈 슬롯 표시다.
+   시트는 이미 없어졌으므로 vram/크기를 지워 늦게 오는 출력이 해제된
+   버퍼를 건드리지 않게 한다. */
+void console64_destroy(struct CONSOLE64 *con)
+{
+	if (con == NULL || con->task == NULL) {
+		return;
+	}
+	task_kill64(con->task);
+	con->task = NULL;
+	con->keys.task = NULL;
+	con->sheet = NULL;
+	con->vram = NULL;
+	con->width = 0;
+	con->height = 0;
+	con->repl_active = 0;
 }
 
 void console64_post_key(struct CONSOLE64 *con, uint8_t scancode)

@@ -173,6 +173,31 @@ void task_sleep64(struct TASK64 *task)
 	}
 }
 
+/* 태스크를 없앤다. 큐에서 빼고 스택을 돌려주고 슬롯을 비운다. 자고 있던
+   태스크의 문맥은 그 스택 위에 있지만 다시 깨우지 않으니 상관없다.
+   지금 도는 태스크는 죽이지 않는다 -- 돌아갈 스택이 사라진다. */
+int task_kill64(struct TASK64 *task)
+{
+	uint64_t flags;
+
+	if (task == NULL || task->flags == TASK64_FLAGS_UNUSED || task == task_now64()) {
+		return -1;
+	}
+	flags = io_load_rflags();
+	io_cli();
+	if (task->flags == TASK64_FLAGS_RUNNING) {
+		task_remove64(task);
+	}
+	task->flags = TASK64_FLAGS_UNUSED;
+	io_store_rflags(flags);
+	if (task->stack_base != 0) {
+		memman64_free_4k(&memman64, task->stack_base, task->stack_size);
+		task->stack_base = 0;
+		task->stack_size = 0;
+	}
+	return 0;
+}
+
 void task_switch64(void)
 {
 	struct TASKLEVEL64 *tl;

@@ -35,6 +35,9 @@ int console64_start_task(struct CONSOLE64 *con);
 /* 콘솔을 하나 더 띄운다: 창 + 태스크 + 프롬프트. 자리가 없으면 NULL. */
 struct CONSOLE64 *console64_create(void);
 
+/* 콘솔을 없앤다: 태스크를 죽이고 슬롯을 비운다. 창을 닫을 때 부른다. */
+void console64_destroy(struct CONSOLE64 *con);
+
 /* 스캔코드를 콘솔의 키 FIFO에 넣고, 자고 있으면 깨운다.
    커널 이벤트 루프가 포커스에 따라 부른다. */
 void console64_post_key(struct CONSOLE64 *con, uint8_t scancode);
