@@ -78,7 +78,7 @@ static int valid_header(const struct ELF64_EHDR *ehdr, size_t file_size)
    앱 실행을 시스템 전체에서 직렬화한다 -- 콘솔이 여러 개여도 마찬가지다. */
 static struct PROCESS64 *image_owner;
 
-/* ponytail: 이미지 창 하나. 앱을 동시에 돌려야 하면 프로세스별 페이징. */
+/* 이미지 창 하나. 앱을 동시에 돌려야 하면 프로세스별 페이징. */
 void elf64_release_process(struct PROCESS64 *process)
 {
 	if (image_owner == process) {

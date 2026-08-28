@@ -34,8 +34,8 @@ extern const uint8_t hankaku64[4096];
  * 재귀에 스택 검사를 걸지 않으므로(guard는 런타임 경로에만 있다) 깊이 한계는
  * 순전히 스택 크기가 정한다.
  *
- * ponytail: 스택을 키워 한계를 밀어낼 뿐 없애지는 못한다. 진짜 해결은
- * parse.c에 mp_cstack_check()를 넣는 것이고, 그건 서브모듈을 건드린다.
+ * 스택을 키워 한계를 밀어낼 뿐 없애지는 못한다. 진짜 해결은 parse.c에 mp_cstack_check()를 넣는 것.
+ * 그러나 해당 방식은 서브모듈을 건드린다.
  */
 #define CONSOLE64_STACK_SIZE (256 * 1024)
 

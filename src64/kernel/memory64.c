@@ -149,8 +149,6 @@ static int memman64_free_nolock(struct MEMMAN64 *man, uintptr_t addr, size_t siz
  * rflags를 저장/복원하는 이유는 이미 꺼져 있는 곳에서 불러도 안전하게
  * 하기 위해서다 -- io_sti로 켜 버리면 인터럽트 문맥에서 사고가 난다.
  * 규칙: 이 구간 안에서는 task_sleep64를 부르지 않는다.
- *
- * ponytail: 커널 전체를 덮는 자물쇠 하나. 갱신 지연이 문제되면 그때 쪼갠다.
  */
 size_t memman64_total(const struct MEMMAN64 *man)
 {

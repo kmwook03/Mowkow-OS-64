@@ -10,6 +10,7 @@
 #include <console64.h>
 #include <graphic64.h>
 #include <gui64.h>
+#include <kstring64.h>
 #include <memory64.h>
 #include <sheet64.h>
 #include <stddef.h>
@@ -41,6 +42,21 @@
 #define GUI64_DEMO_Y  487
 
 #define GUI64_MAX_WINS 8
+#define GUI64_TITLE_MAX 24
+
+/* 작업 표시줄. 커서 바로 아래에 예약된 띠라서 창을 아무리 올려도 그 위로는
+   못 간다 (raise_win). 전체 화면 모드에서는 숨는다 -- 콘솔 0의 전체 화면이
+   작업 표시줄까지 덮는다는 게 계획의 결정이다. */
+#define GUI64_BAR_H        28
+#define GUI64_BAR_ENTRY_W 128
+#define GUI64_BAR_ENTRY_H  22
+#define GUI64_BAR_GAP       4
+
+/* 바탕화면의 콘솔 실행 아이콘. */
+#define GUI64_ICON_X  8
+#define GUI64_ICON_Y  8
+#define GUI64_ICON_W 48
+#define GUI64_ICON_H 48
 
 /* 타이틀 바 판정 (32비트 bootpack.c:349,356과 같은 범위). */
 #define GUI64_TITLE_Y0  3
@@ -59,6 +75,7 @@ struct GUI64_WIN {
 	int is_console;
 	struct CONSOLE64 *console;  /* is_console일 때만 유효 */
 	const uint8_t *colormap;    /* 활성일 때 걸 색표, 없으면 NULL */
+	char title[GUI64_TITLE_MAX];    /* 작업 표시줄에 적을 이름 */
 };
 
 /* 데모 창이 활성일 때 거는 색표: 기본 색 큐브를 뒤집는다.
@@ -91,6 +108,8 @@ static int32_t gui_mmx = -1;
 static int32_t gui_mmy;
 static int32_t gui_btn_prev;
 static struct SHEET64 *gui_drag;
+static struct SHEET64 *gui_taskbar;
+static uint8_t *gui_taskbar_buf;
 static struct SHEET64 *gui_cursor;
 static uint8_t gui_cursor_buf[GUI64_CURSOR_SIZE * GUI64_CURSOR_SIZE];
 static int32_t gui_mx;
@@ -135,10 +154,108 @@ static void init_cursor_buf(void)
 	}
 }
 
+static void set_title(struct GUI64_WIN *win, const char *title)
+{
+	strncpy(win->title, title, GUI64_TITLE_MAX - 1);
+	win->title[GUI64_TITLE_MAX - 1] = '\0';
+}
+
+/* 창을 맨 위로 올리되 작업 표시줄과 커서는 다시 그 위로 올린다. 예약된 띠를
+   이렇게 지킨다 -- sheet64_updown은 사이에 낀 시트를 아래로 밀기 때문에
+   "top-2로 올린다"만으로는 표시줄이 창 밑으로 내려간다. */
+static void raise_win(struct SHEET64 *sht)
+{
+	sheet64_updown(sht, gui_ctl->top);
+	if (gui_taskbar != NULL && gui_taskbar->height >= 0) {
+		sheet64_updown(gui_taskbar, gui_ctl->top);
+	}
+	if (gui_cursor != NULL) {
+		sheet64_updown(gui_cursor, gui_ctl->top);
+	}
+}
+
+static void taskbar_entry_rect(int32_t i, int32_t *x0, int32_t *y0)
+{
+	*x0 = GUI64_BAR_GAP + i * (GUI64_BAR_ENTRY_W + GUI64_BAR_GAP);
+	*y0 = (GUI64_BAR_H - GUI64_BAR_ENTRY_H) / 2;
+}
+
+static void taskbar_redraw(void)
+{
+	int32_t i, x0, y0;
+	uint8_t bg, fg;
+
+	if (gui_taskbar == NULL || gui_taskbar->height < 0) {
+		return;
+	}
+	boxfill64(gui_taskbar_buf, gui_scrnx, COL64_C6C6C6,
+		0, 0, gui_scrnx - 1, GUI64_BAR_H - 1);
+	boxfill64(gui_taskbar_buf, gui_scrnx, COL64_FFFFFF, 0, 0, gui_scrnx - 1, 0);
+	for (i = 0; i < gui_win_count; i++) {
+		taskbar_entry_rect(i, &x0, &y0);
+		if (x0 + GUI64_BAR_ENTRY_W > gui_scrnx) {
+			break;
+		}
+		if (gui_wins[i].sht == gui_key_win) {
+			bg = COL64_000084;
+			fg = COL64_FFFFFF;
+		} else if (gui_wins[i].sht->height < 0) {
+			/* 숨은 창. 여기를 눌러야 되살아난다. */
+			bg = COL64_848484;
+			fg = COL64_C6C6C6;
+		} else {
+			bg = COL64_C6C6C6;
+			fg = COL64_000000;
+		}
+		boxfill64(gui_taskbar_buf, gui_scrnx, COL64_848484,
+			x0, y0, x0 + GUI64_BAR_ENTRY_W - 1, y0 + GUI64_BAR_ENTRY_H - 1);
+		boxfill64(gui_taskbar_buf, gui_scrnx, bg,
+			x0 + 1, y0 + 1, x0 + GUI64_BAR_ENTRY_W - 2, y0 + GUI64_BAR_ENTRY_H - 2);
+		putstr64(gui_taskbar_buf, (uint32_t) gui_scrnx, x0 + 6, y0 + 3, fg,
+			gui_wins[i].title);
+	}
+	sheet64_refresh(gui_taskbar, 0, 0, gui_scrnx, GUI64_BAR_H);
+}
+
+static void taskbar_show(int on)
+{
+	if (gui_taskbar == NULL) {
+		return;
+	}
+	if (on != 0) {
+		if (gui_taskbar->height < 0) {
+			sheet64_updown(gui_taskbar, gui_ctl->top);
+			sheet64_updown(gui_cursor, gui_ctl->top);
+		}
+		taskbar_redraw();
+	} else {
+		sheet64_updown(gui_taskbar, -1);
+	}
+}
+
+/* 바탕화면 아이콘. 누르면 콘솔이 하나 뜬다 (`new` 명령과 같은 길). */
+static void draw_desktop_icon(uint8_t *buf, int32_t stride)
+{
+	boxfill64(buf, stride, COL64_848484,
+		GUI64_ICON_X, GUI64_ICON_Y,
+		GUI64_ICON_X + GUI64_ICON_W - 1, GUI64_ICON_Y + GUI64_ICON_H - 1);
+	boxfill64(buf, stride, COL64_C6C6C6,
+		GUI64_ICON_X, GUI64_ICON_Y,
+		GUI64_ICON_X + GUI64_ICON_W - 2, GUI64_ICON_Y + GUI64_ICON_H - 2);
+	boxfill64(buf, stride, COL64_000000,
+		GUI64_ICON_X + 4, GUI64_ICON_Y + 4,
+		GUI64_ICON_X + GUI64_ICON_W - 6, GUI64_ICON_Y + GUI64_ICON_H - 6);
+	putstr64(buf, (uint32_t) stride, GUI64_ICON_X + 16, GUI64_ICON_Y + 16,
+		COL64_FFFFFF, ">_");
+	putstr64(buf, (uint32_t) stride, GUI64_ICON_X + 4,
+		GUI64_ICON_Y + GUI64_ICON_H + 2, COL64_FFFFFF, "새 콘솔");
+}
+
 struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 {
 	uintptr_t back_addr;
 	uintptr_t console_addr;
+	uintptr_t bar_addr;
 	size_t screen_size;
 	int32_t xsize;
 	int32_t ysize;
@@ -175,6 +292,7 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 
 	sheet64_setbuf(gui_back, (uint8_t *) back_addr, xsize, ysize, -1);
 	boxfill64((uint8_t *) back_addr, xsize, COL64_008484, 0, 0, xsize - 1, ysize - 1);
+	draw_desktop_icon((uint8_t *) back_addr, xsize);
 	gui_back->vx0 = 0;
 	gui_back->vy0 = 0;
 
@@ -214,15 +332,30 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	gui_demo->vx0 = GUI64_DEMO_X;
 	gui_demo->vy0 = GUI64_DEMO_Y;
 
+	/* 작업 표시줄은 못 만들어도 GUI는 뜬다 -- 숨긴 창을 되살릴 길이 없을
+	   뿐이다. 그래서 실패해도 NULL을 돌려주지 않는다. */
+	bar_addr = memman64_alloc_4k(&memman64, (size_t) xsize * (size_t) GUI64_BAR_H);
+	if (bar_addr != 0) {
+		gui_taskbar = sheet64_alloc(gui_ctl);
+	}
+	if (gui_taskbar != NULL) {
+		gui_taskbar_buf = (uint8_t *) bar_addr;
+		sheet64_setbuf(gui_taskbar, gui_taskbar_buf, xsize, GUI64_BAR_H, -1);
+		gui_taskbar->vx0 = 0;
+		gui_taskbar->vy0 = ysize - GUI64_BAR_H;
+	}
+
 	gui_wins[0].sht = gui_console;
 	gui_wins[0].decorated = 0;      /* 전체 화면일 땐 테두리가 없다 */
 	gui_wins[0].is_console = 1;
 	build_demo_colormap();
 	gui_wins[0].colormap = NULL;
+	set_title(&gui_wins[0], "머꼬 콘솔");
 	gui_wins[1].sht = gui_demo;
 	gui_wins[1].decorated = 1;
 	gui_wins[1].is_console = 0;
 	gui_wins[1].colormap = demo_colormap;
+	set_title(&gui_wins[1], "메모장");
 	gui_win_count = 2;
 	gui_key_win = gui_console;
 
@@ -250,6 +383,7 @@ void gui64_toggle_window(void)
 		gui_console->vy0 = GUI64_WIN_Y;
 		gui_mode = GUI64_MODE_WINDOW;
 		gui_wins[0].decorated = 1;
+		taskbar_show(1);
 		console64_attach_sheet(gui_wins[0].console, gui_console,
 			GUI64_PAD_X, GUI64_PAD_Y,
 			GUI64_WIN_W - GUI64_PAD_W, GUI64_WIN_H - GUI64_PAD_H);
@@ -259,12 +393,14 @@ void gui64_toggle_window(void)
 		gui_console->vy0 = 0;
 		gui_mode = GUI64_MODE_FULL;
 		gui_wins[0].decorated = 0;
+		taskbar_show(0);
 		console64_attach_sheet(gui_wins[0].console, gui_console, 0, 0,
 			(uint16_t) gui_scrnx, (uint16_t) gui_scrny);
 	}
 
 	/* 시트 크기가 바뀌었으니 map 전체가 낡았다. slide로는 부족하다. */
 	sheet64_refresh_all(gui_ctl);
+	taskbar_redraw();
 }
 
 static struct GUI64_WIN *find_win(const struct SHEET64 *sht)
@@ -301,6 +437,31 @@ static void keywin_on(struct SHEET64 *sht)
 		palette64_install(win->colormap);
 	} else {
 		palette64_restore();
+	}
+}
+
+static void focus_win(struct SHEET64 *sht)
+{
+	raise_win(sht);
+	if (sht != gui_key_win) {
+		keywin_off(gui_key_win);
+		gui_key_win = sht;
+		keywin_on(gui_key_win);
+	}
+	taskbar_redraw();
+}
+
+static void taskbar_press(int32_t bx, int32_t by)
+{
+	int32_t i, x0, y0;
+
+	for (i = 0; i < gui_win_count; i++) {
+		taskbar_entry_rect(i, &x0, &y0);
+		if (x0 <= bx && bx < x0 + GUI64_BAR_ENTRY_W &&
+				y0 <= by && by < y0 + GUI64_BAR_ENTRY_H) {
+			focus_win(gui_wins[i].sht);
+			return;
+		}
 	}
 }
 
@@ -344,14 +505,16 @@ int gui64_open_console_window(struct CONSOLE64 *con, const char *title)
 	gui_wins[slot].is_console = 1;
 	gui_wins[slot].console = con;
 	gui_wins[slot].colormap = NULL;
+	set_title(&gui_wins[slot], title);
 	gui_win_count++;
 
 	console64_attach_sheet(con, sht, GUI64_PAD_X, GUI64_PAD_Y,
 		GUI64_WIN_W - GUI64_PAD_W, GUI64_WIN_H - GUI64_PAD_H);
-	sheet64_updown(sht, gui_ctl->top - 1);   /* 커서 바로 아래 */
+	raise_win(sht);
 	keywin_off(gui_key_win);
 	gui_key_win = sht;
 	keywin_on(gui_key_win);
+	taskbar_redraw();
 	return 0;
 }
 
@@ -380,14 +543,15 @@ struct CONSOLE64 *gui64_focused_console(void)
 	return win->console;
 }
 
-/* 클릭 지점에서 가장 위에 있는 창을 찾는다. 배경(높이 0)은 제외하고,
-   커서 시트는 항상 맨 위이므로 top-1부터 훑는다 (32비트 bootpack.c:337-343). */
+/* 클릭 지점에서 가장 위에 있는 시트를 찾는다. 커서 시트는 항상 맨 위이므로
+   top-1부터 훑는다 (32비트 bootpack.c:337-343). 바탕화면(높이 0)까지 내려가는
+   건 거기 실행 아이콘이 있기 때문이다 -- 배경인지는 호출자가 가려낸다. */
 static struct SHEET64 *hit_test(int32_t mx, int32_t my, int32_t *bx, int32_t *by)
 {
 	struct SHEET64 *sht;
 	int32_t j, x, y;
 
-	for (j = gui_ctl->top - 1; j > 0; j--) {
+	for (j = gui_ctl->top - 1; j >= 0; j--) {
 		sht = gui_ctl->sheets[j];
 		x = mx - sht->vx0;
 		y = my - sht->vy0;
@@ -433,6 +597,7 @@ static void handle_close(struct SHEET64 *sht)
 	sheet64_updown(sht, -1);
 	gui_key_win = focus_after_hide(sht);
 	keywin_on(gui_key_win);
+	taskbar_redraw();
 }
 
 static void on_press(int32_t mx, int32_t my)
@@ -445,12 +610,25 @@ static void on_press(int32_t mx, int32_t my)
 	if (sht == NULL) {
 		return;
 	}
-	sheet64_updown(sht, gui_ctl->top - 1);
+	if (sht == gui_taskbar) {
+		taskbar_press(bx, by);
+		return;
+	}
+	if (sht == gui_back) {
+		/* 바탕화면은 포커스를 가져가지 않는다. 아이콘만 반응한다. */
+		if (GUI64_ICON_X <= bx && bx < GUI64_ICON_X + GUI64_ICON_W &&
+				GUI64_ICON_Y <= by && by < GUI64_ICON_Y + GUI64_ICON_H) {
+			console64_create();
+		}
+		return;
+	}
+	raise_win(sht);
 	if (sht != gui_key_win) {
 		keywin_off(gui_key_win);
 		gui_key_win = sht;
 		keywin_on(gui_key_win);
 	}
+	taskbar_redraw();
 	if (find_win(sht) == NULL || find_win(sht)->decorated == 0) {
 		return;
 	}
@@ -505,5 +683,5 @@ void gui64_raise_bottom_window(void)
 	if (gui_ctl == NULL || gui_ctl->top < 2) {
 		return;
 	}
-	sheet64_updown(gui_ctl->sheets[1], gui_ctl->top - 1);
+	raise_win(gui_ctl->sheets[1]);
 }
