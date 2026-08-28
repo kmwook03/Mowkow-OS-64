@@ -63,16 +63,19 @@
 #define MICROPY_USE_INTERNAL_ERRNO (1)
 
 /*
- * 동적 import도, OS를 전제하는 sys 기능도 쓰지 않는다. 업스트림 minimal
- * 포트와 같은 선택이다. sys 모듈 자체는 코어 여기저기서 참조하므로 남기고,
- * OS/파일 시스템 냄새가 나는 하위 기능만 끈다.
+ * OS를 전제하는 sys 기능은 쓰지 않는다. sys 모듈 자체는 코어 여기저기서
+ * 참조하므로 남기고, OS/파일 시스템 냄새가 나는 하위 기능만 끈다.
+ *
+ * 다만 import는 켠다. 머꼬는 네 모듈로 나뉜 채로 올린다(결정 3). 검색 경로는
+ * 없다 -- MICROPY_PY_SYS_PATH가 꺼져 있으면 py/builtinimport.c:147이 받은
+ * 이름을 그대로 stat하므로, import _data가 곧 루트의 _data.py다.
  */
 #define MICROPY_PY_SYS_MODULES         (0)
 /* 머꼬 REPL의 exit() 종료 경로(mowkow_porting.md 결정 8)에 필요하다. */
 #define MICROPY_PY_SYS_EXIT            (1)
 #define MICROPY_PY_SYS_PATH            (0)
 #define MICROPY_PY_SYS_ARGV            (0)
-#define MICROPY_ENABLE_EXTERNAL_IMPORT (0)
+#define MICROPY_ENABLE_EXTERNAL_IMPORT (1)
 
 /*
  * Stage 4: 실제 부동소수점 작업으로 FPU/SSE(Stage 0.1)가 확인되어
@@ -125,6 +128,21 @@
  * 걸리고 0육ㄱ이 조용히 심볼이 된다. 오류가 아니라 틀린 답이 나온다.
  */
 #define MICROPY_PY_BUILTINS_STR_UNICODE (1)
+
+/*
+ * 이것도 EXTRA 등급이지만 따로 켠다. 업스트림 머꼬 네 모듈에 f-string이
+ * 스물세 군데 있다(오류 메시지와 __str__이 거의 다 f-string이다). 끄고 가려면
+ * 그 스물세 줄을 다 고쳐야 하는데, 그건 결정 1이 막는 핵심 로직 수정에
+ * 해당한다. 컴파일러 쪽 기능이라 모듈이 늘지는 않는다.
+ */
+#define MICROPY_PY_FSTRINGS (1)
+
+/*
+ * 이것도 EXTRA에서 따로 하나 켠다. _data.py:134가 내장 함수의 이름을 찍는데
+ * (#<내장 함수: 머>), 함수 객체에서 이름을 꺼낼 방법이 이것뿐이다. 없으면
+ * __name__ 자체가 없어 이름 자리가 "?"가 된다(mowkow_porting.md 6단계).
+ */
+#define MICROPY_PY_FUNCTION_ATTRS (1)
 
 /* REPL 배너에 찍히는 이름 */
 #define MICROPY_HW_BOARD_NAME "머꼬 OS"

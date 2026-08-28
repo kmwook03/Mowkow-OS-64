@@ -988,6 +988,11 @@ static void execute_command(struct CONSOLE64 *con)
 		mpport_repl();
 	} else if (str_starts_with(con->input_line, "py ")) {
 		mpport_run_file(con->input_line + 3);
+	} else if (str_eq(con->input_line, "머꼬")) {
+		mpport_run_mowkow(NULL);
+	} else if (str_starts_with(con->input_line, "머꼬 ")) {
+		/* "머꼬 "는 UTF-8로 7바이트다 */
+		mpport_run_mowkow(con->input_line + 7);
 	} else if (run_program(con, con->input_line) == 0) {
 		/* 내장 명령도 아니고 그런 실행 파일도 없다 */
 		puts_con(con, "알 수 없는 명령어\n");

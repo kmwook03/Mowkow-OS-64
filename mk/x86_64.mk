@@ -19,7 +19,9 @@ $(foreach v,$(shell $(PYTHON) $(MKFAT32) --make-vars),$(eval $(v)))
 
 # 로더가 읽어 들이는 커널 섹터 수이자 커널 크기 상한. 예약 영역은 992섹터
 # (507,904바이트)까지 있으므로 그 안에서는 올려도 파일 시스템이 밀리지 않는다.
-KERNEL64_SECTORS = 800
+# 800섹터일 때 커널이 389,540바이트(95.1%)라 남은 자리가 20KiB뿐이었다
+# (mowkow_porting.md 4단계). 992섹터 천장 아래로 여유를 두고 960으로 올린다.
+KERNEL64_SECTORS = 960
 
 # -- 소스 찾기 --
 KERNEL64_C_SRCS = $(wildcard $(SRC64_DIR)/kernel/*.c) $(wildcard $(SRC64_DIR)/drivers/*.c) $(wildcard $(SRC64_DIR)/lib/*.c)
@@ -37,7 +39,11 @@ IMG64_FILE = $(IMG64_DIR)/mowkow64.img
 
 # -- 앱 찾기 (app64/ 아래 디렉터리 하나가 앱 하나, 공용 런타임 crt는 뺀다) --
 # -- 이미지에 넣을 파이썬 소스 (py64/ 바로 아래, 이름이 곧 파일 이름) --
-PY64_FILES = $(wildcard $(PY64_DIR)/*.PY) $(wildcard $(PY64_DIR)/*.SCM)
+# 머꼬 모듈은 py64/머꼬/ 아래 있고 이미지에서는 루트에 평평하게 놓인다.
+PY64_FILES = $(wildcard $(PY64_DIR)/*.PY) $(wildcard $(PY64_DIR)/*.SCM) \
+	$(wildcard $(PY64_DIR)/*.py) $(wildcard $(PY64_DIR)/*.scm) \
+	$(wildcard $(PY64_DIR)/머꼬/*.py) $(wildcard $(PY64_DIR)/머꼬/*.scm) \
+	$(wildcard $(PY64_DIR)/머꼬/*.mk)
 
 APP64_DIRS = $(wildcard $(APP64_DIR)/*/)
 APP64_NAMES = $(filter-out crt,$(notdir $(patsubst %/,%,$(APP64_DIRS))))
@@ -93,8 +99,8 @@ $(BUILD64_DIR)/app/crt/%.o : $(APP64_DIR)/crt/%.c
 	@$(MKDIR) $(dir $@)
 	$(X64_CC) $(APP64_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
-# 앱 이름이 곧 디렉터리 이름이자 소스 이름이다(app64/cat/cat.c). 앱마다 같은
-# 규칙 두 개를 찍어 내므로 이름별로 만들어 준다.
+# 앱 이름이 곧 디렉터리 이름이자 소스 이름이다(app64/cat/cat.c).
+# 앱마다 같은 규칙 두 개를 찍어 내므로 이름별로 만들어 준다.
 define APP64_RULES
 $(BUILD64_DIR)/app/$(1)/$(1).o : $(APP64_DIR)/$(1)/$(1).c
 	@$$(MKDIR) $$(dir $$@)
@@ -121,6 +127,11 @@ run64 : $(IMG64_FILE)
 
 # 같은 이미지를 AHCI 경로로 띄운다. q35에는 레거시 IDE가 없어서 ATA PIO 대신
 # src64/drivers/ahci64.c를 타게 된다. 저장 장치를 고쳤으면 둘 다 돌려 봐야 한다.
+# 머꼬 병행 검사. 이미지 안의 머꼬와 호스트 CPython의 업스트림 머꼬를 같은
+# 입력으로 돌려 견준다 (mowkow_porting.md 결정 9). --ahci로 전송 경로도 바꾼다.
+parity64 : $(IMG64_FILE)
+	$(PYTHON) $(TOOLPATH)/mowkow_parity.py
+
 run64-ahci : $(IMG64_FILE)
 	$(QEMU) -machine q35 -drive file=$(IMG64_FILE),format=raw,if=none,id=disk0 \
 		-device ich9-ahci,id=ahci -device ide-hd,drive=disk0,bus=ahci.0 \

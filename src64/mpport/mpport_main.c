@@ -36,7 +36,14 @@
  * 이유는 .bss 여유 때문이었는데, 그 문제는 MEMMAN64_EARLY_START를 함께
  * 올리면서 풀렸다(memory64.h).
  */
-#define MPPORT_GC_HEAP_SIZE (512 * 1024)
+/*
+ * 512KiB로는 머꼬가 안 된다(mowkow_porting.md 9단계). library_kor.scm을
+ * 올리고 나면 gc.mem_free()가 13KiB밖에 남지 않아, 식을 몇 개 계산하면
+ * 그대로 멈춘다. 힙은 .bss에 있고 커널 .bss 끝(약 2.2MiB)과 memman64 시작
+ * (MEMMAN64_EARLY_START = 8MiB) 사이에 자리가 넉넉하므로 2MiB로 올린다.
+ * 이미지 크기는 그대로다 -- .bss는 flat binary에 실리지 않는다.
+ */
+#define MPPORT_GC_HEAP_SIZE (4 * 1024 * 1024)
 
 extern uint8_t stack_bottom[];
 
@@ -76,7 +83,40 @@ static void mpport_release(void)
 	mp_busy = 0;
 }
 
-static void mpport_init(void)
+/*
+ * 콘솔 명령이 스크립트에 넘기는 인자 하나(결정 7). sys.argv를 켜지 않는다 --
+ * 문자열 하나 때문에 그럴 값어치가 없다. 콘솔의 입력 줄은 다음 명령에 덮이므로
+ * 가리키지 않고 베껴 둔다.
+ */
+static char mp_argv[FD64_NAME_MAX];
+static int mp_argv_set;
+
+void mpport_set_argv(const char *arg)
+{
+	size_t i;
+
+	if (arg == NULL) {
+		mp_argv_set = 0;
+		return;
+	}
+	for (i = 0; i + 1 < sizeof(mp_argv) && arg[i] != '\0'; i++) {
+		mp_argv[i] = arg[i];
+	}
+	mp_argv[i] = '\0';
+	mp_argv_set = 1;
+}
+
+const char *mpport_argv(void)
+{
+	return mp_argv_set != 0 ? mp_argv : NULL;
+}
+
+/*
+ * C 스택 한계는 부를 때마다 다시 잰다. 콘솔마다 태스크가 따로고 스택도 따로라
+ * (console64.c), 다른 콘솔에서 재어 둔 값을 물려받으면 넘침 검사가 엉뚱한
+ * 자리를 본다. mp_init과 달리 이건 되풀이해도 되는 일이다(결정 11).
+ */
+static void mpport_stack_limit(void)
 {
 	int here;
 	size_t available;
@@ -100,8 +140,55 @@ static void mpport_init(void)
 		available = (size_t) ((uintptr_t) &here - (uintptr_t) stack_bottom);
 	}
 	mp_cstack_init_with_sp_here(available);
+}
+
+/*
+ * 해석기는 부팅 뒤 한 번만 세운다(결정 11). 머꼬의 바탕 환경 --
+ * library_kor.scm 252줄 -- 을 만드는 데 1.7초가 드는데, 그것을 부를 때마다
+ * 물릴 이유가 없다. 그래서 mp_deinit()도 없앴다. 대신 GC 힙과 qstr 풀이
+ * 부팅 내내 살아 있으므로, 새는 곳이 있으면 세션을 넘겨 쌓인다.
+ */
+static int mp_ready;
+
+static void mpport_init(void)
+{
+	mpport_stack_limit();
+	if (mp_ready != 0) {
+		return;
+	}
 	gc_init(gc_heap, gc_heap + sizeof(gc_heap));
 	mp_init();
+	mp_ready = 1;
+}
+
+/*
+ * 파일 하나를 GC 힙으로 읽어 온다. 없으면 NULL, 있으면 크기를 *out_size에.
+ *
+ * 스크립트 실행과 import가 같은 것을 필요로 해서 한 곳에 둔다
+ * (mowkow_porting.md 4단계). memman64가 아니라 GC 힙에 담는 이유는 수명이다:
+ * mp_reader_new_mem에 free_len을 함께 주면 lexer가 닫힐 때 리더가 알아서
+ * m_del한다. import는 자기가 연 버퍼를 언제 놓아야 하는지 부르는 쪽에서 알
+ * 방법이 없다.
+ *
+ * m_new는 자리가 없으면 MemoryError를 던진다. 그래서 NLR 문맥 안에서만
+ * 부른다.
+ */
+uint8_t *mpport_load_file(const char *path, size_t *out_size)
+{
+	struct FDHANDLE64 fh;
+	byte *buf;
+	size_t size;
+
+	if (fd64_open(&fh, path) == 0) {
+		return NULL;
+	}
+	size = fh.info.size;
+	/* 빈 파일도 유효한 모듈이다. m_new(0)은 NULL을 돌려줄 수 있어서
+	   "없음"과 헷갈리므로 1바이트를 잡아 둔다. */
+	buf = m_new(byte, size == 0 ? 1 : size);
+	fd64_read(&fh, buf, size);
+	*out_size = size;
+	return buf;
 }
 
 void mpport_repl(void)
@@ -115,82 +202,140 @@ void mpport_repl(void)
 	pyexec_friendly_repl();
 	console64_repl_set_active(0);
 
-	mp_deinit();
 	mpport_release();
 }
 
 void mpport_run_file(const char *path)
 {
-	struct FDHANDLE64 fh;
-	uintptr_t buf_addr;
-	size_t size;
 	nlr_buf_t nlr;
 
-	if (fd64_open(&fh, path) == 0) {
-		console64_puts("file not found\n");
-		return;
-	}
-
-	size = fh.info.size;
-	buf_addr = memman64_alloc_4k(&memman64, size);
-	if (buf_addr == 0) {
-		console64_puts("out of memory\n");
-		return;
-	}
-	fd64_read(&fh, (void *) buf_addr, size);
-
 	if (mpport_claim() != 0) {
-		memman64_free_4k(&memman64, buf_addr, size);
 		return;
 	}
 	mpport_init();
 
 	if (nlr_push(&nlr) == 0) {
+		byte *buf;
+		size_t size;
 		mp_reader_t reader;
 		mp_lexer_t *lex;
 		qstr source_name;
 		mp_parse_tree_t parse_tree;
 		mp_obj_t module_fun;
 
-		mp_reader_new_mem(&reader, (const uint8_t *) buf_addr, size, 0);
-		lex = mp_lexer_new(qstr_from_str(path), reader);
+		/* 파일을 GC 힙에 담으므로 mpport_init 뒤에, 그리고 NLR 안에서
+		   읽는다. 예전에는 memman64로 먼저 읽었다. */
+		buf = mpport_load_file(path, &size);
+		if (buf == NULL) {
+			console64_puts("file not found\n");
+		} else {
+			mp_reader_new_mem(&reader, buf, size, size);
+			lex = mp_lexer_new(qstr_from_str(path), reader);
+			source_name = lex->source_name;
+			parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
+			module_fun = mp_compile(&parse_tree, source_name, false);
+			mp_call_function_0(module_fun);
+		}
+		nlr_pop();
+	} else {
+		mp_obj_print_exception(&mp_plat_print, MP_OBJ_FROM_PTR(nlr.ret_val));
+	}
+
+	mpport_release();
+}
+
+/*
+ * `머꼬` 명령. 파일을 돌리는 게 아니라 두 줄짜리 소스를 그대로 컴파일해 돌린다:
+ * mowkow.py는 스크립트가 아니라 모듈이라야 library_kor.scm으로 만든 바탕
+ * 환경이 import 캐시에 남는다(mowkow_porting.md 7단계).
+ *
+ * 나가는 길은 넷인데(결정 8) 셋은 파이썬 쪽에서 끝난다: 빈 줄은 업스트림
+ * eval_print_loop이 스스로 빠져나오고, Ctrl-D는 EOFError로 같은 자리에서
+ * 잡히고, Ctrl-C는 KeyboardInterrupt로 여기까지 올라온다. 여기서는 그 둘
+ * (KeyboardInterrupt, SystemExit)을 조용히 삼켜서 역추적이 찍히지 않게 한다.
+ *
+ * repl_active는 건드리지 않는다. 머꼬의 입력은 mowio.readline이고 그 길은
+ * line_capture가 먼저 잡으므로(console64.c:1238) 플래그가 필요 없다. 켜지
+ * 않으니 콘솔이 REPL 모드에 갇힐 길도 없다.
+ */
+void mpport_run_mowkow(const char *arg)
+{
+	static const char source[] = "import mowkow\nmowkow.main()\n";
+	nlr_buf_t nlr;
+
+	if (mpport_claim() != 0) {
+		return;
+	}
+	mpport_init();
+	mpport_set_argv(arg);
+
+	if (nlr_push(&nlr) == 0) {
+		mp_lexer_t *lex;
+		qstr source_name;
+		mp_parse_tree_t parse_tree;
+		mp_obj_t module_fun;
+
+		lex = mp_lexer_new_from_str_len(qstr_from_str("머꼬"), source,
+				sizeof(source) - 1, 0);
 		source_name = lex->source_name;
 		parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
 		module_fun = mp_compile(&parse_tree, source_name, false);
 		mp_call_function_0(module_fun);
 		nlr_pop();
 	} else {
-		mp_obj_print_exception(&mp_plat_print, MP_OBJ_FROM_PTR(nlr.ret_val));
+		mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);
+		const mp_obj_type_t *type = mp_obj_get_type(exc);
+
+		if (type != &mp_type_KeyboardInterrupt && type != &mp_type_SystemExit) {
+			mp_obj_print_exception(&mp_plat_print, exc);
+		} else {
+			console64_puts("\n");
+		}
 	}
 
-	mp_deinit();
+	mpport_set_argv(NULL);
 	mpport_release();
-	memman64_free_4k(&memman64, buf_addr, size);
 }
 
 /*
  * 링크된 코어(py/lexer.h)가 요구한다. MICROPY_READER_POSIX와
- * MICROPY_READER_VFS가 둘 다 꺼져 있으므로(Stage 1.3) 포트가 직접 줘야
- * 한다. fd64로 읽는 mp_reader는 아직 없다(Stage 3에서 만든다). 업스트림
- * ports/minimal/main.c와 같은 선택으로, 잘못된 lexer를 조용히 돌려주는
- * 대신 ENOENT를 낸다.
+ * MICROPY_READER_VFS가 둘 다 꺼져 있으므로 포트가 직접 준다. import가
+ * 모듈 소스를 여기로 가져간다(mowkow_porting.md 4단계).
+ *
+ * free_len으로 size를 같이 넘겨 lexer가 닫힐 때 버퍼도 함께 풀리게 한다.
  */
 mp_lexer_t *mp_lexer_new_from_file(qstr filename)
 {
-	(void) filename;
-	mp_raise_OSError(MP_ENOENT);
+	mp_reader_t reader;
+	byte *buf;
+	size_t size;
+
+	buf = mpport_load_file(qstr_str(filename), &size);
+	if (buf == NULL) {
+		mp_raise_OSError(MP_ENOENT);
+	}
+	mp_reader_new_mem(&reader, buf, size, size);
+	return mp_lexer_new(filename, reader);
 }
 
 /*
- * MICROPY_VFS가 꺼져 있으므로 링크된 코어(py/builtin.h)가 요구한다. 파일
- * 시스템을 쓰는 import는 아직 없고(어차피 Stage 1.3에서
- * MICROPY_ENABLE_EXTERNAL_IMPORT도 꺼 두었다) 늘 "없음"이라고 답한다.
- * 업스트림 ports/minimal/main.c와 같다.
+ * MICROPY_VFS가 꺼져 있으므로 링크된 코어(py/builtin.h)가 요구한다.
+ * MICROPY_PY_SYS_PATH가 없어 py/builtinimport.c는 모듈 이름을 그대로 넘기고,
+ * fd64는 VFAT 긴 이름을 대소문자 무시하고 견주므로 import _data가 루트의
+ * _data.py로 간다.
+ *
+ * 디렉터리는 늘 "없음"이다. fd64의 디렉터리 훑기가 0x10 항목을 걸러 내므로
+ * fd64_open이 디렉터리를 열어 주는 일이 없고, 그래서 패키지(__init__.py)는
+ * 없다. 머꼬는 평평한 모듈 네 개라 필요하지 않다(결정 3).
  */
 mp_import_stat_t mp_import_stat(const char *path)
 {
-	(void) path;
-	return MP_IMPORT_STAT_NO_EXIST;
+	struct FDHANDLE64 fh;
+
+	if (fd64_open(&fh, path) == 0) {
+		return MP_IMPORT_STAT_NO_EXIST;
+	}
+	return MP_IMPORT_STAT_FILE;
 }
 
 /*

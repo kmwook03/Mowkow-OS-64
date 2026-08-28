@@ -26,3 +26,5 @@ AGENTS.md
 CLAUDE.md
 .codex/
 mowkow_porting.md
+py64/머꼬/upstream/__pycache__/
+tools/__pycache__/

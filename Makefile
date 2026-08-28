@@ -26,7 +26,7 @@ include mk/x86_64.mk
 
 .PHONY : default help info \
 	run iso clean $(APPS) \
-	x86_64 run64 run64-ahci clean64 mpy-qstr
+	x86_64 run64 run64-ahci parity64 clean64 mpy-qstr
 
 default : $(IMG_FILE)
 
@@ -43,6 +43,7 @@ help :
 	@echo "    make x86_64     이미지 빌드"
 	@echo "    make run64      QEMU로 실행 (IDE, ATA PIO 경로)"
 	@echo "    make run64-ahci QEMU로 실행 (q35 + AHCI 경로)"
+	@echo "    make parity64   머꼬 병행 검사 (호스트 CPython과 견주기)"
 	@echo "    make clean64    build64/ img64/ 지우기"
 	@echo ""
 	@echo "  그 밖에"
