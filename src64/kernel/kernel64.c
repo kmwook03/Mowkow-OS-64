@@ -233,6 +233,8 @@ static void load_hangul_font(void)
 
 static void process_event64(const struct EVENT64 *event)
 {
+	struct CONSOLE64 *con;
+
 	if (event->type == EVENT64_TIMER) {
 		return;
 	}
@@ -241,8 +243,9 @@ static void process_event64(const struct EVENT64 *event)
 			gui64_raise_bottom_window();
 			return;
 		}
-		if (gui64_console_has_focus() != 0) {
-			console64_process_key((uint8_t) event->data);
+		con = gui64_focused_console();
+		if (con != NULL) {
+			console64_post_key(con, (uint8_t) event->data);
 		}
 		return;
 	}
@@ -288,7 +291,9 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 	console64_init(boot_info);
 	task_init64();
 	fifo64_init(&event_fifo, EVENT_BUF_SIZE, event_buf, task_now64());
-	console64_set_event_fifo(&event_fifo);
+	if (console64_start_task(console64_active()) != 0) {
+		serial_print("console task=start-failed\r\n");
+	}
 	init_pit64(&event_fifo);
 	init_pic64();
 	io_sti();

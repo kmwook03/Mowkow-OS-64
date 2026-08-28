@@ -14,8 +14,16 @@
  * dynamically-managed early allocator begins. 4MiB is generous against a
  * 512MB system, matching the same "budget generously" approach as
  * KERNEL64_SECTORS (Stage 0.3).
+ *
+ * Raised again to 0x800000 (console_plan.md step 1.5): app64.ld links every
+ * app at 0x400000, so the old value put the user image window inside the
+ * general pool. init_memory64 handed the pool's first page to early_alloc64
+ * and gui64_init took the next megabyte, after which the loader could never
+ * claim 0x400000 and every `run` failed. The window [USER_IMAGE_MIN,
+ * USER_IMAGE_MAX) in elf64_loader.c is now outside the pool by construction;
+ * keep the two in step if either moves.
  */
-#define MEMMAN64_EARLY_START ((uintptr_t) 0x00400000)
+#define MEMMAN64_EARLY_START ((uintptr_t) 0x00800000)
 #define MEMMAN64_EARLY_END   ((uintptr_t) 0x20000000)
 #define MEMMAN64_PAGE_SIZE   ((size_t) 0x1000)
 

@@ -12,7 +12,6 @@
 
 static struct PROCESS64 process_table[4];
 static uint32_t next_pid = 1;
-static struct PROCESS64 *current_process;
 
 static void memzero(void *ptr, size_t size)
 {
@@ -61,41 +60,52 @@ static int range_contains(const struct PROCESS64_RANGE *range, uintptr_t ptr, si
 	return ptr >= range->base && end >= ptr && end <= range->base + range->size;
 }
 
+/* 실행 중인 프로세스는 태스크마다 다르다. 콘솔이 여러 개면 전역 하나로는
+   서로의 saved_kernel_rsp를 덮어쓴다 (console_plan.md 블로커 2). */
 struct PROCESS64 *process64_current(void)
 {
-	return current_process;
+	struct TASK64 *task = task_now64();
+
+	return task != NULL ? (struct PROCESS64 *) task->process : NULL;
 }
 
 int process64_user_range_valid(const void *ptr, size_t size)
 {
+	struct PROCESS64 *process = process64_current();
 	uintptr_t p;
 
-	if (current_process == NULL || ptr == NULL) {
+	if (process == NULL || ptr == NULL) {
 		return 0;
 	}
 	p = (uintptr_t) ptr;
-	return range_contains(&current_process->image, p, size) != 0 ||
-		range_contains(&current_process->stack, p, size) != 0 ||
-		range_contains(&current_process->heap, p, size) != 0;
+	return range_contains(&process->image, p, size) != 0 ||
+		range_contains(&process->stack, p, size) != 0 ||
+		range_contains(&process->heap, p, size) != 0;
 }
 
 void process64_exit_current(int status)
 {
-	if (current_process == NULL) {
+	struct PROCESS64 *process = process64_current();
+
+	if (process == NULL) {
 		return;
 	}
-	current_process->exited = 1;
-	current_process->exit_status = status;
+	process->exited = 1;
+	process->exit_status = status;
 }
 
 uintptr_t process64_current_exit_rsp(void)
 {
-	return current_process != NULL ? current_process->saved_kernel_rsp : 0;
+	struct PROCESS64 *process = process64_current();
+
+	return process != NULL ? process->saved_kernel_rsp : 0;
 }
 
 int process64_current_exit_status(void)
 {
-	return current_process != NULL ? current_process->exit_status : -1;
+	struct PROCESS64 *process = process64_current();
+
+	return process != NULL ? process->exit_status : -1;
 }
 
 /* returns the initial user rsp: below the argv block, so the app's own
@@ -145,9 +155,9 @@ static uintptr_t setup_args(struct PROCESS64 *process, const char *cmdline, uint
 
 static void process_free_memory(struct PROCESS64 *process)
 {
-	if (process->image.base != 0 && process->image.size != 0) {
-		memman64_free_4k(&memman64, process->image.base, process->image.size);
-	}
+	/* 이미지는 풀 밖의 고정 창이라 memman에 돌려주는 게 아니라
+	   소유권만 놓는다 (console_plan.md 1.5단계). */
+	elf64_release_process(process);
 	if (process->stack.base != 0 && process->stack.size != 0) {
 		memman64_free_4k(&memman64, process->stack.base, process->stack.size);
 	}
@@ -156,7 +166,8 @@ static void process_free_memory(struct PROCESS64 *process)
 	}
 }
 
-int process64_exec_file(const char *path, const char *cmdline)
+int process64_exec_file(const char *path, const char *cmdline,
+	struct CONSOLE64 *console)
 {
 	char name[16];
 	size_t name_len;
@@ -182,9 +193,12 @@ int process64_exec_file(const char *path, const char *cmdline)
 	if (process == NULL) {
 		return -1;
 	}
-	if (elf64_load_process(name, process) != 0) {
+	status = elf64_load_process(name, process);
+	if (status != 0) {
 		process->pid = 0;
-		return -2;
+		/* -8은 "이미지 창을 다른 앱이 쓰는 중"이다. 콘솔이 여럿이면
+		   실제로 일어나므로 뭉개지 않고 그대로 올려보낸다. */
+		return status == -8 ? -8 : -2;
 	}
 	stack = memman64_alloc_4k(&memman64, USER_STACK_SIZE);
 	heap = memman64_alloc_4k(&memman64, USER_HEAP_SIZE);
@@ -198,27 +212,27 @@ int process64_exec_file(const char *path, const char *cmdline)
 	process->heap.base = heap;
 	process->heap.size = USER_HEAP_SIZE;
 	process->heap_next = heap;
+	process->console = console;
 	user_rsp = setup_args(process, cmdline != NULL ? cmdline : path, &argc, &argv);
-	current_process = process;
 	task = task_now64();
-	if (task != NULL) {
-		task->process = process;
-		task->is_user = 1;
+	if (task == NULL) {
+		/* 프로세스 소유자는 태스크다. 태스크가 없으면 syscall이 자기
+		   프로세스를 찾을 수 없으므로 진입 자체를 막는다. */
+		process_free_memory(process);
+		process->pid = 0;
+		return -4;
 	}
+	task->process = process;
+	task->is_user = 1;
 	status = enter_user_mode64(process->entry, user_rsp,
 		argc, argv, GDT64_USER_CODE, GDT64_USER_DATA, &process->saved_kernel_rsp);
-	if (task != NULL) {
-		task->kernel_rsp = process->saved_kernel_rsp;
-	}
+	task->kernel_rsp = process->saved_kernel_rsp;
 	if (process->exited != 0) {
 		status = process->exit_status;
 	}
-	if (task != NULL) {
-		task->process = NULL;
-		task->is_user = 0;
-		task->kernel_rsp = 0;
-	}
-	current_process = NULL;
+	task->process = NULL;
+	task->is_user = 0;
+	task->kernel_rsp = 0;
 	process_free_memory(process);
 	process->pid = 0;
 	return status;

@@ -11,6 +11,14 @@
 #define MICROPY_HELPER_REPL     (1)
 #define MICROPY_STACK_CHECK     (1)
 /*
+ * 기본값은 0이다 -- 그러면 C 스택을 다 쓴 뒤에야 검사가 걸리므로, 검사와
+ * 검사 사이에 쌓인 프레임이 이미 스택 아래를 넘어 쓴 뒤다. 커널 메인
+ * 스택에서 돌 때는 넘친 자리가 .bss라 티가 안 났지만, 콘솔이 자기 태스크에서
+ * 돌면 (console_plan.md 5단계) 그 아래는 memman64가 내준 남의 메모리라
+ * 곧바로 죽는다. 여유를 두어 검사가 스택 안에서 걸리게 한다.
+ */
+#define MICROPY_STACK_CHECK_MARGIN (8192)
+/*
  * `import gc` with gc.mem_free()/gc.mem_alloc() -- Stage 4 uses this to
  * right-size the GC heap from real usage instead of the Stage 0.6 guess;
  * kept on afterward since it's a standard, expected capability.

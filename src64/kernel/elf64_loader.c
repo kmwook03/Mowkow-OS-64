@@ -1,3 +1,4 @@
+#include <asmfunc64.h>
 #include <elf64_loader.h>
 #include <fd64.h>
 #include <memory64.h>
@@ -72,7 +73,20 @@ static int valid_header(const struct ELF64_EHDR *ehdr, size_t file_size)
 		ehdr->e_phoff + (uint64_t) ehdr->e_phnum * sizeof(struct ELF64_PHDR) <= file_size;
 }
 
-int elf64_load_process(const char *path, struct PROCESS64 *process)
+/* 이미지 창 [USER_IMAGE_MIN, USER_IMAGE_MAX)는 풀 밖에 예약된 고정 구간이라
+   (memory64.h) 한 번에 프로세스 하나만 담을 수 있다. 페이징 격리가 없는 동안은
+   앱 실행을 시스템 전체에서 직렬화한다 -- 콘솔이 여러 개여도 마찬가지다. */
+static struct PROCESS64 *image_owner;
+
+/* 이미지 창 하나. 앱을 동시에 돌려야 하면 프로세스별 페이징. */
+void elf64_release_process(struct PROCESS64 *process)
+{
+	if (image_owner == process) {
+		image_owner = NULL;
+	}
+}
+
+static int load_image(const char *path, struct PROCESS64 *process)
 {
 	struct FDHANDLE64 fh;
 	uint8_t *file;
@@ -133,10 +147,6 @@ int elf64_load_process(const char *path, struct PROCESS64 *process)
 	}
 	image_base = align_down64(low, MEMMAN64_PAGE_SIZE);
 	image_size = (size_t) (align_up64(high, MEMMAN64_PAGE_SIZE) - image_base);
-	if (memman64_alloc_at_4k(&memman64, image_base, image_size) == 0) {
-		memman64_free_4k(&memman64, (uintptr_t) file, file_size);
-		return -7;
-	}
 	zero_bytes((void *) image_base, image_size);
 	for (i = 0; i < ehdr->e_phnum; i++) {
 		if (phdr[i].p_type == PT_LOAD) {
@@ -149,4 +159,24 @@ int elf64_load_process(const char *path, struct PROCESS64 *process)
 	process->image.size = image_size;
 	memman64_free_4k(&memman64, (uintptr_t) file, file_size);
 	return 0;
+}
+
+int elf64_load_process(const char *path, struct PROCESS64 *process)
+{
+	uint64_t flags;
+	int status;
+
+	flags = io_load_rflags();
+	io_cli();
+	if (image_owner != NULL) {
+		io_store_rflags(flags);
+		return -8;
+	}
+	image_owner = process;
+	io_store_rflags(flags);
+	status = load_image(path, process);
+	if (status != 0) {
+		image_owner = NULL;
+	}
+	return status;
 }

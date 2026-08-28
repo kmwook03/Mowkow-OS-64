@@ -1,12 +1,13 @@
 /*
  * 시트(겹치기 처리) 컨트롤러 -- src/kernel/sheet.c의 64비트 이식.
  *
- * 32비트 원본과 다른 점은 두 가지뿐이다.
+ * 32비트 원본과 다른 점
  *   1. VRAM 인덱싱에 ctl->stride를 쓴다. 원본은 화면 폭과 스캔라인 길이가
  *      같다고 가정하지만 VBE 모드에서는 보장되지 않는다 (console64.c와 동일).
- *   2. 4픽셀 묶음 최적화를 뺐다. 아래 ponytail 주석 참고.
+ *   2. 4픽셀 묶음 최적화를 뺐다.
  */
 
+#include <asmfunc64.h>
 #include <memory64.h>
 #include <sheet64.h>
 #include <stddef.h>
@@ -52,7 +53,7 @@ struct SHTCTL64 *shtctl64_init(struct MEMMAN64 *man, uint8_t *vram,
 	return ctl;
 }
 
-struct SHEET64 *sheet64_alloc(struct SHTCTL64 *ctl)
+static struct SHEET64 *sheet64_alloc_nolock(struct SHTCTL64 *ctl)
 {
 	struct SHEET64 *sht;
 	int32_t i;
@@ -69,7 +70,7 @@ struct SHEET64 *sheet64_alloc(struct SHTCTL64 *ctl)
 	return NULL;
 }
 
-void sheet64_setbuf(struct SHEET64 *sht, uint8_t *buf, int32_t xsize, int32_t ysize,
+static void sheet64_setbuf_nolock(struct SHEET64 *sht, uint8_t *buf, int32_t xsize, int32_t ysize,
 	int32_t col_inv)
 {
 	sht->buf = buf;
@@ -79,8 +80,8 @@ void sheet64_setbuf(struct SHEET64 *sht, uint8_t *buf, int32_t xsize, int32_t ys
 }
 
 /*
- * ponytail: 원본의 4픽셀(32비트 워드) 묶음 최적화를 빼고 픽셀 단위로만
- * 처리한다. 스트라이드가 화면 폭과 다를 수 있어 워드 경계 가정이 깨지고,
+ * 원본의 4픽셀(32비트 워드) 묶음 최적화를 빼고 픽셀 단위로만 처리. 
+ * 스트라이드가 화면 폭과 다를 수 있어 워드 경계 가정이 깨지고,
  * 겹침 처리에서 가장 미묘한 부분이라 먼저 정확하게 옮기는 쪽을 택했다.
  * 800x600 전체 갱신이 눈에 띄게 느려지면 그때 되살린다.
  */
@@ -165,7 +166,7 @@ static void sheet64_refreshsub(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
 	}
 }
 
-void sheet64_updown(struct SHEET64 *sht, int32_t height)
+static void sheet64_updown_nolock(struct SHEET64 *sht, int32_t height)
 {
 	struct SHTCTL64 *ctl = sht->ctl;
 	int32_t h, old = sht->height;
@@ -224,7 +225,7 @@ void sheet64_updown(struct SHEET64 *sht, int32_t height)
 	}
 }
 
-void sheet64_refresh(struct SHEET64 *sht, int32_t bx0, int32_t by0, int32_t bx1, int32_t by1)
+static void sheet64_refresh_nolock(struct SHEET64 *sht, int32_t bx0, int32_t by0, int32_t bx1, int32_t by1)
 {
 	if (sht->height >= 0) {
 		sheet64_refreshsub(sht->ctl, sht->vx0 + bx0, sht->vy0 + by0,
@@ -232,7 +233,7 @@ void sheet64_refresh(struct SHEET64 *sht, int32_t bx0, int32_t by0, int32_t bx1,
 	}
 }
 
-void sheet64_slide(struct SHEET64 *sht, int32_t vx0, int32_t vy0)
+static void sheet64_slide_nolock(struct SHEET64 *sht, int32_t vx0, int32_t vy0)
 {
 	struct SHTCTL64 *ctl = sht->ctl;
 	int32_t old_vx0 = sht->vx0, old_vy0 = sht->vy0;
@@ -253,7 +254,7 @@ void sheet64_slide(struct SHEET64 *sht, int32_t vx0, int32_t vy0)
 
 /* 시트 크기가 바뀐 뒤처럼 map 전체가 낡았을 때 화면을 통째로 다시 그린다.
    sheet64_slide는 이동 전 영역을 '새' 크기로 계산하므로 축소 시에는 부족하다. */
-void sheet64_refresh_all(struct SHTCTL64 *ctl)
+static void sheet64_refresh_all_nolock(struct SHTCTL64 *ctl)
 {
 	if (ctl->top < 0) {
 		return;
@@ -262,10 +263,91 @@ void sheet64_refresh_all(struct SHTCTL64 *ctl)
 	sheet64_refreshsub(ctl, 0, 0, ctl->xsize, ctl->ysize, 0, ctl->top);
 }
 
-void sheet64_free(struct SHEET64 *sht)
+static void sheet64_free_nolock(struct SHEET64 *sht)
 {
 	if (sht->height >= 0) {
-		sheet64_updown(sht, -1);
+		sheet64_updown_nolock(sht, -1);
 	}
 	sht->flags = 0;
+}
+
+/*
+ * 컴포지터는 재진입 불가다. sheet64_updown은 ctl->sheets[]와 모든 시트의
+ * height를 새로 쓰고, refreshmap/refreshsub는 그동안 그 배열을 읽는다.
+ * 콘솔마다 태스크가 하나씩 생기면 (console_plan.md) PIT 선점이 그 한가운데를
+ * 갈라놓는다. 전환 원인이 PIT IRQ뿐이라 인터럽트를 막으면 충분하다.
+ * rflags 저장/복원은 이미 꺼진 문맥에서 불러도 안전하게 하려는 것이다.
+ * 규칙: 이 구간 안에서는 task_sleep64를 부르지 않는다.
+ */
+struct SHEET64 *sheet64_alloc(struct SHTCTL64 *ctl)
+{
+	uint64_t flags;
+	struct SHEET64 *sht;
+
+	flags = io_load_rflags();
+	io_cli();
+	sht = sheet64_alloc_nolock(ctl);
+	io_store_rflags(flags);
+	return sht;
+}
+
+void sheet64_setbuf(struct SHEET64 *sht, uint8_t *buf, int32_t xsize, int32_t ysize,
+	int32_t col_inv)
+{
+	uint64_t flags;
+
+	flags = io_load_rflags();
+	io_cli();
+	sheet64_setbuf_nolock(sht, buf, xsize, ysize, col_inv);
+	io_store_rflags(flags);
+}
+
+void sheet64_updown(struct SHEET64 *sht, int32_t height)
+{
+	uint64_t flags;
+
+	flags = io_load_rflags();
+	io_cli();
+	sheet64_updown_nolock(sht, height);
+	io_store_rflags(flags);
+}
+
+void sheet64_refresh(struct SHEET64 *sht, int32_t bx0, int32_t by0, int32_t bx1, int32_t by1)
+{
+	uint64_t flags;
+
+	flags = io_load_rflags();
+	io_cli();
+	sheet64_refresh_nolock(sht, bx0, by0, bx1, by1);
+	io_store_rflags(flags);
+}
+
+void sheet64_slide(struct SHEET64 *sht, int32_t vx0, int32_t vy0)
+{
+	uint64_t flags;
+
+	flags = io_load_rflags();
+	io_cli();
+	sheet64_slide_nolock(sht, vx0, vy0);
+	io_store_rflags(flags);
+}
+
+void sheet64_refresh_all(struct SHTCTL64 *ctl)
+{
+	uint64_t flags;
+
+	flags = io_load_rflags();
+	io_cli();
+	sheet64_refresh_all_nolock(ctl);
+	io_store_rflags(flags);
+}
+
+void sheet64_free(struct SHEET64 *sht)
+{
+	uint64_t flags;
+
+	flags = io_load_rflags();
+	io_cli();
+	sheet64_free_nolock(sht);
+	io_store_rflags(flags);
 }

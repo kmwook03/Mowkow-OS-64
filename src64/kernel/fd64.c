@@ -273,9 +273,6 @@ static uint16_t alloc_cluster(void)
 {
 	uint16_t c;
 
-	/* ponytail: linear free-cluster scan from 2 every time; 2835 clusters
-	   max on a 1.44M image, so a free-cluster hint only matters if the
-	   image grows. */
 	for (c = 2; c < max_cluster; c++) {
 		if (fd64_next_cluster(c) == 0) {
 			fat_set(c, 0x0fff);
@@ -563,8 +560,7 @@ size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
 		fh->finfo->clustno = cluster;
 		mark_dirty(fh->finfo, sizeof(struct FDINFO64));
 	}
-	/* ponytail: walk the chain from the start once per call to find the
-	   cluster holding fh->pos; cache it in the handle if appends get hot. */
+
 	cluster = fh->finfo->clustno;
 	for (index = fh->pos / cb; index > 0; index--) {
 		next = fd64_next_cluster(cluster);
@@ -613,9 +609,7 @@ size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
 			fh->cluster = next;
 		}
 	}
-	/* ponytail: write through on every call -- no flush syscall, no data
-	   lost to a QEMU kill. Batch behind an explicit fd64_sync() if PIO
-	   write cost ever shows up. */
+	
 	if (fd64_sync() < 0) {
 		return 0;
 	}

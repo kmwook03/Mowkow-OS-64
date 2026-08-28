@@ -10,6 +10,29 @@
 #define KBC_MODE 0x47
 
 static struct FIFO64 *keyfifo64;
+static int shift_down;
+static int ctrl_down;
+
+int keyboard64_track_modifier(uint8_t scancode)
+{
+	switch (scancode) {
+	case 0x2a: case 0x36: shift_down = 1; return 1;
+	case 0xaa: case 0xb6: shift_down = 0; return 1;
+	case 0x1d: ctrl_down = 1; return 1;
+	case 0x9d: ctrl_down = 0; return 1;
+	default: return 0;
+	}
+}
+
+int keyboard64_shift(void)
+{
+	return shift_down;
+}
+
+int keyboard64_ctrl(void)
+{
+	return ctrl_down;
+}
 
 static void wait_kbc_sendready64(void)
 {

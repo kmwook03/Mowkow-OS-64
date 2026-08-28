@@ -1,4 +1,5 @@
 #include <mpport64.h>
+#include <mtask64.h>
 
 #include "py/builtin.h"
 #include "py/compile.h"
@@ -13,6 +14,7 @@
 #include "shared/runtime/gchelper.h"
 #include "shared/runtime/pyexec.h"
 
+#include <asmfunc64.h>
 #include <console64.h>
 #include <fd64.h>
 #include <memory64.h>
@@ -35,17 +37,63 @@ extern uint8_t stack_bottom[];
 
 static uint8_t gc_heap[MPPORT_GC_HEAP_SIZE];
 
+/*
+ * MicroPython은 태생적으로 단일 인스턴스다: gc_heap도 하나, mp_state_ctx도
+ * 하나(전역). 콘솔마다 py를 돌리려면 콘솔 수만큼의 512KiB .bss에 더해,
+ * MP_STATE_VM이 바꿔 낄 수 있는 포인터를 거치도록 벤더링된 MicroPython 자체를
+ * 고쳐야 한다. third_party/micropython은 v1.28.0에 고정된 서브미듈이라 로컬
+ * 패치는 새로 clone하면 사라진다 -- 5단계의 파서 재귀 검사를 포기한 것과 같은
+ * 이유다. 그래서 console_plan.md 8단계가 제시한 싼 쪽을 택한다: 시스템 전체에서
+ * 한 번에 하나, 두 번째 콘솔은 거절.
+ */
+static int mp_busy;
+
+static int mpport_claim(void)
+{
+	uint64_t flags;
+
+	flags = io_load_rflags();
+	io_cli();
+	if (mp_busy != 0) {
+		io_store_rflags(flags);
+		/* console64_puts는 도는 태스크로 콘솔을 찾으므로 거절 메시지는
+		   거절당한 콘솔에 찍힌다 (5단계). */
+		console64_puts("py already running in another console\n");
+		return -1;
+	}
+	mp_busy = 1;
+	io_store_rflags(flags);
+	return 0;
+}
+
+static void mpport_release(void)
+{
+	mp_busy = 0;
+}
+
 static void mpport_init(void)
 {
 	int here;
 	size_t available;
+	struct TASK64 *task;
 
 	/*
 	 * Real remaining C stack from here down to stack_bottom (asmfunc64.asm),
 	 * not a guessed constant -- matches python_porting.md Stage 0.4/0.6's
 	 * "conservative bound computed from the known stack range."
 	 */
-	available = (size_t) ((uintptr_t) &here - (uintptr_t) stack_bottom);
+	/*
+	 * 콘솔이 자기 태스크에서 돌면 (console_plan.md 5단계) 그 스택은
+	 * memman64가 준 64KiB지 커널 메인 스택이 아니다. stack_bottom으로
+	 * 재면 몇 MiB가 남은 줄 알고 넘침 검사가 걸리지 않아, 깊은 재귀가
+	 * 조용히 태스크 스택을 뭉갠다.
+	 */
+	task = task_now64();
+	if (task != NULL && task->stack_base != 0) {
+		available = (size_t) ((uintptr_t) &here - task->stack_base);
+	} else {
+		available = (size_t) ((uintptr_t) &here - (uintptr_t) stack_bottom);
+	}
 	mp_cstack_init_with_sp_here(available);
 	gc_init(gc_heap, gc_heap + sizeof(gc_heap));
 	mp_init();
@@ -53,6 +101,9 @@ static void mpport_init(void)
 
 void mpport_repl(void)
 {
+	if (mpport_claim() != 0) {
+		return;
+	}
 	mpport_init();
 
 	console64_repl_set_active(1);
@@ -60,6 +111,7 @@ void mpport_repl(void)
 	console64_repl_set_active(0);
 
 	mp_deinit();
+	mpport_release();
 }
 
 void mpport_run_file(const char *path)
@@ -82,6 +134,10 @@ void mpport_run_file(const char *path)
 	}
 	fd64_read(&fh, (void *) buf_addr, size);
 
+	if (mpport_claim() != 0) {
+		memman64_free_4k(&memman64, buf_addr, size);
+		return;
+	}
 	mpport_init();
 
 	if (nlr_push(&nlr) == 0) {
@@ -103,6 +159,7 @@ void mpport_run_file(const char *path)
 	}
 
 	mp_deinit();
+	mpport_release();
 	memman64_free_4k(&memman64, buf_addr, size);
 }
 
@@ -158,3 +215,4 @@ void nlr_jump_fail(void *val)
 	for (;;) {
 	}
 }
+
