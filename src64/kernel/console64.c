@@ -115,6 +115,13 @@ struct CONSOLE64 {
 	struct TASK64 *task;
 	struct FIFO64 keys;
 	struct EVENT64 key_buf[CONSOLE64_KEY_BUF];
+	/* 창 닫기는 협조적이다. 컴포지터가 close_requested만 세우고 물러나면,
+	   콘솔 태스크가 프롬프트로 돌아온 자리에서 close_ready를 세우고 잠든다.
+	   실제로 부수는 것은 커널 메인 루프(console64_reap_closed)다. 돌고 있는
+	   py/머꼬/앱을 그 자리에서 죽이면 그것들이 쥔 전역 자물쇠를 아무도 놓지
+	   못해 재부팅 전까지 잠긴다. */
+	int close_requested;
+	int close_ready;
 };
 
 /* 콘솔 0은 부팅 콘솔이다 -- 전체 화면 토글과 화면 크기 버퍼를 가진 유일한
@@ -1314,7 +1321,41 @@ static void console_task_main(void)
 	struct CONSOLE64 *con = console_self();
 
 	for (;;) {
+		/* 명령 하나가 끝나 프롬프트로 돌아온 자리 -- 자물쇠를 쥔 것이
+		   없는, 콘솔을 접기에 안전한 유일한 지점이다. */
+		if (con->close_requested != 0) {
+			puts_con(con, "콘솔을 닫습니다.\n");
+			con->close_ready = 1;
+			task_sleep64(task_now64());     /* 커널이 거두러 온다 */
+		}
 		console64_process_key(con, wait_key_event(con));
+	}
+}
+
+void console64_request_close(struct CONSOLE64 *con)
+{
+	if (con == NULL || con->task == NULL || con->close_requested != 0) {
+		return;
+	}
+	con->close_requested = 1;
+	/* 키를 기다리며 잠든 콘솔을 깨운다. 0은 어느 경로에서도 글자가 되지
+	   않으므로(translate_key가 '\0'을 준다) 편집 중인 줄을 건드리지 않는다.
+	   무언가 돌고 있었다면 이 키는 큐에 남았다가 같은 이유로 버려진다. */
+	console64_post_key(con, 0);
+}
+
+void console64_reap_closed(void)
+{
+	uint32_t i;
+
+	for (i = 0; i < CONSOLE64_MAX; i++) {
+		if (console_table[i].close_ready == 0) {
+			continue;
+		}
+		console_table[i].close_ready = 0;
+		/* 창과 태스크를 함께 없앤다. 태스크는 지금 잠들어 있고 도는 태스크도
+		   아니므로 여기서 죽일 수 있다 (task_kill64는 자기 자신을 거절한다). */
+		gui64_close_console(&console_table[i]);
 	}
 }
 
@@ -1341,6 +1382,8 @@ struct CONSOLE64 *console64_create(void)
 	con->input_len = 0;
 	con->lang_hangul = 1;
 	con->repl_active = 0;
+	con->close_requested = 0;   /* 슬롯은 다시 쓰이므로 반드시 되돌린다 */
+	con->close_ready = 0;
 	con->repl_queue_head = 0;
 	con->repl_queue_tail = 0;
 	hangul64_init(&con->composing);
@@ -1373,6 +1416,8 @@ void console64_destroy(struct CONSOLE64 *con)
 	}
 	task_kill64(con->task);
 	con->task = NULL;
+	con->close_requested = 0;
+	con->close_ready = 0;
 	con->keys.task = NULL;
 	con->sheet = NULL;
 	con->vram = NULL;

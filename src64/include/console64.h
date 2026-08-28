@@ -55,6 +55,13 @@ void console64_destroy(struct CONSOLE64 *con);
    커널 이벤트 루프가 포커스에 따라 부른다. */
 void console64_post_key(struct CONSOLE64 *con, uint16_t key);
 void console64_repl_set_active(int active);
+
+/* 창 닫기 요청. 곧바로 부수지 않고 표시만 남긴다 -- 콘솔 태스크가 프롬프트로
+   돌아오면 스스로 접히고, 그다음 console64_reap_closed가 실제로 없앤다. */
+void console64_request_close(struct CONSOLE64 *con);
+
+/* 접힌 콘솔을 거둔다. 커널 메인 루프가 부른다. */
+void console64_reap_closed(void);
 int console64_repl_getchar(void);
 /* 명령줄 편집기(한글 조합 포함)로 한 줄을 읽는다. 바이트 수, Ctrl-C면 -1,
    Ctrl-D면 -2. 부르기 전에 input_line을 가리키는 인자는 복사해 두어야 한다. */

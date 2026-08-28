@@ -388,12 +388,12 @@ LBA 3026        데이터 영역, 클러스터 2 = 루트 디렉터리
                       └ mowio    커널로 나가는 창구 (C, modmowio.c)
 ```
 
-업스트림([woogyun/mowkow](https://github.com/woogyun/mowkow), 커밋 `1dae112`)은 `py64/머꼬/upstream/`에 그대로 두고, 실제 사본은 `py64/머꼬/`에 둡니다.
-
+업스트림([woogyun/mowkow](https://github.com/woogyun/mowkow), 커밋 `1dae112`)은 `py64/머꼬/upstream/`에 그대로 두고, 실제 실행되는 사본은 `py64/머꼬/`에 두었습니다.
 둘의 차이는 의존성 계층뿐이며 파서와 계산기는 건드리지 않았습니다.
+
 네 파일에서 바뀐 줄은 38줄이며, `diff -r py64/머꼬/upstream py64/머꼬`로 확인할 수 있습니다.
 
-`mowio`는 표준 라이브러리 대신 커널을 부르는 자리입니다.
+`mowio`는 표준 라이브러리 대신 커널을 부르는 코드입니다.
 
 | `mowio` | 대신하는 것 | 이유 |
 |-|-|-|

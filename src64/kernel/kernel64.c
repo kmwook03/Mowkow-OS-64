@@ -435,6 +435,9 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 		if (fifo64_get(&event_fifo, &event) == 0) {
 			io_sti();
 			process_event64(&event);
+			/* 닫히기를 기다리는 콘솔 거두기. 타이머가 100Hz로 이벤트를
+			   넣으므로 이 자리는 꾸준히 지나간다 (console64.c의 협조적 닫기). */
+			console64_reap_closed();
 		} else {
 			task_sleep64(task_now64());
 			io_sti();

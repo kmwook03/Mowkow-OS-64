@@ -32,6 +32,10 @@ struct CONSOLE64 *gui64_focused_console(void);
    잡는다 (화면 크기 버퍼는 콘솔 0 하나로 족하다). */
 int gui64_open_console_window(struct CONSOLE64 *con, const char *title);
 
+/* 콘솔 창을 실제로 없앤다. 콘솔이 접힌 뒤 커널이 부른다
+   (console64_reap_closed). 닫기 버튼은 이 길로 바로 오지 않는다. */
+void gui64_close_console(struct CONSOLE64 *con);
+
 /* F11 -- 맨 아래 창을 위로. */
 void gui64_raise_bottom_window(void);
 

@@ -532,15 +532,15 @@ static void remove_win(struct GUI64_WIN *win)
 	gui_win_count--;
 }
 
-static void handle_close(struct SHEET64 *sht)
+/* 창과 콘솔을 같이 없앤다 -- 작업 표시줄 항목도, 태스크도, 콘솔 슬롯도
+   사라진다. 슬롯이 비어야 다음 `new`가 그 번호를 다시 쓴다. */
+static void destroy_window(struct SHEET64 *sht)
 {
 	struct GUI64_WIN *win = find_win(sht);
 
 	if (win == NULL) {
 		return;
 	}
-	/* 창과 콘솔을 같이 없앤다 -- 작업 표시줄 항목도, 태스크도, 콘솔
-	   슬롯도 사라진다. 슬롯이 비어야 다음 `new`가 그 번호를 다시 쓴다. */
 	keywin_off(sht);
 	sheet64_updown(sht, -1);
 	gui_key_win = focus_after_hide(sht);
@@ -555,6 +555,36 @@ static void handle_close(struct SHEET64 *sht)
 	remove_win(win);
 	keywin_on(gui_key_win);
 	taskbar_redraw();
+}
+
+void gui64_close_console(struct CONSOLE64 *con)
+{
+	int32_t i;
+
+	for (i = 0; i < gui_win_count; i++) {
+		if (gui_wins[i].is_console != 0 && gui_wins[i].console == con) {
+			destroy_window(gui_wins[i].sht);
+			return;
+		}
+	}
+}
+
+/* 닫기 버튼. 콘솔 창은 여기서 부수지 않는다 -- py나 머꼬나 앱이 돌고 있으면
+   그 태스크가 쥔 전역 자물쇠(MicroPython 하나, 앱 자리 하나)를 놓지 못한 채
+   죽어서 재부팅 전까지 잠긴다. 표시만 남기면 콘솔이 프롬프트로 돌아온 뒤
+   스스로 접히고, 그때 커널이 gui64_close_console로 돌아온다. */
+static void handle_close(struct SHEET64 *sht)
+{
+	struct GUI64_WIN *win = find_win(sht);
+
+	if (win == NULL) {
+		return;
+	}
+	if (win->is_console != 0) {
+		console64_request_close(win->console);
+		return;
+	}
+	destroy_window(sht);
 }
 
 static void on_press(int32_t mx, int32_t my)
