@@ -16,18 +16,30 @@
 #define KBC_MODE 0x47
 
 static struct FIFO64 *keyfifo64;
+static uint8_t ext_pending;
+static uint8_t skip_bytes;
 static int shift_down;
 static int ctrl_down;
+static int alt_down;
 
-int keyboard64_track_modifier(uint8_t scancode)
+/* 오른쪽 Ctrl/Alt는 e0 접두가 붙어 KEY64_EXT 비트를 달고 온다. 왼쪽 키와
+   같은 상태를 공유한다 -- 앱은 어느 쪽을 눌렀는지 구분하지 않는다. */
+int keyboard64_track_modifier(uint16_t key)
 {
-	switch (scancode) {
+	switch (key) {
 	case 0x2a: case 0x36: shift_down = 1; return 1;
 	case 0xaa: case 0xb6: shift_down = 0; return 1;
-	case 0x1d: ctrl_down = 1; return 1;
-	case 0x9d: ctrl_down = 0; return 1;
+	case 0x1d: case KEY64_RCTRL: ctrl_down = 1; return 1;
+	case 0x9d: case (KEY64_RCTRL | 0x80): ctrl_down = 0; return 1;
+	case 0x38: case KEY64_RALT: alt_down = 1; return 1;
+	case 0xb8: case (KEY64_RALT | 0x80): alt_down = 0; return 1;
 	default: return 0;
 	}
+}
+
+int keyboard64_alt(void)
+{
+	return alt_down;
 }
 
 int keyboard64_shift(void)

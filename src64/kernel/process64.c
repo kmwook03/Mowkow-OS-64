@@ -247,6 +247,9 @@ int process64_exec_file(const char *path, const char *cmdline,
 	status = enter_user_mode64(process->entry, user_rsp,
 		argc, argv, GDT64_USER_CODE, GDT64_USER_DATA, &process->saved_kernel_rsp);
 	task->kernel_rsp = process->saved_kernel_rsp;
+	/* raw 모드는 프로세스 상태다. 앱이 정리하지 않고 나가도(SYS_EXIT이든
+	   폴트든) 콘솔이 줄 편집기로 돌아오게 커널이 되돌린다. */
+	console64_set_raw(0);
 	if (process->exited != 0) {
 		status = process->exit_status;
 	}

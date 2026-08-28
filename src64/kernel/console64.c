@@ -41,6 +41,7 @@
 extern const uint8_t hankaku64[4096];
 
 #define REPL_QUEUE_SIZE 64
+#define RAW_QUEUE_SIZE 64
 #define CONSOLE64_KEY_BUF 64
 /*
  * 콘솔 태스크 스택. 기본 TASK64_STACK_SIZE(64KiB)로는 py가 예전보다 약해진다
@@ -82,6 +83,32 @@ struct CONSOLE64 {
 	uint32_t repl_queue_head;
 	uint32_t repl_queue_tail;
 	int repl_active;
+	/*
+	 * raw 모드: 콘솔 줄 편집기와 에코를 끄고 키 이벤트를 앱에게 그대로
+	 * 넘긴다. 콘솔마다 따로 둔다 -- 한 창에서 나노를 띄웠다고 다른 창의
+	 * 명령줄까지 raw가 되면 안 된다.
+	 */
+	int raw_mode;
+	uint64_t raw_queue[RAW_QUEUE_SIZE];
+	uint32_t raw_queue_head;
+	uint32_t raw_queue_tail;
+	uint32_t size_generation;
+	/* raw 모드에서는 갱신 영역을 모았다가 TTY_FLUSH에서 한 번에 올린다.
+	   글자마다 sheet64_refresh를 부르면 시트 더미를 수천 번 훑는다. */
+	int32_t dirty_x0;
+	int32_t dirty_y0;
+	int32_t dirty_x1;
+	int32_t dirty_y1;
+	int dirty_valid;
+	/*
+	 * mowio.readline이 줄 편집기를 빌려 쓰는 동안 켜진다. 켜져 있으면
+	 * Enter가 execute_command 대신 줄을 호출자에게 돌려주고 Ctrl-C/Ctrl-D가
+	 * 줄을 끝낸다 (mowkow_porting.md 결정 5, 8).
+	 */
+	int line_capture;
+	int line_done;
+	int line_result;            /* 0 = 줄 완성, -1 = Ctrl-C, -2 = Ctrl-D */
+	int line_full_warned;       /* 줄이 꽉 찼다고 이미 알렸는가 */
 	/* 콘솔마다 자기 태스크와 키 큐를 갖는다. 예전에는 커널 이벤트 루프가
 	   직접 process_key를 불렀기 때문에 run/py가 도는 동안 마우스도 화면도
 	   멈췄다 (console_plan.md 5단계). */
@@ -118,22 +145,39 @@ static struct CONSOLE64 *console_self(void)
 	return console_active;
 }
 
-/* 키가 올 때까지 잔다. 자는 동안 다른 태스크가 돈다 -- 이게 5단계의 요점이다.
-   깨우기는 fifo64_put이 알아서 한다. */
-static uint8_t console_wait_key(struct CONSOLE64 *con)
+/*
+ * 이벤트 하나만 처리한다. 키였으면 *key에 담고 1. 비어 있으면 태스크를
+ * 재운다 -- 자는 동안 다른 태스크가 돈다 (console_plan.md 5단계).
+ *
+ * 한 번에 하나씩 돌려주는 이유: 창 모드가 바뀌면 console64_attach_sheet가
+ * raw 큐에 TTY_KIND_RESIZE를 넣고 태스크를 깨운다. 키가 올 때까지 여기서
+ * 눌러앉으면 그 RESIZE는 다음 타자를 칠 때까지 큐에 갇힌다.
+ */
+static int pump_event(struct CONSOLE64 *con, uint16_t *key)
 {
 	struct EVENT64 event;
 
+	io_cli();
+	if (fifo64_get(&con->keys, &event) != 0) {
+		task_sleep64(con->task);
+		io_sti();
+		return 0;
+	}
+	io_sti();
+	if (event.type == EVENT64_KEYBOARD) {
+		*key = (uint16_t) event.data;
+		return 1;
+	}
+	return 0;
+}
+
+static uint16_t wait_key_event(struct CONSOLE64 *con)
+{
+	uint16_t key;
+
 	for (;;) {
-		io_cli();
-		if (fifo64_get(&con->keys, &event) == 0) {
-			io_sti();
-			if (event.type == EVENT64_KEYBOARD) {
-				return (uint8_t) event.data;
-			}
-		} else {
-			task_sleep64(con->task);
-			io_sti();
+		if (pump_event(con, &key) != 0) {
+			return key;
 		}
 	}
 }
@@ -143,8 +187,33 @@ static void console_flush(struct CONSOLE64 *con, int32_t x, int32_t y, int32_t w
 	if (con->sheet == NULL) {
 		return;
 	}
+	if (con->raw_mode != 0) {
+		if (con->dirty_valid == 0) {
+			con->dirty_x0 = x;
+			con->dirty_y0 = y;
+			con->dirty_x1 = x + w;
+			con->dirty_y1 = y + h;
+			con->dirty_valid = 1;
+			return;
+		}
+		if (x < con->dirty_x0) { con->dirty_x0 = x; }
+		if (y < con->dirty_y0) { con->dirty_y0 = y; }
+		if (x + w > con->dirty_x1) { con->dirty_x1 = x + w; }
+		if (y + h > con->dirty_y1) { con->dirty_y1 = y + h; }
+		return;
+	}
 	sheet64_refresh(con->sheet, con->ox + x, con->oy + y,
 		con->ox + x + w, con->oy + y + h);
+}
+
+static void console_flush_dirty(struct CONSOLE64 *con)
+{
+	if (con->sheet == NULL || con->dirty_valid == 0) {
+		return;
+	}
+	sheet64_refresh(con->sheet, con->ox + con->dirty_x0, con->oy + con->dirty_y0,
+		con->ox + con->dirty_x1, con->oy + con->dirty_y1);
+	con->dirty_valid = 0;
 }
 
 
@@ -168,6 +237,63 @@ static int repl_queue_pop(struct CONSOLE64 *con, char *out)
 	*out = con->repl_queue[con->repl_queue_head];
 	con->repl_queue_head = (con->repl_queue_head + 1) % REPL_QUEUE_SIZE;
 	return 1;
+}
+
+/* 수식 키는 물리 상태라 키보드 계층이 갖는다 (keyboard64.c). */
+static void raw_queue_push(struct CONSOLE64 *con, unsigned int kind, unsigned int payload)
+{
+	uint32_t next;
+	uint64_t mods;
+
+	next = (con->raw_queue_tail + 1) % RAW_QUEUE_SIZE;
+	if (next == con->raw_queue_head) {
+		return;
+	}
+	mods = 0;
+	if (keyboard64_shift() != 0) {
+		mods |= TTY_MOD_SHIFT;
+	}
+	if (keyboard64_ctrl() != 0) {
+		mods |= TTY_MOD_CTRL;
+	}
+	if (keyboard64_alt() != 0) {
+		mods |= TTY_MOD_ALT;
+	}
+	con->raw_queue[con->raw_queue_tail] = (uint64_t) payload |
+		((uint64_t) kind << 32) | (mods << 40);
+	con->raw_queue_tail = next;
+}
+
+static int raw_queue_pop(struct CONSOLE64 *con, uint64_t *out)
+{
+	if (con->raw_queue_head == con->raw_queue_tail) {
+		return 0;
+	}
+	*out = con->raw_queue[con->raw_queue_head];
+	con->raw_queue_head = (con->raw_queue_head + 1) % RAW_QUEUE_SIZE;
+	return 1;
+}
+
+/* 조합 중인 상태를 코드포인트 하나로. 비어 있으면 0. */
+static unsigned int composing_unicode(struct CONSOLE64 *con)
+{
+	char utf8[4];
+	int len;
+	int decode_len;
+
+	if (con->composing.state == 0) {
+		return 0;
+	}
+	len = hangul64_compose_utf8(utf8, &con->composing);
+	if (len <= 0) {
+		return 0;
+	}
+	return utf8_to_unicode64(utf8, &decode_len);
+}
+
+static void raw_emit_preedit(struct CONSOLE64 *con)
+{
+	raw_queue_push(con, TTY_KIND_PREEDIT, composing_unicode(con));
 }
 
 static const char keymap0[128] = {
@@ -284,7 +410,7 @@ static void scroll_if_needed(struct CONSOLE64 *con)
 	}
 	for (row = con->height - FONT_H; row < con->height; row++) {
 		for (col = 0; col < con->width; col++) {
-			con->vram[row * con->stride + col] = COLOR_BG;
+			con->vram[row * con->stride + col] = color_bg;
 		}
 	}
 	con->cursor_y = con->height - FONT_H;
@@ -330,11 +456,11 @@ static void put_utf8_char(struct CONSOLE64 *con, const char *s, int len)
 	if (con->cursor_x + width > con->width) {
 		newline(con);
 	}
-	fill_rect(con, con->cursor_x, con->cursor_y, width, FONT_H, COLOR_BG);
+	fill_rect(con, con->cursor_x, con->cursor_y, width, FONT_H, color_bg);
 	if (width == HANGUL_W && hangul_font != NULL) {
 		unicode = utf8_to_unicode64(s, &decode_len);
 		hangul64_draw_unicode(con->vram, con->stride, con->cursor_x, con->cursor_y,
-			COLOR_FG, hangul_font, unicode);
+			color_fg, hangul_font, unicode);
 		console_flush(con, con->cursor_x, con->cursor_y, HANGUL_W, FONT_H);
 	} else if (len == 1) {
 		draw_ascii(con, con->cursor_x, con->cursor_y, s[0]);
@@ -381,7 +507,7 @@ static void erase_prev_visual(struct CONSOLE64 *con, uint16_t width)
 		return;
 	}
 	con->cursor_x -= width;
-	fill_rect(con, con->cursor_x, con->cursor_y, width, FONT_H, COLOR_BG);
+	fill_rect(con, con->cursor_x, con->cursor_y, width, FONT_H, color_bg);
 	serial_putc('\b');
 	serial_putc(' ');
 	serial_putc('\b');
@@ -391,7 +517,21 @@ static int append_input(struct CONSOLE64 *con, const char *s, int len)
 {
 	int i;
 
+	if (con->raw_mode != 0) {
+		/* raw 모드에서는 줄 버퍼 대신 앱의 큐로 간다. 에코도 하지 않으므로
+		   0을 돌려 호출자가 화면에 그리지 않게 한다. */
+		int decode_len;
+
+		raw_queue_push(con, TTY_KIND_CHAR, utf8_to_unicode64(s, &decode_len));
+		return 0;
+	}
 	if (con->input_len + len >= CONSOLE_INPUT_MAX) {
+		/* 말없이 키를 무시하면 자판이 고장 난 것처럼 보인다. 한 줄에 한 번만
+		   알린다 - 안 그러면 남은 타자마다 같은 말이 쏟아진다. */
+		if (con->line_full_warned == 0) {
+			con->line_full_warned = 1;
+			puts_con(con, "\n줄이 너무 깁니다\n");
+		}
 		return 0;
 	}
 	for (i = 0; i < len; i++) {
@@ -402,12 +542,16 @@ static int append_input(struct CONSOLE64 *con, const char *s, int len)
 
 static void draw_composing(struct CONSOLE64 *con)
 {
+	if (con->raw_mode != 0) {
+		raw_emit_preedit(con);
+		return;
+	}
 	if (con->cursor_x < HANGUL_W || hangul_font == NULL) {
 		return;
 	}
-	fill_rect(con, con->cursor_x - HANGUL_W, con->cursor_y, HANGUL_W, FONT_H, COLOR_BG);
+	fill_rect(con, con->cursor_x - HANGUL_W, con->cursor_y, HANGUL_W, FONT_H, color_bg);
 	hangul64_draw_johab(con->vram, con->stride, con->cursor_x - HANGUL_W, con->cursor_y,
-		COLOR_FG, hangul_font, hangul64_to_johab(&con->composing));
+		color_fg, hangul_font, hangul64_to_johab(&con->composing));
 	console_flush(con, con->cursor_x - HANGUL_W, con->cursor_y, HANGUL_W, FONT_H);
 }
 
@@ -429,16 +573,20 @@ static void flush_composing(struct CONSOLE64 *con)
 static void start_new_hangul(struct CONSOLE64 *con, int state, int cho, int jung, int jong)
 {
 	flush_composing(con);
-	if (con->cursor_x + HANGUL_W > con->width) {
+	if (con->raw_mode == 0 && con->cursor_x + HANGUL_W > con->width) {
 		newline(con);
 	}
 	con->composing.state = state;
 	con->composing.cho = cho;
 	con->composing.jung = jung;
 	con->composing.jong = jong;
-	fill_rect(con, con->cursor_x, con->cursor_y, HANGUL_W, FONT_H, COLOR_BG);
+	if (con->raw_mode != 0) {
+		raw_emit_preedit(con);
+		return;
+	}
+	fill_rect(con, con->cursor_x, con->cursor_y, HANGUL_W, FONT_H, color_bg);
 	hangul64_draw_johab(con->vram, con->stride, con->cursor_x, con->cursor_y,
-		COLOR_FG, hangul_font, hangul64_to_johab(&con->composing));
+		color_fg, hangul_font, hangul64_to_johab(&con->composing));
 	console_flush(con, con->cursor_x, con->cursor_y, HANGUL_W, FONT_H);
 	con->cursor_x += HANGUL_W;
 }
@@ -510,7 +658,7 @@ static void process_hangul_key(struct CONSOLE64 *con, char key)
 		}
 		break;
 	case 2:
-		if (cho != -1 && is_double_cho(cho) != 0) {
+		if (cho != -1 && cho_cannot_be_jong(cho) != 0) {
 			start_new_hangul(con, 1, cho, -1, -1);
 		} else if (jong != -1) {
 			update_composing(con, 3, con->composing.cho, con->composing.jung, jong);
@@ -573,7 +721,11 @@ static int delete_composing(struct CONSOLE64 *con)
 	}
 	if (con->composing.state == 1) {
 		hangul64_init(&con->composing);
-		erase_prev_visual(con, HANGUL_W);
+		if (con->raw_mode != 0) {
+			raw_emit_preedit(con);      /* payload 0 = 조합 취소 */
+		} else {
+			erase_prev_visual(con, HANGUL_W);
+		}
 	} else if (con->composing.state == 2) {
 		prev_jung = hangul64_split_composite_jung(con->composing.jung);
 		if (prev_jung != -1) {
@@ -634,24 +786,14 @@ static int str_starts_with(const char *s, const char *prefix)
 	return 1;
 }
 
-static void print_file_name(struct CONSOLE64 *con, const struct FDINFO64 *finfo)
+/* FAT32 + VFAT라 이름은 8.3 자리가 아니라 널 종료 문자열로 온다. */
+static void print_file_name(struct CONSOLE64 *con, const char *name)
 {
 	uint16_t n;
 
-	for (i = 0; i < 8; i++) {
-		if (finfo->name[i] != ' ') {
-			put_utf8_char(con, (const char *) &finfo->name[i], 1);
-		}
+	for (n = 0; name[n] != '\0'; n++) {
 	}
-	if (finfo->ext[0] != ' ') {
-		put_utf8_char(con, ".", 1);
-		for (i = 0; i < 3; i++) {
-			if (finfo->ext[i] != ' ') {
-				put_utf8_char(con, (const char *) &finfo->ext[i], 1);
-			}
-		}
-	}
-	put_bytes(name, n);
+	put_bytes(con, name, n);
 }
 
 static void print_uint64(struct CONSOLE64 *con, uint64_t value)
@@ -709,9 +851,29 @@ void console64_prompt(void)
 
 static void clear_screen(struct CONSOLE64 *con)
 {
-	fill_rect(con, 0, 0, con->width, con->height, COLOR_BG);
+	fill_rect(con, 0, 0, con->width, con->height, color_bg);
 	con->cursor_x = 0;
 	con->cursor_y = 0;
+}
+
+/* 실행 파일을 돌린다. 그런 파일이 없으면 0 -- 부르는 쪽이 "알 수 없는
+   명령어"로 넘어간다. */
+static int run_program(struct CONSOLE64 *con, const char *cmdline)
+{
+	int status;
+
+	status = process64_exec_file(cmdline, cmdline, con);
+	if (status == -2) {
+		return 0;
+	}
+	if (status == -8) {
+		puts_con(con, "another program is running\n");
+		return 1;
+	}
+	puts_con(con, "exit ");
+	print_uint64(con, (uint64_t) status);
+	puts_con(con, "\n");
+	return 1;
 }
 
 static void execute_command(struct CONSOLE64 *con)
@@ -786,11 +948,10 @@ static void execute_command(struct CONSOLE64 *con)
 
 		count = fd64_file_count();
 		for (i = 0; i < count; i++) {
-			finfo = fd64_file_at(i);
-			if (finfo != NULL) {
-				print_file_name(con, finfo);
+			if (fd64_file_at(i, &finfo, name, sizeof(name)) != 0) {
+				print_file_name(con, name);
 				puts_con(con, "  ");
-				print_uint64(con, finfo->size);
+				print_uint64(con, finfo.size);
 				puts_con(con, "\n");
 			}
 		}
@@ -815,24 +976,24 @@ static void execute_command(struct CONSOLE64 *con)
 			puts_con(con, "\n");
 		}
 	} else if (str_starts_with(con->input_line, "run ") || str_starts_with(con->input_line, "실행 ")) {
-		int status;
+		const char *args;
 
-		status = process64_exec_file(con->input_line + 4, con->input_line + 4, con);
-		if (status == -8) {
-			puts_con(con, "another program is running\n");
-		} else {
-			puts_con(con, "exit ");
-			print_uint64(con, (uint64_t) status);
-			puts_con(con, "\n");
+		/* "실행 "은 UTF-8로 7바이트, "run "은 4바이트다. 한 값으로 고정해
+		   건너뛰면 한글 쪽이 글자 중간에서 잘린다. */
+		args = con->input_line + (con->input_line[0] == 'r' ? 4 : 7);
+		if (run_program(con, args) == 0) {
+			puts_con(con, "파일 없음\n");
 		}
 	} else if (str_eq(con->input_line, "py") || str_eq(con->input_line, "파이썬")) {
 		mpport_repl();
 	} else if (str_starts_with(con->input_line, "py ")) {
 		mpport_run_file(con->input_line + 3);
-	} else {
-		puts_con(con, "unknown command\n");
+	} else if (run_program(con, con->input_line) == 0) {
+		/* 내장 명령도 아니고 그런 실행 파일도 없다 */
+		puts_con(con, "알 수 없는 명령어\n");
 	}
 	con->input_len = 0;
+	con->line_full_warned = 0;
 	prompt(con);
 }
 
@@ -863,6 +1024,16 @@ void console64_attach_sheet(struct CONSOLE64 *con, struct SHEET64 *sht,
 	con->height = h;
 	con->cursor_x = 0;
 	con->cursor_y = 0;
+	/* 크기가 바뀌었고 화면도 지워진다. raw 모드 앱은 TTY_READKEY에서 자고
+	   있으므로 깨워 주지 않으면 다음 키를 누를 때까지 빈 화면을 본다.
+	   시그널 없는 SIGWINCH가 이 이벤트다. */
+	con->size_generation++;
+	if (con->raw_mode != 0) {
+		raw_queue_push(con, TTY_KIND_RESIZE, 0);
+		if (con->task != NULL) {
+			task_run64(con->task, -1, 0);
+		}
+	}
 	clear_screen(con);
 }
 
@@ -930,49 +1101,6 @@ static int normalize_ext_key(uint16_t *key)
 	return 0;
 }
 
-/*
- * FIFO에서 이벤트 하나만 처리한다. 키보드 스캔코드였으면 *key에 담고 1.
- * 비어 있으면 태스크를 재운다.
- *
- * 한 번에 하나씩 돌려주는 이유: 마우스로 창 모드를 바꾸면 그 처리 도중
- * console64_attach_sheet가 raw 큐에 TTY_KIND_RESIZE를 넣는다. 키보드
- * 이벤트가 올 때까지 여기서 계속 돌면 그 RESIZE는 다음 타자를 칠 때까지
- * 큐에 갇힌다 - 앱은 지워진 화면을 그대로 보고 있게 된다.
- */
-static int pump_event(uint16_t *key)
-{
-	struct EVENT64 event;
-
-	io_cli();
-	if (console_event_fifo == NULL || fifo64_get(console_event_fifo, &event) != 0) {
-		task_sleep64(task_now64());
-		io_sti();
-		return 0;
-	}
-	io_sti();
-	/* 마우스와 F11은 앱이 콘솔을 쥐고 있어도 살아 있어야 한다.
-	   메인 루프와 같은 처리기를 쓴다. */
-	if (gui64_handle_system_event(&event) != 0) {
-		return 0;
-	}
-	if (event.type == EVENT64_KEYBOARD) {
-		*key = (uint16_t) event.data;
-		return 1;
-	}
-	return 0;
-}
-
-static uint16_t wait_key_event(void)
-{
-	uint16_t key;
-
-	for (;;) {
-		if (pump_event(&key) != 0) {
-			return key;
-		}
-	}
-}
-
 uint64_t console64_read(char *dst, uint64_t len)
 {
 	return console64_read_con(console_self(), dst, len);
@@ -989,8 +1117,11 @@ uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 	}
 	count = 0;
 	for (;;) {
-		scancode = console_wait_key(con);
-		if (keyboard64_track_modifier(scancode) != 0) {
+		key = wait_key_event(con);
+		if (keyboard64_track_modifier(key) != 0) {
+			continue;
+		}
+		if (normalize_ext_key(&key) == 0) {
 			continue;
 		}
 		if ((key & 0x80) != 0) {
@@ -1008,7 +1139,7 @@ uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 			}
 			continue;
 		}
-		c = keyboard64_shift() != 0 ? keymap1[scancode] : keymap0[scancode];
+		c = keyboard64_shift() != 0 ? keymap1[key] : keymap0[key];
 		if (c == '\0') {
 			continue;
 		}
@@ -1020,26 +1151,122 @@ uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 	}
 }
 
-void console64_process_key(struct CONSOLE64 *con, uint8_t scancode)
+/*
+ * raw 모드의 키 처리. 줄 편집도 에코도 하지 않고 이벤트만 쌓는다.
+ * 한글은 여기서도 커널이 조합한다 - 완성되면 CHAR, 조합 중이면 PREEDIT.
+ */
+static void raw_process_key(struct CONSOLE64 *con, uint16_t key)
 {
 	char c;
 
-	if (keyboard64_track_modifier(scancode) != 0) {
+	if ((key & 0x80) != 0) {
+		return;                     /* 브레이크 코드 */
+	}
+	if ((key & KEY64_EXT) != 0) {
+		if (key == KEY64_KPENTER) {
+			flush_composing(con);
+			raw_queue_push(con, TTY_KIND_CHAR, '\n');
+		} else {
+			raw_queue_push(con, TTY_KIND_KEY, key);
+		}
 		return;
 	}
-	if ((scancode & 0x80) != 0) {
+	if (key == 0x1c) {
+		flush_composing(con);
+		raw_queue_push(con, TTY_KIND_CHAR, '\n');
 		return;
 	}
-	if (con->repl_active) {
-		if (scancode == 0x1c) {
+	if (key == 0x0e) {
+		if (delete_composing(con) == 0) {
+			raw_queue_push(con, TTY_KIND_CHAR, '\b');
+		}
+		return;
+	}
+	if (key == 0x0f) {
+		flush_composing(con);
+		raw_queue_push(con, TTY_KIND_CHAR, '\t');
+		return;
+	}
+	if (key == 0x01) {
+		flush_composing(con);
+		raw_queue_push(con, TTY_KIND_CHAR, 0x1b);
+		return;
+	}
+	c = translate_key(con, (uint8_t) key);
+	if (c == '\0') {
+		return;
+	}
+	if (keyboard64_shift() != 0 && c == ' ') {
+		flush_composing(con);
+		con->lang_hangul ^= 1;
+		return;
+	}
+	if (keyboard64_ctrl() != 0) {
+		flush_composing(con);
+		if (c >= 'a' && c <= 'z') {
+			c = (char) (c - 'a' + 1);
+		} else if (c >= 'A' && c <= 'Z') {
+			c = (char) (c - 'A' + 1);
+		}
+		raw_queue_push(con, TTY_KIND_CHAR, (unsigned char) c);
+		return;
+	}
+	if (con->lang_hangul != 0) {
+		process_hangul_key(con, c);
+	} else {
+		not_korean(con, c);         /* raw에서는 큐로 밀고 에코하지 않는다 */
+	}
+}
+
+void console64_process_key(struct CONSOLE64 *con, uint16_t key)
+{
+	char c;
+
+	if (keyboard64_track_modifier(key) != 0) {
+		return;
+	}
+	if (con->raw_mode != 0) {
+		raw_process_key(con, key);
+		return;
+	}
+	if (normalize_ext_key(&key) == 0) {
+		return;
+	}
+	if ((key & 0x80) != 0) {
+		return;
+	}
+	if (con->line_capture) {
+		if (key == 0x1c) {
+			con->line_result = 0;
+			con->line_done = 1;
+			return;
+		}
+		if (keyboard64_ctrl() != 0) {
+			c = translate_key(con, (uint8_t) key);
+			if (c == 'c' || c == 'C') {
+				con->line_result = -1;
+				con->line_done = 1;
+				return;
+			}
+			if (c == 'd' || c == 'D') {
+				con->line_result = -2;
+				con->line_done = 1;
+				return;
+			}
+		}
+	}
+	/* readline이 잡고 있는 동안에는 py REPL 안이라도 키가 줄 편집기로 가야
+	   한다. 그래야 py REPL에서 부르든 스크립트에서 부르든 똑같이 동작한다. */
+	if (con->repl_active && con->line_capture == 0) {
+		if (key == 0x1c) {
 			repl_queue_push(con, '\r');
 			return;
 		}
-		if (scancode == 0x0e) {
+		if (key == 0x0e) {
 			repl_queue_push(con, '\b');
 			return;
 		}
-		c = translate_key(con, scancode);
+		c = translate_key(con, (uint8_t) key);
 		if (c == '\0') {
 			return;
 		}
@@ -1053,15 +1280,15 @@ void console64_process_key(struct CONSOLE64 *con, uint8_t scancode)
 		repl_queue_push(con, c);
 		return;
 	}
-	if (scancode == 0x1c) {
+	if (key == 0x1c) {
 		execute_command(con);
 		return;
 	}
-	if (scancode == 0x0e) {
+	if (key == 0x0e) {
 		console_backspace(con);
 		return;
 	}
-	c = translate_key(con, scancode);
+	c = translate_key(con, (uint8_t) key);
 	if (c == '\0') {
 		return;
 	}
@@ -1082,7 +1309,7 @@ static void console_task_main(void)
 	struct CONSOLE64 *con = console_self();
 
 	for (;;) {
-		console64_process_key(con, console_wait_key(con));
+		console64_process_key(con, wait_key_event(con));
 	}
 }
 
@@ -1149,12 +1376,12 @@ void console64_destroy(struct CONSOLE64 *con)
 	con->repl_active = 0;
 }
 
-void console64_post_key(struct CONSOLE64 *con, uint8_t scancode)
+void console64_post_key(struct CONSOLE64 *con, uint16_t key)
 {
 	struct EVENT64 event;
 
 	event.type = EVENT64_KEYBOARD;
-	event.data = scancode;
+	event.data = key;
 	fifo64_put(&con->keys, event);
 }
 
@@ -1179,6 +1406,177 @@ int console64_start_task(struct CONSOLE64 *con)
 	return 0;
 }
 
+struct HANGUL_CASE {
+	const char *keys;
+	unsigned int want;
+};
+
+/* 한글 오토마타 회귀 확인. 부팅 콘솔의 조합 상태를 빌려 쓰고 되돌린다. */
+int console64_hangul_smoke(void)
+{
+	static const struct HANGUL_CASE cases[] = {
+		{ "dlT",  0xc788 },      /* 있 - 쌍시옷 받침 */
+		{ "ekR",  0xb2e6 },      /* 닦 - 쌍기역 받침 */
+		{ "qkR",  0xbc16 },      /* 밖 */
+		{ "ruR",  0xacaa },      /* 겪 */
+		{ "dksw", 0xc549 },      /* 앉 - 겹받침 ㄵ */
+		{ "djqt", 0xc5c6 },      /* 없 - 겹받침 ㅄ */
+		{ "ekE",  0x3138 },      /* 다 + ㄸ: ㄸ는 받침이 못 되니 새 글자 */
+	};
+	struct CONSOLE64 *con = console_active;
+	struct HANGUL64 saved_composing;
+	uint32_t saved_head;
+	uint32_t saved_tail;
+	int saved_raw;
+	uint32_t i;
+	int j;
+	int ok;
+
+	saved_composing = con->composing;
+	saved_head = con->raw_queue_head;
+	saved_tail = con->raw_queue_tail;
+	saved_raw = con->raw_mode;
+
+	ok = 1;
+	con->raw_mode = 1;
+	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		hangul64_init(&con->composing);
+		con->raw_queue_head = 0;
+		con->raw_queue_tail = 0;
+		for (j = 0; cases[i].keys[j] != '\0'; j++) {
+			process_hangul_key(con, cases[i].keys[j]);
+		}
+		if (composing_unicode(con) != cases[i].want) {
+			ok = 0;
+			break;
+		}
+	}
+
+	con->raw_mode = saved_raw;
+	con->composing = saved_composing;
+	con->raw_queue_head = saved_head;
+	con->raw_queue_tail = saved_tail;
+	return ok;
+}
+
+void console64_set_raw(int on)
+{
+	struct CONSOLE64 *con = console_self();
+	int was_raw;
+
+	was_raw = con->raw_mode;
+	con->raw_mode = on != 0;
+	con->raw_queue_head = 0;
+	con->raw_queue_tail = 0;
+	con->dirty_valid = 0;
+	if (con->raw_mode == 0) {
+		/* 앱이 조합 중인 채로 나가도, 색을 바꿔 놓고 나가도 콘솔이 그 상태를
+		   물려받지 않게 한다. */
+		hangul64_init(&con->composing);
+		color_fg = COLOR_FG_DEFAULT;
+		color_bg = COLOR_BG_DEFAULT;
+		if (was_raw != 0) {
+			/* 앱이 남긴 화면과 화면 한복판의 커서를 그대로 물려받으면
+			   콘솔이 망가진 것처럼 보인다. */
+			clear_screen(con);
+		}
+	}
+}
+
+int console64_is_raw(void)
+{
+	return console_self()->raw_mode;
+}
+
+/*
+ * 칸 단위 크기와 세대 값. 칸 너비는 FONT_W(8픽셀)이라 한글 한 글자는 두 칸을
+ * 차지한다. 세대 값이 달라졌으면 크기가 바뀌었고 화면도 지워진 것이다.
+ */
+uint64_t console64_size(void)
+{
+	struct CONSOLE64 *con = console_self();
+	uint64_t cols;
+	uint64_t rows;
+
+	cols = con->width / FONT_W;
+	rows = con->height / FONT_H;
+	return cols | (rows << 16) | ((uint64_t) con->size_generation << 32);
+}
+
+void console64_move(uint32_t row, uint32_t col)
+{
+	struct CONSOLE64 *con = console_self();
+	uint32_t max_col;
+	uint32_t max_row;
+
+	max_col = con->width / FONT_W;
+	max_row = con->height / FONT_H;
+	if (max_col == 0 || max_row == 0) {
+		return;
+	}
+	if (col >= max_col) {
+		col = max_col - 1;
+	}
+	if (row >= max_row) {
+		row = max_row - 1;
+	}
+	con->cursor_x = (uint16_t) (col * FONT_W);
+	con->cursor_y = (uint16_t) (row * FONT_H);
+}
+
+void console64_clear_cells(uint32_t row, uint32_t col, uint32_t rows, uint32_t cols)
+{
+	struct CONSOLE64 *con = console_self();
+	uint32_t max_col;
+	uint32_t max_row;
+
+	max_col = con->width / FONT_W;
+	max_row = con->height / FONT_H;
+	if (row >= max_row || col >= max_col) {
+		return;
+	}
+	if (rows > max_row - row) {
+		rows = max_row - row;
+	}
+	if (cols > max_col - col) {
+		cols = max_col - col;
+	}
+	if (rows == 0 || cols == 0) {
+		return;
+	}
+	fill_rect(con, (uint16_t) (col * FONT_W), (uint16_t) (row * FONT_H),
+		(uint16_t) (cols * FONT_W), (uint16_t) (rows * FONT_H), color_bg);
+}
+
+void console64_set_attr(uint8_t fg, uint8_t bg)
+{
+	color_fg = fg;
+	color_bg = bg;
+}
+
+void console64_flush(void)
+{
+	console_flush_dirty(console_self());
+}
+
+uint64_t console64_read_key(void)
+{
+	struct CONSOLE64 *con = console_self();
+	uint64_t out;
+	uint16_t key;
+
+	for (;;) {
+		/* 이벤트 하나마다 큐를 다시 본다. 창 크기가 바뀌면 RESIZE가 들어오므로
+		   키를 기다리며 눌러앉으면 안 된다. */
+		if (raw_queue_pop(con, &out) != 0) {
+			return out;
+		}
+		if (pump_event(con, &key) != 0) {
+			console64_process_key(con, key);
+		}
+	}
+}
+
 void console64_repl_set_active(int active)
 {
 	/* REPL을 켜는 건 MicroPython을 돌리는 그 콘솔이다. console_active로
@@ -1201,34 +1599,35 @@ void console64_repl_set_active(int active)
  */
 int64_t console64_read_line(char *dst, uint64_t max)
 {
+	struct CONSOLE64 *con = console_self();
 	uint64_t n;
 	uint64_t i;
 
-	line_capture = 1;
-	line_done = 0;
-	line_result = 0;
-	input_len = 0;
-	line_full_warned = 0;
-	while (line_done == 0) {
-		console64_process_key(wait_key_event());
+	con->line_capture = 1;
+	con->line_done = 0;
+	con->line_result = 0;
+	con->input_len = 0;
+	con->line_full_warned = 0;
+	while (con->line_done == 0) {
+		console64_process_key(con, wait_key_event(con));
 	}
-	line_capture = 0;
-	flush_composing();
-	newline();
-	if (line_result != 0) {
-		input_len = 0;
-		line_full_warned = 0;
-		return line_result;
+	con->line_capture = 0;
+	flush_composing(con);
+	newline(con);
+	if (con->line_result != 0) {
+		con->input_len = 0;
+		con->line_full_warned = 0;
+		return con->line_result;
 	}
-	n = input_len;
+	n = con->input_len;
 	if (n > max) {
 		n = max;
 	}
 	for (i = 0; i < n; i++) {
-		dst[i] = input_line[i];
+		dst[i] = con->input_line[i];
 	}
-	input_len = 0;
-	line_full_warned = 0;
+	con->input_len = 0;
+	con->line_full_warned = 0;
 	return (int64_t) n;
 }
 
@@ -1241,6 +1640,6 @@ int console64_repl_getchar(void)
 		if (repl_queue_pop(con, &c)) {
 			return (unsigned char) c;
 		}
-		console64_process_key(con, console_wait_key(con));
+		console64_process_key(con, wait_key_event(con));
 	}
 }

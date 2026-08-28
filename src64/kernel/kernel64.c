@@ -322,19 +322,16 @@ static void process_event64(const struct EVENT64 *event)
 	if (event->type == EVENT64_TIMER) {
 		return;
 	}
-	if (event->type == EVENT64_KEYBOARD) {
-		if (event->data == 0x57) {          /* F11 */
-			gui64_raise_bottom_window();
-			return;
-		}
-		con = gui64_focused_console();
-		if (con != NULL) {
-			console64_post_key(con, (uint8_t) event->data);
-		}
+	/* 마우스와 F11은 창 계층이 먼저 가져간다. 남은 키만 포커스가 있는
+	   콘솔의 태스크로 보낸다 -- 콘솔이 아닌 창이 활성이면 아무 데도 안 간다. */
+	if (gui64_handle_system_event(event) != 0) {
 		return;
 	}
-	if (event->type == EVENT64_KEYBOARD && gui64_console_has_focus() != 0) {
-		console64_process_key((uint16_t) event->data);
+	if (event->type == EVENT64_KEYBOARD) {
+		con = gui64_focused_console();
+		if (con != NULL) {
+			console64_post_key(con, (uint16_t) event->data);
+		}
 	}
 }
 
