@@ -1,7 +1,27 @@
 # Mowkow OS 64
 
-![스크린샷1](screenshots/nano_test.png)
-![스크린샷2](screenshots/py_test.png)
+## 실행 화면
+
+### 1. 파이썬 REPL, 머꼬 REPL
+![REPL](screenshots/py_mk_repl_test.png)
+
+### 2. CLI - GUI 전환
+<p align="center">
+    <img src="screenshots/cli_test.png" align="center" width="48%">
+    <img src="screenshots/gui_test.png" align="center" width="48%">
+</p>
+
+### 3. 나노 에디터를 활용한 파이썬 코딩 및 실행
+<p align="center">
+    <img src="screenshots/nano_py_test.png" align="center" width="48%">
+    <img src="screenshots/py_script_test.png" align="center" width="48%">
+</p>
+
+### 4. 나노 에디터를 활용한 머꼬 코딩 및 실행
+<p align="center">
+    <img src="screenshots/nano_mk_test.png" align="center" width="48%">
+    <img src="screenshots/mk_script_test.png" align="center" width="48%">
+</p>
 
 ## **머꼬 OS 소개**
 ### **머꼬 인터프리터와 GNU Nano가 내장된 32비트 교육용 한글 운영체제**
@@ -468,9 +488,9 @@ mk/x86_64.mk        64bit 빌드 규칙
 | ELF64 유저 프로세스, 링 3 진입, 시스템 콜 | ✅ |
 | 커널 내장 MicroPython | ✅ |
 | 나노 편집기 | ✅ |
+| 머꼬 인터프리터 (MicroPython 위에서) | ✅ |
 | 프로세스별 주소 공간 (페이징 격리) | ❌ |
 | 앱 동시 실행 | ❌ |
-| 머꼬 인터프리터 (MicroPython 위에서) | ✅ |
 
 ## 6. 주의할 점
 
@@ -489,9 +509,9 @@ mk/x86_64.mk        64bit 빌드 규칙
 | 이미지 창 소유자 하나 | `elf64_loader.c` | 앱은 시스템 전체에서 한 번에 하나만. 두 번째 요청은 거절 |
 | 스택 가드 페이지 없음 | `process64.c` | 재귀가 깊은 프로그램이 유저 스택 64KiB를 넘겨 힙을 침범할 수 있음 |
 | `SYS_FREE`가 실제로 반환하지 않음 | `syscall64.c` | 힙은 bump 할당. 범위 검증만 수행 |
-| 캐시가 직접 사상 | `cache64.c` | 충돌 시 즉시 축출. FAT은 낮은 LBA, 데이터는 높은 LBA라 실제 충돌은 드뭄 |
+| 캐시가 직접 매핑 | `cache64.c` | 충돌 시 즉시 축출. FAT은 낮은 LBA, 데이터는 높은 LBA라 실제 충돌은 드뭄 |
 | AHCI 포트 하나, NCQ 없음 | `ahci64.c` | 사용 가능한 첫 포트만. 폴링으로 한 번에 명령 하나 |
-| ATA PIO는 명령당 1섹터 | `ata64.c` | 느립니다. 어디서나 부팅되는 것이 목적 |
-| MicroPython 단일 인스턴스 | `mpport/` | GC 힙과 상태가 전역 하나. 콘솔마다 파이썬이나 머꼬를 돌릴 수 없고, 두 번째 요청은 거절됩니다 |
+| ATA PIO는 명령당 1섹터 | `ata64.c` | 느림. 어디서나 부팅되는 것이 목적 |
+| MicroPython 단일 인스턴스 | `mpport/` | GC 힙과 상태가 전역 하나. 콘솔마다 파이썬이나 머꼬를 돌릴 수 없고, 두 번째 요청은 거절됨 |
 | 자동 테스트가 머꼬에만 있음 | 양쪽 트리 | `make parity64`가 머꼬를 호스트 CPython과 견줍니다. 커널 쪽은 부팅 시 COM1 자체 점검과 QEMU 수동 확인이 전부 |
-| 머꼬가 느림 | `py64/` | 파이썬으로 쓴 트리 워커를 바이트코드 VM 위에서 돌립니다. 대화형으로는 괜찮지만 긴 스크립트는 눈에 띕니다 |
+| 머꼬가 느림 | `py64/` | 파이썬으로 쓴 트리 워커를 바이트코드 VM 위에서 돌림. 대화형으로는 괜찮지만 긴 스크립트는 눈에 띄게 느려짐 |
