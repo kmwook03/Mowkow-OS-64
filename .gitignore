@@ -9,13 +9,11 @@ compile_commands.json
 CTestTestfile.cmake
 _deps
 CMakeUserPresets.json
-img/
 vm/
 tolset/
 out/
 build/
 build64/
-img64/
 *.iso
 Makefile.orig
 .jpg
@@ -25,6 +23,5 @@ AGENTS.md
 .claude/
 CLAUDE.md
 .codex/
-mowkow_porting.md
 py64/머꼬/upstream/__pycache__/
-tools/__pycache__/
+__pycache__/

@@ -1,0 +1,414 @@
+bits 16
+org 0x8000
+
+%ifndef KERNEL_LBA
+%define KERNEL_LBA 17
+%endif
+
+%ifndef KERNEL_SECTORS
+%define KERNEL_SECTORS 64
+%endif
+
+kernel_load_real equ 0x10000
+kernel_load_addr equ 0x100000
+pml4_addr equ 0x70000
+pdpt_addr equ 0x71000
+pd0_addr equ 0x72000
+pd1_addr equ 0x73000
+pd2_addr equ 0x74000
+pd3_addr equ 0x75000
+stack64_top equ 0x90000
+
+; 화면 크기. VBE 표준 모드에는 16:9가 없어서 Bochs DISPI 레지스터로 직접
+; 잡는다(QEMU stdvga 전용). 비율을 바꾸려면 이 두 값만 고치면 된다.
+; 8bpp 팔레트 모드라 1픽셀 = 1바이트, 한 행 = SCREEN_W 바이트다.
+SCREEN_W equ 1280
+SCREEN_H equ 720
+
+; Bochs DISPI (VBE 확장) 레지스터
+DISPI_INDEX_PORT equ 0x01ce
+DISPI_DATA_PORT  equ 0x01cf
+DISPI_ID         equ 0
+DISPI_XRES       equ 1
+DISPI_YRES       equ 2
+DISPI_BPP        equ 3
+DISPI_ENABLE     equ 4
+DISPI_ID_MIN     equ 0xb0c0
+DISPI_ID_MAX     equ 0xb0c5
+DISPI_DISABLED   equ 0x00
+DISPI_ENABLED    equ 0x01
+DISPI_LFB        equ 0x40
+
+start:
+	cli
+	xor ax, ax
+	mov ds, ax
+	mov es, ax
+	mov ss, ax
+	mov sp, 0x7c00
+
+	mov [boot_drive], dl
+	mov si, stage2_msg
+	call print_string
+
+	call read_kernel
+	call collect_boot_info
+	call enable_a20
+
+	lgdt [gdt64_ptr]
+
+	mov eax, cr0
+	or eax, 1
+	mov cr0, eax
+	jmp code32_sel:protected_start
+
+print_string:
+	lodsb
+	test al, al
+	jz .done
+	mov ah, 0x0e
+	mov bh, 0x00
+	mov bl, 0x07
+	int 0x10
+	jmp print_string
+.done:
+	ret
+
+; 이 BIOS의 int 13h AH=42h는 한 번에 128섹터(64KiB)까지만 읽는다.
+; 그보다 크게 요청하면 아무 말 없이 실패한다.
+; 따라서 KERNEL_SECTORS가 얼마든 128섹터 이하로 잘라 가며 돈다.
+;
+; DAP 확인 결과 int 0x13은 EAX를 보존하지 않는다(SeaBIOS가 내부 LBA 계산에 쓴다). 
+; 진행 중인 LBA 값을 eax에 담아 둔 채 인터럽트를 부르면
+; 세 번째 호출 뒤부터 예전 값으로 돌아갔고(433,561,689,817,... 로 이어지지
+; 않고 49,177,305,177,305,...), 네 번째 덩어리부터 전부 깨졌다.
+; CX(남은 섹터 수)와 BX(세그먼트)는 살아남는 것을 확인했으므로, LBA 값만 메모리로 옮긴다.
+read_kernel:
+	mov cx, KERNEL_SECTORS
+	mov bx, kernel_load_real >> 4
+	mov dword [current_lba], KERNEL_LBA
+.loop:
+	mov word [kernel_packet_off], 0
+	mov [kernel_packet_seg], bx
+	mov eax, [current_lba]
+	mov [kernel_packet_lba], eax
+	cmp cx, 128
+	jbe .last_chunk
+	mov word [kernel_packet_count], 128
+	jmp .do_read
+.last_chunk:
+	mov [kernel_packet_count], cx
+.do_read:
+	mov si, kernel_packet
+	mov ah, 0x42
+	mov dl, [boot_drive]
+	int 0x13
+	jc disk_error
+	movzx edx, word [kernel_packet_count]
+	sub cx, dx
+	mov eax, [current_lba]
+	add eax, edx
+	mov [current_lba], eax
+	shl edx, 5
+	add bx, dx
+	test cx, cx
+	jnz .loop
+	ret
+
+collect_boot_info:
+	mov ah, 0x02
+	int 0x16
+	mov [boot_info.leds], al
+
+	mov ax, 0x4f00
+	xor bx, bx
+	mov es, bx
+	mov di, vbe_info_buffer
+	int 0x10
+	cmp ax, 0x004f
+	jne .text_mode
+
+	mov ax, 0x4f01
+	mov cx, 0x0103
+	xor bx, bx
+	mov es, bx
+	mov di, vbe_mode_info
+	int 0x10
+	cmp ax, 0x004f
+	jne .text_mode
+
+	mov ax, 0x4f02
+	mov bx, 0x4103
+	int 0x10
+	cmp ax, 0x004f
+	jne .text_mode
+
+	mov ax, [vbe_mode_info + 18]
+	mov [boot_info.scrnx], ax
+	mov ax, [vbe_mode_info + 20]
+	mov [boot_info.scrny], ax
+	mov ax, [vbe_mode_info + 50]
+	test ax, ax
+	jnz .store_stride
+	mov ax, [vbe_mode_info + 16]
+.store_stride:
+	mov word [boot_info.bytes_per_scanline], ax
+	mov al, [vbe_mode_info + 25]
+	mov [boot_info.bpp], al
+	mov al, [vbe_mode_info + 27]
+	mov [boot_info.framebuffer_type], al
+	mov eax, [vbe_mode_info + 40]
+	mov [boot_info.vram], eax
+	mov dword [boot_info.vram + 4], 0
+
+	; 표준 VBE 모드는 4:3뿐이라 여기서 DISPI로 넓은 비율로 다시 잡는다.
+	; LFB 주소는 위에서 읽은 값을 그대로 쓴다. 해상도를 바꿔도 PCI BAR0는
+	; 그대로이기 때문이다.
+	call set_dispi_mode
+.text_mode:
+	ret
+
+; DISPI가 없거나 원하는 크기를 못 잡으면 위에서 정한 VBE 모드로 되돌린다.
+; 되돌리지 않으면 화면이 꺼진 채로 커널이 올라간다.
+set_dispi_mode:
+	mov bx, DISPI_ID
+	call dispi_read
+	cmp ax, DISPI_ID_MIN
+	jb .fallback
+	cmp ax, DISPI_ID_MAX
+	ja .fallback
+
+	; 크기를 바꾸는 동안에는 꺼 두어야 한다.
+	mov bx, DISPI_ENABLE
+	mov cx, DISPI_DISABLED
+	call dispi_write
+	mov bx, DISPI_XRES
+	mov cx, SCREEN_W
+	call dispi_write
+	mov bx, DISPI_YRES
+	mov cx, SCREEN_H
+	call dispi_write
+	mov bx, DISPI_BPP
+	mov cx, 8
+	call dispi_write
+	mov bx, DISPI_ENABLE
+	mov cx, DISPI_ENABLED | DISPI_LFB
+	call dispi_write
+
+	; 요청한 크기가 실제로 잡혔는지 되읽어 확인한다.
+	mov bx, DISPI_XRES
+	call dispi_read
+	cmp ax, SCREEN_W
+	jne .fallback
+	mov bx, DISPI_YRES
+	call dispi_read
+	cmp ax, SCREEN_H
+	jne .fallback
+
+	mov word [boot_info.scrnx], SCREEN_W
+	mov word [boot_info.scrny], SCREEN_H
+	mov word [boot_info.bytes_per_scanline], SCREEN_W
+	mov byte [boot_info.bpp], 8
+	ret
+
+.fallback:
+	mov ax, 0x4f02
+	mov bx, 0x4103
+	int 0x10
+	ret
+
+; bx = 레지스터 번호, cx = 쓸 값
+dispi_write:
+	mov dx, DISPI_INDEX_PORT
+	mov ax, bx
+	out dx, ax
+	mov dx, DISPI_DATA_PORT
+	mov ax, cx
+	out dx, ax
+	ret
+
+; bx = 레지스터 번호, 결과는 ax
+dispi_read:
+	mov dx, DISPI_INDEX_PORT
+	mov ax, bx
+	out dx, ax
+	mov dx, DISPI_DATA_PORT
+	in ax, dx
+	ret
+
+disk_error:
+	mov si, disk_error_msg
+	call print_string
+.halt:
+	hlt
+	jmp .halt
+
+enable_a20:
+	in al, 0x92
+	or al, 0x02
+	out 0x92, al
+	ret
+
+boot_drive:
+	db 0
+
+current_lba:
+	dd 0
+
+boot_info:
+.cyls:
+	db 0
+.leds:
+	db 0
+.vmode:
+	db 3
+.reserve:
+	db 0
+.scrnx:
+	dw 80
+.scrny:
+	dw 25
+.bytes_per_scanline:
+	dw 160
+.bpp:
+	db 16
+.framebuffer_type:
+	db 0
+.reserved2:
+	dd 0
+.vram:
+	dq 0xb8000
+
+stage2_msg:
+	db "Entering long mode...", 13, 10, 0
+disk_error_msg:
+	db "Kernel read error", 13, 10, 0
+
+align 4
+kernel_packet:
+	db 0x10
+	db 0
+kernel_packet_count:
+	dw KERNEL_SECTORS
+kernel_packet_off:
+	dw kernel_load_real & 0xffff
+kernel_packet_seg:
+	dw kernel_load_real >> 4
+kernel_packet_lba:
+	dd KERNEL_LBA
+	dd 0
+
+align 16
+vbe_info_buffer:
+	db "VBE2"
+	times 508 db 0
+
+align 16
+vbe_mode_info:
+	times 256 db 0
+
+gdt64:
+	dq 0
+	dq 0x00cf9a000000ffff
+	dq 0x00cf92000000ffff
+	dq 0x00af9a000000ffff
+gdt64_end:
+
+gdt64_ptr:
+	dw gdt64_end - gdt64 - 1
+	dd gdt64
+
+code32_sel equ 0x08
+data_sel equ 0x10
+code64_sel equ 0x18
+
+bits 32
+protected_start:
+	mov ax, data_sel
+	mov ds, ax
+	mov es, ax
+	mov fs, ax
+	mov gs, ax
+	mov ss, ax
+	mov esp, stack64_top
+
+	call copy_kernel
+	call setup_page_tables
+	call enter_long_mode
+
+copy_kernel:
+	cld
+	mov esi, kernel_load_real
+	mov edi, kernel_load_addr
+	mov ecx, KERNEL_SECTORS * 512 / 4
+	rep movsd
+	ret
+
+setup_page_tables:
+	cld
+	mov edi, pml4_addr
+	xor eax, eax
+	mov ecx, 4096 * 6 / 4
+	rep stosd
+
+	mov dword [pml4_addr], pdpt_addr | 0x007
+	mov dword [pml4_addr + 4], 0
+
+	mov dword [pdpt_addr], pd0_addr | 0x007
+	mov dword [pdpt_addr + 4], 0
+	mov dword [pdpt_addr + 8], pd1_addr | 0x007
+	mov dword [pdpt_addr + 12], 0
+	mov dword [pdpt_addr + 16], pd2_addr | 0x007
+	mov dword [pdpt_addr + 20], 0
+	mov dword [pdpt_addr + 24], pd3_addr | 0x007
+	mov dword [pdpt_addr + 28], 0
+
+	mov edi, pd0_addr
+	mov eax, 0x00000087
+	xor edx, edx
+	mov ecx, 512 * 4
+.map_pd:
+	mov [edi], eax
+	mov [edi + 4], edx
+	add eax, 0x00200000
+	adc edx, 0
+	add edi, 8
+	loop .map_pd
+	ret
+
+enter_long_mode:
+	mov eax, cr4
+	or eax, 1 << 5
+	mov cr4, eax
+
+	mov eax, pml4_addr
+	mov cr3, eax
+
+	mov ecx, 0xc0000080
+	rdmsr
+	or eax, 1 << 8
+	wrmsr
+
+	mov eax, cr0
+	or eax, 1 << 31
+	mov cr0, eax
+
+	jmp code64_sel:long_mode_start
+
+bits 64
+long_mode_start:
+	mov ax, data_sel
+	mov ds, ax
+	mov es, ax
+	mov ss, ax
+	mov fs, ax
+	mov gs, ax
+
+	mov rsp, stack64_top
+	mov rdi, boot_info
+	mov rax, kernel_load_addr
+	call rax
+
+.halt:
+	hlt
+	jmp .halt

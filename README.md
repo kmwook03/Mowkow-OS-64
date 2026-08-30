@@ -57,7 +57,7 @@
 32bit 하드웨어가 제공하던 기능(TSS 전환, LDT 보호, RAM 디스크)을 소프트웨어로 재건하며 시스템을 계층화하였습니다.
 부트 시퀀스에 자체 점검 단계가 추가되었고 교재 툴체인에서 표준 툴체인으로 넘어오며 MicroPython 같은 외부 소프트웨어를 사용할 수 있게 되었습니다.
 
-| | 32bit (`src/`, `app/`) | 64bit (`src64/`, `app64/`) |
+| | 32bit (`32bit/src`, `32bit/app`) | 64bit (`64bit/src64`, `64bit/app64`) |
 |-|-|-|
 | CPU 모드 | 보호 모드, 세그먼트 기반 | 롱 모드, 2MiB 페이지 아이덴티티 매핑 |
 | 툴체인 | 교재 도구 (`nask`, `gocc1`, `bim2hrb`) | `x86_64-elf-gcc`, `nasm -f elf64`, `x86_64-elf-ld` |
@@ -75,7 +75,7 @@
 | | 32bit | 64bit |
 |-|-|-|
 | 명령 | `make`, `make run`, `make iso` | `make x86_64`, `make run64`, `make run64-ahci` |
-| 규칙 파일 | `mk/x86.mk` | `mk/x86_64.mk` + `mk/micropython.mk` |
+| 규칙 파일 | `32bit/mk/x86.mk` | `64bit/mk/x86_64.mk` + `64bit/mk/micropython.mk` |
 | 산출물 | `img/haribote.img` (Floppy) | `img64/mowkow64.img` (FAT32 64MiB) |
 | 앱 링크 | `obj2bim` -> `bim2hrb` | `x86_64-elf-ld` + `app64.ld` + crt |
 
@@ -378,8 +378,8 @@ LBA 3026        데이터 영역, 클러스터 2 = 루트 디렉터리
 ```
 
 2단계 로더와 커널이 예약 영역에 있으므로 커널이 커져도 파일 시스템이 밀리지 않습니다.
-이 배치는 `tools/mkfat32_64.py` 한 곳에만 적혀 있고, Makefile과 부트 섹터가 해당 파일에서 값을 읽습니다.
-배치를 바꿔야 하면 Makefile이나 BPB를 직접 고치지 말고, `tools/mkfat32_64.py`를 고쳐야 합니다.
+이 배치는 `64bit/tools/mkfat32_64.py` 한 곳에만 적혀 있고, Makefile과 부트 섹터가 해당 파일에서 값을 읽습니다.
+배치를 바꿔야 하면 Makefile이나 BPB를 직접 고치지 말고, `64bit/tools/mkfat32_64.py`를 고쳐야 합니다.
 
 ### 4-7. GUI와 다중 콘솔
 시트 합성기(`sheet64.c`)의 구조는 32bit `sheet.c`를 그대로 이식하였고, 실질적인 차이는 `stride` 필드입니다. VBE 모드에서는 한 행의 바이트 수가 가로 픽셀 수와 다를 수 있어 분리했고, 부팅 자체 점검이 `stride > xsize` 경로를 일부러 만들어 검사합니다.
@@ -408,10 +408,10 @@ LBA 3026        데이터 영역, 클러스터 2 = 루트 디렉터리
                       └ mowio    커널로 나가는 창구 (C, modmowio.c)
 ```
 
-업스트림([woogyun/mowkow](https://github.com/woogyun/mowkow), 커밋 `1dae112`)은 `py64/머꼬/upstream/`에 그대로 두고, 실제 실행되는 사본은 `py64/머꼬/`에 두었습니다.
+업스트림([woogyun/mowkow](https://github.com/woogyun/mowkow), 커밋 `1dae112`)은 `64bit/py64/머꼬/upstream/`에 그대로 두고, 실제 실행되는 사본은 `64bit/py64/머꼬/`에 두었습니다.
 둘의 차이는 의존성 계층뿐이며 파서와 계산기는 건드리지 않았습니다.
 
-네 파일에서 바뀐 줄은 38줄이며, `diff -r py64/머꼬/upstream py64/머꼬`로 확인할 수 있습니다.
+네 파일에서 바뀐 줄은 38줄이며, `diff -r 64bit/py64/머꼬/upstream 64bit/py64/머꼬`로 확인할 수 있습니다.
 
 `mowio`는 표준 라이브러리 대신 커널을 부르는 코드입니다.
 
@@ -434,44 +434,56 @@ LBA 3026        데이터 영역, 클러스터 2 = 루트 디렉터리
 Makefile은 트리별로 나뉘어 있습니다.
 
 ```
-Makefile            기본 목표, help, info
-mk/config.mk        디렉터리, 도구, 컴파일 옵션 (공통)
-mk/x86.mk           32bit 빌드 규칙
-mk/micropython.mk   마이크로파이썬 빌드 규칙
-mk/x86_64.mk        64bit 빌드 규칙
+Makefile                   기본 목표, help, info
+common/mk/config.mk        디렉터리, 도구, 컴파일 옵션 (공통)
+32bit/mk/x86.mk            32bit 빌드 규칙
+64bit/mk/micropython.mk    마이크로파이썬 빌드 규칙
+64bit/mk/x86_64.mk         64bit 빌드 규칙
 ```
 
 ### 4-10. 프로젝트 디렉터리
 ```
 .
-├── 📂mk                # 빌드 규칙 (트리별)
-├── 📂src64             # 64비트 커널
-│   ├── 📂boot              # boot64.asm(1단계), loader64.asm(2단계)
-│   ├── 📂drivers           # ahci64 ata64 block64 pci64 graphic64
-│   │                       # keyboard64 mouse64 timer64 int64
-│   ├── 📂kernel            # kernel64 console64 fd64 cache64 memory64
-│   │                       # mtask64 dsctbl64 sheet64 window64 gui64
-│   │                       # process64 syscall64 elf64_loader
-│   ├── 📂lib               # hangul64 utf864 fifo64 kstring64
-│   ├── 📂mpport            # MicroPython 포팅 계층
-│   └── 📂include           # 헤더 (모든 이름에 64가 붙음)
-├── 📂app64             # 64비트 응용 프로그램
-│   ├── 📂crt               # 공용 런타임 (crt0, 시스템 콜, 문자열, malloc)
-│   ├── 📁cat               # 파일 내용 출력
-│   ├── 📁hello             # 최소 예제
-│   ├── 📁ktest             # 키 입력 점검
-│   ├── 📁mtest             # 메모리 할당 점검
-│   ├── 📁wtest             # FAT32 쓰기 점검
-│   └── 📁나노              # 나노 편집기
-├── 📂py64              # 머꼬 인터프리터 (파이썬 판)
-│   ├── 📄smoke.py          # 이식 부품 점검 (병행 검사가 돌림)
-│   └── 📂머꼬
-│       ├── 📄mowkow.py         # 진입점 (업스트림 main.py 대신)
-│       ├── 📄_compat.py        # MicroPython에 없는 CPython 동작
-│       ├── 📄_parse.py _eval.py _data.py _error.py  # 업스트림 사본
-│       ├── 📄library_kor.scm   # 머꼬 라이브러리
-│       ├── 📄*.mk              # 시험용 머꼬 프로그램
-│       └── 📂upstream          # 업스트림 원본 (커밋 1dae112)
+├── 📂common            # 두 트리가 함께 쓰는 것
+│   ├── 📂mk                # config.mk (디렉터리, 도구, 컴파일 옵션)
+│   └── 📂font              # 비트맵 글꼴 (H04.FNT, E2.FNT, hankaku)
+├── 📂32bit             # 32비트 트리
+│   ├── 📂src               # 32비트 커널
+│   ├── 📂app               # 32비트 응용 프로그램
+│   ├── 📂mk                # x86.mk (32비트 빌드 규칙)
+│   ├── 📂tools             # 교재 툴체인 (nask gocc1 obj2bim bim2hrb edimg)
+│   ├── 📂testfiles         # 이미지에 넣는 시험용 파일
+│   └── 📂ASM               # 어셈블리 자료
+├── 📂64bit             # 64비트 트리
+│   ├── 📂mk                # x86_64.mk, micropython.mk (64비트 빌드 규칙)
+│   ├── 📂tools             # mkfat32_64.py(이미지 생성), mowkow_parity.py(병행 검사)
+│   ├── 📂src64             # 64비트 커널
+│   │   ├── 📂boot              # boot64.asm(1단계), loader64.asm(2단계)
+│   │   ├── 📂drivers           # ahci64 ata64 block64 pci64 graphic64
+│   │   │                       # keyboard64 mouse64 timer64 int64
+│   │   ├── 📂kernel            # kernel64 console64 fd64 cache64 memory64
+│   │   │                       # mtask64 dsctbl64 sheet64 window64 gui64
+│   │   │                       # process64 syscall64 elf64_loader
+│   │   ├── 📂lib               # hangul64 utf864 fifo64 kstring64
+│   │   ├── 📂mpport            # MicroPython 포팅 계층
+│   │   └── 📂include           # 헤더 (모든 이름에 64가 붙음)
+│   ├── 📂app64             # 64비트 응용 프로그램
+│   │   ├── 📂crt               # 공용 런타임 (crt0, 시스템 콜, 문자열, malloc)
+│   │   ├── 📁cat               # 파일 내용 출력
+│   │   ├── 📁hello             # 최소 예제
+│   │   ├── 📁ktest             # 키 입력 점검
+│   │   ├── 📁mtest             # 메모리 할당 점검
+│   │   ├── 📁wtest             # FAT32 쓰기 점검
+│   │   └── 📁나노              # 나노 편집기
+│   └── 📂py64              # 머꼬 인터프리터 (파이썬 판)
+│       ├── 📄smoke.py          # 이식 부품 점검 (병행 검사가 돌림)
+│       └── 📂머꼬
+│           ├── 📄mowkow.py         # 진입점 (업스트림 main.py 대신)
+│           ├── 📄_compat.py        # MicroPython에 없는 CPython 동작
+│           ├── 📄_parse.py _eval.py _data.py _error.py  # 업스트림 사본
+│           ├── 📄library_kor.scm   # 머꼬 라이브러리
+│           ├── 📄*.mk              # 시험용 머꼬 프로그램
+│           └── 📂upstream          # 업스트림 원본 (커밋 1dae112)
 └── 📂third_party
     └── 📁micropython       # 업스트림 MicroPython
 ```
@@ -498,8 +510,8 @@ mk/x86_64.mk        64bit 빌드 규칙
 * 나노로 저장한 파일은 이미지 파일에 실제로 남습니다. `make clean64` 뒤 다시 빌드하면 새로 저장된 파일이 사라지니 주의하세요.
 * 모든 파일은 루트 디렉터리에 위치합니다.
 * 저장 장치 쪽을 수정했다면 `make run64`와 `make run64-ahci`를 모두 확인해야 합니다. q35에는 옛 IDE가 없어 두 명령이 실제로 서로 다른 코드를 지나갑니다.
-* 커널 크기 상한은 `mk/x86_64.mk`의 `KERNEL64_SECTORS`(현재 960섹터)입니다. 넘으면 링크 직후 빌드가 멈춥니다. 예약 영역이 1024섹터이고 커널은 LBA 32부터라 992섹터까지는 파일 시스템을 밀지 않고 올릴 수 있습니다.
-* 머꼬 소스는 `py64/`에 두면 이미지 루트로 들어갑니다. 반대로 파일을 지웠을 때는 make가 알아채지 못하니 `rm img64/mowkow64.img` 뒤에 다시 빌드하세요.
+* 커널 크기 상한은 `64bit/mk/x86_64.mk`의 `KERNEL64_SECTORS`(현재 960섹터)입니다. 넘으면 링크 직후 빌드가 멈춥니다. 예약 영역이 1024섹터이고 커널은 LBA 32부터라 992섹터까지는 파일 시스템을 밀지 않고 올릴 수 있습니다.
+* 머꼬 소스는 `64bit/py64/`에 두면 이미지 루트로 들어갑니다. 반대로 파일을 지웠을 때는 make가 알아채지 못하니 `rm img64/mowkow64.img` 뒤에 다시 빌드하세요.
 
 ### 6-2. 존재하는 한계
 
@@ -514,4 +526,4 @@ mk/x86_64.mk        64bit 빌드 규칙
 | ATA PIO는 명령당 1섹터 | `ata64.c` | 느림. 어디서나 부팅되는 것이 목적 |
 | MicroPython 단일 인스턴스 | `mpport/` | GC 힙과 상태가 전역 하나. 콘솔마다 파이썬이나 머꼬를 돌릴 수 없고, 두 번째 요청은 거절됨 |
 | 자동 테스트가 머꼬에만 있음 | 양쪽 트리 | `make parity64`가 머꼬를 호스트 CPython과 견줍니다. 커널 쪽은 부팅 시 COM1 자체 점검과 QEMU 수동 확인이 전부 |
-| 머꼬가 느림 | `py64/` | 파이썬으로 쓴 트리 워커를 바이트코드 VM 위에서 돌림. 대화형으로는 괜찮지만 긴 스크립트는 눈에 띄게 느려짐 |
+| 머꼬가 느림 | `64bit/py64/` | 파이썬으로 쓴 트리 워커를 바이트코드 VM 위에서 돌림. 대화형으로는 괜찮지만 긴 스크립트는 눈에 띄게 느려짐 |
