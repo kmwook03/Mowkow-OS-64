@@ -177,7 +177,7 @@ static uint32_t alloc_cluster(void)
 	uint32_t c;
 	uint32_t scanned;
 
-	/* ponytail: 선형 탐색이지만 클러스터 2가 아니라 지난번에 할당한 자리부터
+	/* 주의: 선형 탐색이지만 클러스터 2가 아니라 지난번에 할당한 자리부터
 	   이어서 본다. 클러스터가 128046개라 매번 처음부터 찾으면 여러 클러스터에
 	   걸친 쓰기가 제곱으로 느려졌다. */
 	c = alloc_hint;
@@ -264,7 +264,7 @@ static void dir_first(struct FDPOS64 *pos)
 }
 
 /* ---- VFAT 긴 이름 ------------------------------------------------------
-   긴 이름은 8.3 항목보다 물리적으로 *앞*에, 그것도 거꾸로 놓인다. 마지막
+   긴 이름은 8.3 항목보다 물리적으로 앞에, 그것도 거꾸로 놓인다. 마지막
    UTF-16 13단위를 담은 항목이 맨 앞에 오고 LFN_LAST 표시를 단다. 긴 항목
    마다 8.3 이름의 검사합이 들어 있고, 둘을 묶어 주는 것이 바로 그 값이다. */
 
@@ -586,7 +586,7 @@ uint32_t fd64_file_count(void)
 	return count;
 }
 
-/* ponytail: 부를 때마다 첫 항목부터 다시 훑으므로 목록 보기가 항목 수의
+/* 주의: 부를 때마다 첫 항목부터 다시 훑으므로 목록 보기가 항목 수의
    제곱이다. 이 OS가 담는 수십 개 파일에는 문제가 없고, 목록이 느려지면
    그때 반복자를 만든다. */
 int fd64_file_at(uint32_t index, struct FDINFO64 *out, char *name, size_t name_size)
@@ -1108,7 +1108,7 @@ size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
 	if (dir_write(fh) != 0) {
 		return 0;
 	}
-	/* ponytail: 부를 때마다 디스크까지 바로 쓴다. 따로 flush 시스템 콜이 없고,
+	/* 주의: 부를 때마다 디스크까지 바로 쓴다. 따로 flush 시스템 콜이 없고,
 	   QEMU를 강제로 끊어도 잃는 데이터가 없다. PIO 쓰기 비용이 문제가 되면
 	   그때 fd64_sync()로 모아서 내보내면 된다. */
 	if (fd64_sync() < 0) {

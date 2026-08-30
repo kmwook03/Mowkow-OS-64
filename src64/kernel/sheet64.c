@@ -3,7 +3,7 @@
  *
  * 32비트 원본과 다른 점
  *   1. VRAM 인덱싱에 ctl->stride를 쓴다. 원본은 화면 폭과 스캔라인 길이가
- *      같다고 가정하지만 VBE 모드에서는 보장되지 않는다 (console64.c와 동일).
+ *      같다고 가정하지만 VBE 모드에서는 보장되지 않는다.
  *   2. 4픽셀 묶음 최적화를 뺐다.
  */
 
@@ -274,7 +274,7 @@ static void sheet64_free_nolock(struct SHEET64 *sht)
 /*
  * 컴포지터는 재진입 불가다. sheet64_updown은 ctl->sheets[]와 모든 시트의
  * height를 새로 쓰고, refreshmap/refreshsub는 그동안 그 배열을 읽는다.
- * 콘솔마다 태스크가 하나씩 생기면 (console_plan.md) PIT 선점이 그 한가운데를
+ * 콘솔마다 태스크가 하나씩 생기면 PIT 선점이 그 한가운데를
  * 갈라놓는다. 전환 원인이 PIT IRQ뿐이라 인터럽트를 막으면 충분하다.
  * rflags 저장/복원은 이미 꺼진 문맥에서 불러도 안전하게 하려는 것이다.
  * 규칙: 이 구간 안에서는 task_sleep64를 부르지 않는다.

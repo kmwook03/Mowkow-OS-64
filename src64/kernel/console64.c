@@ -5,7 +5,7 @@
  * 해석하는 일이 여기 모여 있다. 콘솔은 시트 하나 위에 그려지므로 전체 화면
  * 이든 창 안이든 같은 코드로 동작한다.
  *
- * 두벌식 조합기는 커널 쪽인 이 파일이 갖고 있다(roadmap64.md 결정 11).
+ * 두벌식 조합기는 커널 쪽인 이 파일이 갖고 있다.
  * 앱은 완성된 글자와 조합 중인 글자를 SYS_TTY로 받을 뿐, 자모 상태는 보지
  * 않는다.
  */
@@ -56,8 +56,7 @@ extern const uint8_t hankaku64[4096];
 
 /*
  * 콘솔 상태 전부. 예전에는 파일 스코프 전역이었지만 콘솔이 여러 개가 되면
- * (console_plan.md 6단계) 인스턴스마다 있어야 한다. 지금은 인스턴스가
- * 하나뿐이라 동작은 예전과 같다.
+ * 인스턴스마다 있어야 한다. 지금은 인스턴스가 하나뿐이라 동작은 예전과 같다.
  *
  * 여기 없는 것 두 가지: 한글 글꼴은 시스템에 하나뿐인 자원이고, shift/ctrl은
  * 물리 키 상태라 콘솔이 아니라 키보드 계층(keyboard64.c)이 갖는다. 콘솔마다
@@ -103,7 +102,7 @@ struct CONSOLE64 {
 	/*
 	 * mowio.readline이 줄 편집기를 빌려 쓰는 동안 켜진다. 켜져 있으면
 	 * Enter가 execute_command 대신 줄을 호출자에게 돌려주고 Ctrl-C/Ctrl-D가
-	 * 줄을 끝낸다 (mowkow_porting.md 결정 5, 8).
+	 * 줄을 끝낸다.
 	 */
 	int line_capture;
 	int line_done;
@@ -111,7 +110,7 @@ struct CONSOLE64 {
 	int line_full_warned;       /* 줄이 꽉 찼다고 이미 알렸는가 */
 	/* 콘솔마다 자기 태스크와 키 큐를 갖는다. 예전에는 커널 이벤트 루프가
 	   직접 process_key를 불렀기 때문에 run/py가 도는 동안 마우스도 화면도
-	   멈췄다 (console_plan.md 5단계). */
+	   멈췄다. */
 	struct TASK64 *task;
 	struct FIFO64 keys;
 	struct EVENT64 key_buf[CONSOLE64_KEY_BUF];
@@ -154,7 +153,7 @@ static struct CONSOLE64 *console_self(void)
 
 /*
  * 이벤트 하나만 처리한다. 키였으면 *key에 담고 1. 비어 있으면 태스크를
- * 재운다 -- 자는 동안 다른 태스크가 돈다 (console_plan.md 5단계).
+ * 재운다 -- 자는 동안 다른 태스크가 돈다.
  *
  * 한 번에 하나씩 돌려주는 이유: 창 모드가 바뀌면 console64_attach_sheet가
  * raw 큐에 TTY_KIND_RESIZE를 넣고 태스크를 깨운다. 키가 올 때까지 여기서
@@ -897,7 +896,7 @@ static void execute_command(struct CONSOLE64 *con)
 	} else if (str_eq(con->input_line, "xwindow") || str_eq(con->input_line, "window") ||
 			str_eq(con->input_line, "창")) {
 		/* 전체 화면 토글은 콘솔 0 전용이다 -- 화면 크기 버퍼를 가진 건
-		   콘솔 0뿐이다 (console_plan.md 결정). */
+		   콘솔 0뿐이다. */
 		if (con != console_active) {
 			puts_con(con, "fullscreen is console 0 only\n");
 		} else {
@@ -1640,7 +1639,7 @@ void console64_repl_set_active(int active)
 
 /*
  * 명령줄 편집기를 그대로 빌려서 한 줄을 읽어 온다. 완성된 줄의 바이트 수,
- * Ctrl-C면 -1, Ctrl-D면 -2를 돌려준다(mowkow_porting.md 결정 8).
+ * Ctrl-C면 -1, Ctrl-D면 -2를 돌려준다.
  *
  * 편집 버퍼(input_line)는 명령줄과 같은 것을 쓴다. 그리기와 백스페이스가
  * 전부 그 버퍼를 보고 있어서 따로 두면 코드가 갈라진다. 대신 부르는 쪽은

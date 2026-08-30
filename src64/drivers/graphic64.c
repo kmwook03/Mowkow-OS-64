@@ -1,8 +1,5 @@
 /*
  * VGA DAC 팔레트 -- src/drivers/graphic.c:22-80의 64비트 이식.
- *
- * 지금까지 src64는 DAC를 한 번도 건드리지 않아 VBE가 남긴 기본 팔레트를
- * 그대로 썼다. 그래서 바탕화면이 노랗고 타이틀 바가 빨갛게 보였다.
  */
 
 #include <asmfunc64.h>

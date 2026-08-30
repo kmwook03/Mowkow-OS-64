@@ -6,7 +6,7 @@
 
 /*
  * 팔레트 인덱스. src/include/graphic.h의 COL8_*와 같은 배치이며,
- * 실제 DAC 설정은 아직 없다 (로드맵 Phase 3 step 8).
+ * 실제 DAC 설정은 아직 없다.
  */
 #define COL64_000000    0
 #define COL64_FF0000    1

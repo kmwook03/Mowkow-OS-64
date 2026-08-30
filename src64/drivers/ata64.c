@@ -1,8 +1,8 @@
 /*
  * ata64.c -- ATA PIO 전송 계층
  *
- * 1차 채널, 마스터 드라이브, LBA28, 명령 하나에 섹터 하나. AHCI 컨트롤러가
- * 없을 때 쓰는 대비책이다. 느리지만 어느 기기에서나 뜬다.
+ * 1차 채널, 마스터 드라이브, LBA28, 명령 하나에 섹터 하나.
+ * AHCI 컨트롤러가 없을 때 쓰는 대비책.
  */
 #include <asmfunc64.h>
 #include <block64.h>
@@ -141,8 +141,8 @@ static uint64_t ata64_sector_count(void)
 	for (i = 0; i < 256; i++) {
 		id[i] = ata_in16();
 	}
-	/* ponytail: 용량을 LBA28(워드 60-61)로만 읽는다. 읽기/쓰기도 LBA28 명령을
-	   쓰므로 48비트 항목은 어차피 닿지 않는다. */
+	/* 주의: 용량을 LBA28(워드 60-61)로만 읽는다.
+	   읽기/쓰기도 LBA28 명령을 쓰므로 48비트 항목은 어차피 안닿음. */
 	sector_count = (uint64_t) id[60] | ((uint64_t) id[61] << 16);
 	return sector_count;
 }

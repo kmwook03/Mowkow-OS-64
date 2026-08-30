@@ -1,8 +1,7 @@
 /*
  * 윈도우 그리기 -- src/kernel/window.c의 64비트 이식.
  *
- * 원본 window.c:72의 TODO("제목에 한글도 적을 수 있도록 해야함")를 여기서
- * 해결한다. putstr64가 UTF-8을 해석해 한글은 hangul64_draw_unicode로,
+ * putstr64가 UTF-8을 해석해 한글은 hangul64_draw_unicode로,
  * ASCII는 hankaku 폰트로 그린다.
  */
 

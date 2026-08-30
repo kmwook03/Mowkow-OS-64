@@ -1,10 +1,10 @@
 /*
- * 바탕화면과 콘솔 창 -- 로드맵 Phase 3 step 5.
+ * 바탕화면과 콘솔 창.
  *
- * 컴포지터는 항상 켜져 있고 콘솔은 그 위의 창 하나다 (decision 3b). 부팅
+ * 컴포지터는 항상 켜져 있고 콘솔은 그 위의 창 하나다. 부팅
  * 직후에는 콘솔 창이 화면 전체를 덮으므로 지금까지와 똑같아 보이고,
  * `xwindow`(또는 `창`) 명령이 바탕화면 위의 작은 창으로 바꾼다. 비디오 모드는
- * 바뀌지 않는다 -- 롱 모드에서는 VBE로 돌아갈 수 없다 (decision 2).
+ * 바뀌지 않는다 -- 롱 모드에서는 VBE로 돌아갈 수 없다.
  */
 
 #include <console64.h>
@@ -356,7 +356,7 @@ void gui64_toggle_window(void)
 			(uint16_t) gui_scrnx, (uint16_t) gui_scrny);
 	}
 
-	/* 시트 크기가 바뀌었으니 map 전체가 낡았다. slide로는 부족하다. */
+	/* 시트 크기가 바뀌었으니 map 전체가 낡았다. */
 	sheet64_refresh_all(gui_ctl);
 	taskbar_redraw();
 }
@@ -404,8 +404,8 @@ static void taskbar_press(int32_t bx, int32_t by)
 	}
 }
 
-/* 새 창은 콘솔 0 자리에서 조금씩 어긋나게 놓는다. 완전히 겹치면 두 개가
-   떠 있는지 눈으로 확인할 수 없다. */
+/* 새 창은 콘솔 0 자리에서 조금씩 어긋나게 놓는다. 
+   완전히 겹치면 눈으로 확인할 수 없다. */
 #define GUI64_CASCADE 24
 
 int gui64_open_console_window(struct CONSOLE64 *con, const char *title)

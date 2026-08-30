@@ -18,8 +18,7 @@
 #include <stdint.h>
 
 /*
- * 실측으로 정한 값 (roadmap64.md Phase 4 step 7). report_usage가 프로세스마다
- * COM1에 실제 사용량을 찍는다.
+ * 실측으로 정한 값. report_usage가 프로세스마다 COM1에 실제 사용량을 찍는다.
  *
  * 힙: 나노의 사용량은 파일 크기가 아니라 줄 수를 따라간다 - 줄마다 최소
  * 64바이트다. 8 KiB짜리 4000줄 파일이 256 KiB의 98.5%를 먹었다. 1 MiB면
@@ -81,7 +80,7 @@ static int range_contains(const struct PROCESS64_RANGE *range, uintptr_t ptr, si
 }
 
 /* 실행 중인 프로세스는 태스크마다 다르다. 콘솔이 여러 개면 전역 하나로는
-   서로의 saved_kernel_rsp를 덮어쓴다 (console_plan.md 블로커 2). */
+   서로의 saved_kernel_rsp를 덮어쓴다. */
 struct PROCESS64 *process64_current(void)
 {
 	struct TASK64 *task = task_now64();
@@ -176,7 +175,7 @@ static uintptr_t setup_args(struct PROCESS64 *process, const char *cmdline, uint
 static void process_free_memory(struct PROCESS64 *process)
 {
 	/* 이미지는 풀 밖의 고정 창이라 memman에 돌려주는 게 아니라
-	   소유권만 놓는다 (console_plan.md 1.5단계). */
+	   소유권만 놓는다. */
 	elf64_release_process(process);
 	if (process->stack.base != 0 && process->stack.size != 0) {
 		memman64_free_4k(&memman64, process->stack.base, process->stack.size);

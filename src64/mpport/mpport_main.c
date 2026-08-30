@@ -27,21 +27,10 @@
 #include <stdint.h>
 
 /*
- * 짐작이 아니라 실측으로 정한 크기다(Stage 4, python_porting.md). 재귀
- * (fib(15)), 작은 리스트 200개가 든 딕셔너리, 원소 300개짜리 리스트 표기,
- * 클래스 인스턴스 100개, 문자열 잇기, 예외 처리를 섞은 스크립트를 돌렸더니
- * 예전 256KiB 힙에서 최대 153KiB쯤 썼다(gc.collect() 앞뒤의 gc.mem_free()
- * 차이). 512KiB면 그 최댓값의 세 배쯤 여유가 있고, python_porting.md
- * Stage 0.6이 제안한 512KiB~1MiB 범위와도 맞는다. 처음에 그보다 적게 잡았던
- * 이유는 .bss 여유 때문이었는데, 그 문제는 MEMMAN64_EARLY_START를 함께
- * 올리면서 풀렸다(memory64.h).
- */
-/*
- * 512KiB로는 머꼬가 안 된다(mowkow_porting.md 9단계). library_kor.scm을
- * 올리고 나면 gc.mem_free()가 13KiB밖에 남지 않아, 식을 몇 개 계산하면
- * 그대로 멈춘다. 힙은 .bss에 있고 커널 .bss 끝(약 2.2MiB)과 memman64 시작
+ * 2MiB 근거: library_kor.scm을 올리고 나면 gc.mem_free()가 13KiB밖에 남지 않아
+ * 식을 몇 개 계산하면 그대로 멈춘다. 
+ * 힙은 .bss에 있고 커널 .bss 끝(약 2.2MiB)과 memman64 시작
  * (MEMMAN64_EARLY_START = 8MiB) 사이에 자리가 넉넉하므로 2MiB로 올린다.
- * 이미지 크기는 그대로다 -- .bss는 flat binary에 실리지 않는다.
  */
 #define MPPORT_GC_HEAP_SIZE (4 * 1024 * 1024)
 
@@ -53,10 +42,7 @@ static uint8_t gc_heap[MPPORT_GC_HEAP_SIZE];
  * MicroPython은 태생적으로 단일 인스턴스다: gc_heap도 하나, mp_state_ctx도
  * 하나(전역). 콘솔마다 py를 돌리려면 콘솔 수만큼의 512KiB .bss에 더해,
  * MP_STATE_VM이 바꿔 낄 수 있는 포인터를 거치도록 벤더링된 MicroPython 자체를
- * 고쳐야 한다. third_party/micropython은 v1.28.0에 고정된 서브미듈이라 로컬
- * 패치는 새로 clone하면 사라진다 -- 5단계의 파서 재귀 검사를 포기한 것과 같은
- * 이유다. 그래서 console_plan.md 8단계가 제시한 싼 쪽을 택한다: 시스템 전체에서
- * 한 번에 하나, 두 번째 콘솔은 거절.
+ * 고쳐야 한다. 따라서 시스템 전체에서 한 번에 하나, 두 번째 콘솔은 거절하도록 설계하였다.
  */
 static int mp_busy;
 
@@ -69,7 +55,7 @@ static int mpport_claim(void)
 	if (mp_busy != 0) {
 		io_store_rflags(flags);
 		/* console64_puts는 도는 태스크로 콘솔을 찾으므로 거절 메시지는
-		   거절당한 콘솔에 찍힌다 (5단계). */
+		   거절당한 콘솔에 찍힌다. */
 		console64_puts("py already running in another console\n");
 		return -1;
 	}
@@ -84,9 +70,9 @@ static void mpport_release(void)
 }
 
 /*
- * 콘솔 명령이 스크립트에 넘기는 인자 하나(결정 7). sys.argv를 켜지 않는다 --
- * 문자열 하나 때문에 그럴 값어치가 없다. 콘솔의 입력 줄은 다음 명령에 덮이므로
- * 가리키지 않고 베껴 둔다.
+ * 콘솔 명령이 스크립트에 넘기는 인자 하나. sys.argv를 켜지 않는다 --
+ * 문자열 하나 때문에 그럴 값어치가 없다. 
+ * 콘솔의 입력 줄은 다음 명령에 덮어씌워지므로 가리키지 않고 베껴 둔다.
  */
 static char mp_argv[FD64_NAME_MAX];
 static int mp_argv_set;
@@ -113,8 +99,8 @@ const char *mpport_argv(void)
 
 /*
  * C 스택 한계는 부를 때마다 다시 잰다. 콘솔마다 태스크가 따로고 스택도 따로라
- * (console64.c), 다른 콘솔에서 재어 둔 값을 물려받으면 넘침 검사가 엉뚱한
- * 자리를 본다. mp_init과 달리 이건 되풀이해도 되는 일이다(결정 11).
+ * (console64.c), 다른 콘솔에서 측정한 값을 물려받으면 넘침 검사가 엉뚱한 자리를 본다. 
+ * mp_init과 달리 이건 되풀이해도 되는 일이다.
  */
 static void mpport_stack_limit(void)
 {
@@ -123,15 +109,9 @@ static void mpport_stack_limit(void)
 	struct TASK64 *task;
 
 	/*
-	 * Real remaining C stack from here down to stack_bottom (asmfunc64.asm),
-	 * not a guessed constant -- matches python_porting.md Stage 0.4/0.6's
-	 * "conservative bound computed from the known stack range."
-	 */
-	/*
-	 * 콘솔이 자기 태스크에서 돌면 (console_plan.md 5단계) 그 스택은
-	 * memman64가 준 64KiB지 커널 메인 스택이 아니다. stack_bottom으로
-	 * 재면 몇 MiB가 남은 줄 알고 넘침 검사가 걸리지 않아, 깊은 재귀가
-	 * 조용히 태스크 스택을 뭉갠다.
+	 * 콘솔이 자기 태스크에서 돌면 그 스택은 memman64가 준 64KiB지 커널 메인 스택이 아니다. 
+	 * stack_bottom으로 측정하면 몇 MiB가 남은 줄 알고 넘침 검사가 걸리지 않아, 
+	 * 깊은 재귀가 조용히 태스크 스택을 침범한다.
 	 */
 	task = task_now64();
 	if (task != NULL && task->stack_base != 0) {
@@ -143,10 +123,10 @@ static void mpport_stack_limit(void)
 }
 
 /*
- * 해석기는 부팅 뒤 한 번만 세운다(결정 11). 머꼬의 바탕 환경 --
- * library_kor.scm 252줄 -- 을 만드는 데 1.7초가 드는데, 그것을 부를 때마다
- * 물릴 이유가 없다. 그래서 mp_deinit()도 없앴다. 대신 GC 힙과 qstr 풀이
- * 부팅 내내 살아 있으므로, 새는 곳이 있으면 세션을 넘겨 쌓인다.
+ * 해석기는 부팅 뒤 한 번만 세운다. 머꼬의 바탕 환경을 만드는 데 약 1.7초가 드는데, 
+ * 그것을 부를 때마다 해석기를 실행시킬 이유가 없다. 
+ * 그래서 mp_deinit()도 없애고 GC 힙과 qstr 풀이 부팅 내내 살아 있으므로, 
+ * 메모리 누수가 발생하면 세션을 넘겨 쌓인다.
  */
 static int mp_ready;
 
@@ -164,14 +144,12 @@ static void mpport_init(void)
 /*
  * 파일 하나를 GC 힙으로 읽어 온다. 없으면 NULL, 있으면 크기를 *out_size에.
  *
- * 스크립트 실행과 import가 같은 것을 필요로 해서 한 곳에 둔다
- * (mowkow_porting.md 4단계). memman64가 아니라 GC 힙에 담는 이유는 수명이다:
- * mp_reader_new_mem에 free_len을 함께 주면 lexer가 닫힐 때 리더가 알아서
- * m_del한다. import는 자기가 연 버퍼를 언제 놓아야 하는지 부르는 쪽에서 알
- * 방법이 없다.
+ * 스크립트 실행과 import가 같은 것을 필요로 해서 한 곳에 둔다. 
+ * memman64가 아니라 GC 힙에 담는 이유는 수명이다.
+ * mp_reader_new_mem에 free_len을 함께 주면 lexer가 닫힐 때 리더가 알아서 m_del한다. 
+ * import는 자기가 연 버퍼를 언제 놓아야 하는지 부르는 쪽에서 알 방법이 없다.
  *
- * m_new는 자리가 없으면 MemoryError를 던진다. 그래서 NLR 문맥 안에서만
- * 부른다.
+ * m_new는 자리가 없으면 MemoryError를 던지고 NLR 문맥 안에서만 부른다.
  */
 uint8_t *mpport_load_file(const char *path, size_t *out_size)
 {
@@ -247,9 +225,9 @@ void mpport_run_file(const char *path)
 /*
  * `머꼬` 명령. 파일을 돌리는 게 아니라 두 줄짜리 소스를 그대로 컴파일해 돌린다:
  * mowkow.py는 스크립트가 아니라 모듈이라야 library_kor.scm으로 만든 바탕
- * 환경이 import 캐시에 남는다(mowkow_porting.md 7단계).
+ * 환경이 import 캐시에 남는다.
  *
- * 나가는 길은 넷인데(결정 8) 셋은 파이썬 쪽에서 끝난다: 빈 줄은 업스트림
+ * 나가는 길은 넷인데 셋은 파이썬 쪽에서 끝난다. 빈 줄은 업스트림
  * eval_print_loop이 스스로 빠져나오고, Ctrl-D는 EOFError로 같은 자리에서
  * 잡히고, Ctrl-C는 KeyboardInterrupt로 여기까지 올라온다. 여기서는 그 둘
  * (KeyboardInterrupt, SystemExit)을 조용히 삼켜서 역추적이 찍히지 않게 한다.
@@ -300,7 +278,7 @@ void mpport_run_mowkow(const char *arg)
 /*
  * 링크된 코어(py/lexer.h)가 요구한다. MICROPY_READER_POSIX와
  * MICROPY_READER_VFS가 둘 다 꺼져 있으므로 포트가 직접 준다. import가
- * 모듈 소스를 여기로 가져간다(mowkow_porting.md 4단계).
+ * 모듈 소스를 여기로 가져간다.
  *
  * free_len으로 size를 같이 넘겨 lexer가 닫힐 때 버퍼도 함께 풀리게 한다.
  */
@@ -326,7 +304,7 @@ mp_lexer_t *mp_lexer_new_from_file(qstr filename)
  *
  * 디렉터리는 늘 "없음"이다. fd64의 디렉터리 훑기가 0x10 항목을 걸러 내므로
  * fd64_open이 디렉터리를 열어 주는 일이 없고, 그래서 패키지(__init__.py)는
- * 없다. 머꼬는 평평한 모듈 네 개라 필요하지 않다(결정 3).
+ * 없다. 머꼬는 평평한 모듈 네 개라 필요하지 않다.
  */
 mp_import_stat_t mp_import_stat(const char *path)
 {

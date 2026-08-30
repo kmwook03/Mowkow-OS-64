@@ -26,7 +26,7 @@ static int looks_like_fat(const uint8_t *sector)
 }
 
 /* 0번 섹터에 MBR이 있으면 거기서 part_base를 정한다. 우리가 만드는 이미지는
-   슈퍼플로피(LBA 0부터 파일 시스템)라서 보통은 0이 답이다. */
+   슈퍼플로피(LBA 0부터 파일 시스템)라서 보통은 0으로 설정한다. */
 static void find_partition(void)
 {
 	uint8_t sector[BLOCK64_SECTOR_SIZE];
@@ -47,8 +47,8 @@ static void find_partition(void)
 		if (entry[4] == 0x00 || start == 0) {
 			continue;
 		}
-		/* 그 자리에 진짜 파일 시스템이 있을 때만 믿는다. 우리 부트 섹터도
-		   0x55aa로 끝나므로 MBR로 잘못 읽으면 안 된다. */
+		/* 주의: 그 자리에 진짜 파일 시스템이 있을 때만 믿는다.
+		   우리 부트 섹터도 0x55aa로 끝나므로 MBR로 잘못 읽으면 안 된다. */
 		if (ops->read(start, 1, sector) != 0 || looks_like_fat(sector) == 0) {
 			continue;
 		}

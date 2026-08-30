@@ -1,12 +1,12 @@
 /*
  * ahci64.c -- AHCI(SATA) 전송 계층
  *
- * PCI로 컨트롤러를 찾고, 포트 하나를 열어 48비트 DMA로 읽고 쓴다. 인터럽트
- * 없이 기다리며 한 번에 명령 하나만 보낸다. 위쪽 파일 시스템이 한 줄로만
- * 요청하므로 그 이상은 필요 없다.
+ * PCI로 컨트롤러를 찾고, 포트 하나를 열어 48비트 DMA로 읽고 쓴다.
+ * 인터럽트 없이 기다리며 한 번에 명령 하나만 보낸다.
+ * 위쪽 파일 시스템이 한 줄로만 요청하므로 그 이상은 필요 없다.
  *
- * ponytail: 쓸 수 있는 첫 포트만 쓴다. 여러 포트나 NCQ를 쓰려면 진짜 요청
- * 큐가 있어야 하는데, 여기에는 없다.
+ * 주의: 쓸 수 있는 첫 포트만 쓴다.
+ * 여러 포트나 NCQ를 쓰려면 진짜 요청 큐가 있어야 하는데 아직 구현되지 않았다.
  */
 #include <block64.h>
 #include <memory64.h>
@@ -20,7 +20,7 @@
 #define GHC_AE 0x80000000u
 #define GHC_IE 0x00000002u
 
-/* 포트 레지스터. 0x100 + 포트 번호 * 0x80 을 기준으로 한 상대 위치다. */
+/* 포트 레지스터. 0x100 + 포트 번호 * 0x80 을 기준으로 한 상대 위치 */
 #define PORT_CLB 0x00
 #define PORT_CLBU 0x04
 #define PORT_FB 0x08
@@ -119,8 +119,8 @@ static void port_start(void)
 	port_write(PORT_CMD, port_read(PORT_CMD) | CMD_ST);
 }
 
-/* 명령 하나를 만들고 끝날 때까지 기다린다. `write`가 방향, `buffer`가 DMA
-   대상, `bytes`가 그 길이다. */
+/* 명령 하나를 만들고 끝날 때까지 기다린다.
+   `write`가 방향, `buffer`가 DMA 대상, `bytes`가 그 길이 */
 static int run_command(uint8_t command, uint64_t lba, uint32_t sectors,
 	void *buffer, uint32_t bytes, int write)
 {
@@ -143,7 +143,7 @@ static int run_command(uint8_t command, uint64_t lba, uint32_t sectors,
 	port_write(PORT_IS, port_read(PORT_IS));
 	port_write(PORT_SERR, port_read(PORT_SERR));
 
-	/* 슬롯 0만 쓴다. 명령을 한 번에 하나씩만 보내기 때문이다. */
+	/* 슬롯 0만 쓴다. (명령을 한 번에 하나씩만 보냄) */
 	header = command_list;
 	zero(header, 32);
 	/* 명령 FIS 길이(dword 단위), 쓰기 표시, PRDT 항목 한 개 */
