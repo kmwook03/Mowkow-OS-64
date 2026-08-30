@@ -9,6 +9,7 @@
 TOOLPATH = tools
 INCPATH = tools/haribote
 FONT_DIR = src/graphics/font
+FONT64_DIR = src64/graphics/font
 
 SRC_DIR = src
 APP_DIR = app

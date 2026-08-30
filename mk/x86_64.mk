@@ -19,8 +19,8 @@ $(foreach v,$(shell $(PYTHON) $(MKFAT32) --make-vars),$(eval $(v)))
 
 # 로더가 읽어 들이는 커널 섹터 수이자 커널 크기 상한. 예약 영역은 992섹터
 # (507,904바이트)까지 있으므로 그 안에서는 올려도 파일 시스템이 밀리지 않는다.
-# 800섹터일 때 커널이 389,540바이트(95.1%)라 남은 자리가 20KiB뿐이었다
-# (mowkow_porting.md 4단계). 992섹터 천장 아래로 여유를 두고 960으로 올린다.
+# 800섹터일 때 커널이 389,540바이트(95.1%)라 남은 자리가 20KiB뿐이었다. 
+# 992섹터 천장 아래로 여유를 두고 960으로 올린다.
 KERNEL64_SECTORS = 960
 
 # -- 소스 찾기 --
@@ -115,9 +115,9 @@ $(foreach app,$(APP64_NAMES),$(eval $(call APP64_RULES,$(app))))
 # -- 이미지 만들기 --
 # 부트 섹터, 2단계 로더, 커널은 예약 영역에 넣고 나머지는 파일로 넣는다.
 # app=경로 꼴로 넘기면 그 이름이 파일 이름이 된다(한글 이름은 VFAT 긴 이름).
-$(IMG64_FILE) : $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(APP64_TARGETS) $(PY64_FILES) $(MKFAT32)
+$(IMG64_FILE) : $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT64_DIR)/H04.FNT $(APP64_TARGETS) $(PY64_FILES) $(MKFAT32)
 	@$(MKDIR) $(IMG64_DIR)
-	$(PYTHON) $(MKFAT32) $@ $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT_DIR)/H04.FNT $(foreach app,$(APP64_NAMES),$(app)=$(BUILD64_DIR)/app/$(app)/$(app).elf) $(foreach f,$(PY64_FILES),$(notdir $(f))=$(f))
+	$(PYTHON) $(MKFAT32) $@ $(BOOT64_BIN) $(LOADER64_BIN) $(KERNEL64_BIN) $(FONT64_DIR)/H04.FNT $(foreach app,$(APP64_NAMES),$(app)=$(BUILD64_DIR)/app/$(app)/$(app).elf) $(foreach f,$(PY64_FILES),$(notdir $(f))=$(f))
 
 # -- 명령 --
 x86_64 : $(IMG64_FILE)
@@ -128,7 +128,7 @@ run64 : $(IMG64_FILE)
 # 같은 이미지를 AHCI 경로로 띄운다. q35에는 레거시 IDE가 없어서 ATA PIO 대신
 # src64/drivers/ahci64.c를 타게 된다. 저장 장치를 고쳤으면 둘 다 돌려 봐야 한다.
 # 머꼬 병행 검사. 이미지 안의 머꼬와 호스트 CPython의 업스트림 머꼬를 같은
-# 입력으로 돌려 견준다 (mowkow_porting.md 결정 9). --ahci로 전송 경로도 바꾼다.
+# 입력으로 돌려 견준다. --ahci로 전송 경로도 바꾼다.
 parity64 : $(IMG64_FILE)
 	$(PYTHON) $(TOOLPATH)/mowkow_parity.py
 
