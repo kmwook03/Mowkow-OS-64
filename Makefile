@@ -1,24 +1,25 @@
 # ===========================================================================
 # Mowkow OS
 #
-# 트리가 둘이고 툴체인도 둘이다. 규칙은 mk/ 아래에 트리별로 나누어 두었다.
+# 트리가 둘이고 툴체인도 둘이다. 빌드에 필요한 파일은 32bit/, 64bit/,
+# common/ 으로 나누어 두었고, 규칙도 그 아래에 트리별로 들어 있다.
 #
-#   mk/config.mk       디렉터리, 도구, 컴파일 옵션 (공통)
-#   mk/x86.mk          32비트 트리: src/, app/      -> img/haribote.img
-#   mk/micropython.mk  커널에 넣는 MicroPython
-#   mk/x86_64.mk       64비트 트리: src64/, app64/  -> img64/mowkow64.img
+#   common/mk/config.mk    디렉터리, 도구, 컴파일 옵션 (공통)
+#   32bit/mk/x86.mk        32비트 트리: 32bit/src, 32bit/app -> img/haribote.img
+#   64bit/mk/micropython.mk 커널에 넣는 MicroPython
+#   64bit/mk/x86_64.mk     64비트 트리: 64bit/src64, 64bit/app64 -> img64/mowkow64.img
 #
 # include 순서에는 이유가 있다. mk/x86_64.mk의 커널 링크 규칙이 읽히는
-# 시점에 MPY_* 오브젝트 목록이 이미 있어야 하므로, mk/micropython.mk를
+# 시점에 MPY_* 오브젝트 목록이 이미 있어야 하므로, 64bit/mk/micropython.mk를
 # 먼저 읽는다.
 #
 # 무엇을 만들 수 있는지는 `make help`.
 # ===========================================================================
 
-include mk/config.mk
-include mk/x86.mk
-include mk/micropython.mk
-include mk/x86_64.mk
+include common/mk/config.mk
+include 32bit/mk/x86.mk
+include 64bit/mk/micropython.mk
+include 64bit/mk/x86_64.mk
 
 # 32비트 이미지가 기본. include 순서와 상관없이 이것이 기본 목표가 되도록
 # .DEFAULT_GOAL로 못 박는다.
@@ -33,13 +34,13 @@ default : $(IMG_FILE)
 help :
 	@echo "Mowkow OS"
 	@echo ""
-	@echo "  32비트 (src/, app/  ->  img/haribote.img)"
+	@echo "  32비트 (32bit/  ->  img/haribote.img)"
 	@echo "    make            이미지 빌드 (기본)"
 	@echo "    make run        QEMU로 실행 (플로피)"
 	@echo "    make iso        이미지를 ISO로 변환"
 	@echo "    make clean      build/ img/ 지우기"
 	@echo ""
-	@echo "  64비트 (src64/, app64/  ->  img64/mowkow64.img)"
+	@echo "  64비트 (64bit/  ->  img64/mowkow64.img)"
 	@echo "    make x86_64     이미지 빌드"
 	@echo "    make run64      QEMU로 실행 (IDE, ATA PIO 경로)"
 	@echo "    make run64-ahci QEMU로 실행 (q35 + AHCI 경로)"
