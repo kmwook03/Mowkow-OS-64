@@ -8,6 +8,9 @@
  * 목록에서 빠지므로 깨우기 전까지는 아예 돌지 않는다.
  */
 #include <asmfunc64.h>
+#ifdef __aarch64__
+#include <arch/arch64.h>
+#endif
 #include <memory64.h>
 #include <mtask64.h>
 #include <stddef.h>
@@ -75,7 +78,11 @@ static void task_switchsub64(void)
 static void task_idle64(void)
 {
 	for (;;) {
+#ifdef __aarch64__
+		arch64_halt_with_irq();
+#else
 		io_stihlt();
+#endif
 	}
 }
 
@@ -107,7 +114,11 @@ struct TASK64 *task_alloc64(void)
 			task->process = NULL;
 			task->is_user = 0;
 			task->kernel_rsp = 0;
+#ifdef __aarch64__
+			task->context.frame = 0;
+#else
 			task->context.rsp = 0;
+#endif
 			return task;
 		}
 	}
@@ -116,6 +127,15 @@ struct TASK64 *task_alloc64(void)
 
 int task_set_entry64(struct TASK64 *task, void (*entry)(void), uintptr_t stack_base, size_t stack_size)
 {
+#ifdef __aarch64__
+	if (task == NULL || entry == NULL || stack_base == 0 || stack_size < 512) {
+		return -1;
+	}
+	task->stack_base = stack_base;
+	task->stack_size = stack_size;
+	task->context.frame = arch64_task_frame_init(entry, stack_base, stack_size);
+	return task->context.frame != 0 ? 0 : -1;
+#else
 	uint64_t *sp;
 
 	if (task == NULL || entry == NULL || stack_base == 0 || stack_size < 128) {
@@ -134,6 +154,7 @@ int task_set_entry64(struct TASK64 *task, void (*entry)(void), uintptr_t stack_b
 	*--sp = 0;
 	task->context.rsp = (uintptr_t) sp;
 	return 0;
+#endif
 }
 
 void task_run64(struct TASK64 *task, int level, int priority)
@@ -149,6 +170,12 @@ void task_run64(struct TASK64 *task, int level, int priority)
 	}
 	if (priority > 0) {
 		task->priority = (uint32_t) priority;
+	}
+	/* An AArch64 task waiting for the next timer IRQ has not left its run
+	   queue yet. Waking it here simply cancels that deferred sleep. */
+	if (task->flags == TASK64_FLAGS_SLEEP_PENDING) {
+		task->flags = TASK64_FLAGS_RUNNING;
+		return;
 	}
 	if (task->flags == TASK64_FLAGS_RUNNING && task->level != (uint32_t) level) {
 		task_remove64(task);
@@ -169,6 +196,15 @@ void task_sleep64(struct TASK64 *task)
 		return;
 	}
 	now_task = task_now64();
+#ifdef __aarch64__
+	if (task == now_task) {
+		task->flags = TASK64_FLAGS_SLEEP_PENDING;
+		while (task->flags == TASK64_FLAGS_SLEEP_PENDING) {
+			arch64_halt_with_irq();
+		}
+		return;
+	}
+#endif
 	task_remove64(task);
 	if (task != now_task) {
 		return;
@@ -178,7 +214,9 @@ void task_sleep64(struct TASK64 *task)
 	if (new_task != NULL && new_task != now_task) {
 		taskctl64.switches++;
 		new_task->switches++;
+#ifndef __aarch64__
 		context_switch64(&now_task->context, &new_task->context);
+#endif
 	}
 }
 
@@ -192,13 +230,22 @@ int task_kill64(struct TASK64 *task)
 	if (task == NULL || task->flags == TASK64_FLAGS_UNUSED || task == task_now64()) {
 		return -1;
 	}
+#ifdef __aarch64__
+	flags = arch64_irq_save();
+#else
 	flags = io_load_rflags();
 	io_cli();
-	if (task->flags == TASK64_FLAGS_RUNNING) {
+#endif
+	if (task->flags == TASK64_FLAGS_RUNNING ||
+			task->flags == TASK64_FLAGS_SLEEP_PENDING) {
 		task_remove64(task);
 	}
 	task->flags = TASK64_FLAGS_UNUSED;
+#ifdef __aarch64__
+	arch64_irq_restore(flags);
+#else
 	io_store_rflags(flags);
+#endif
 	if (task->stack_base != 0) {
 		memman64_free_4k(&memman64, task->stack_base, task->stack_size);
 		task->stack_base = 0;
@@ -207,7 +254,7 @@ int task_kill64(struct TASK64 *task)
 	return 0;
 }
 
-void task_switch64(void)
+struct TASK64 *task_switch_prepare64(void)
 {
 	struct TASKLEVEL64 *tl;
 	struct TASK64 *now_task;
@@ -218,10 +265,22 @@ void task_switch64(void)
 		task_switchsub64();
 		tl = &taskctl64.level[taskctl64.now_lv];
 		if (tl->running == 0) {
-			return;
+			return NULL;
 		}
 	}
 	now_task = tl->tasks[tl->now];
+	if (now_task->flags == TASK64_FLAGS_SLEEP_PENDING) {
+		task_remove64(now_task);
+		task_switchsub64();
+		tl = &taskctl64.level[taskctl64.now_lv];
+		if (tl->running == 0) {
+			return NULL;
+		}
+		new_task = tl->tasks[tl->now];
+		taskctl64.switches++;
+		new_task->switches++;
+		return new_task;
+	}
 	tl->now++;
 	if (tl->now >= tl->running) {
 		tl->now = 0;
@@ -234,8 +293,22 @@ void task_switch64(void)
 	if (new_task != now_task) {
 		taskctl64.switches++;
 		new_task->switches++;
+	}
+	return new_task;
+}
+
+void task_switch64(void)
+{
+#ifndef __aarch64__
+	struct TASK64 *now_task;
+	struct TASK64 *new_task;
+
+	now_task = task_now64();
+	new_task = task_switch_prepare64();
+	if (now_task != NULL && new_task != NULL && new_task != now_task) {
 		context_switch64(&now_task->context, &new_task->context);
 	}
+#endif
 }
 
 void task_init64(void)

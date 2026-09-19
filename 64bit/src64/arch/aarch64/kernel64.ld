@@ -17,6 +17,10 @@ SECTIONS
 		*(.text.*)
 	} :text
 
+	.vectors : ALIGN(2048) {
+		KEEP(*(.vectors))
+	} :text
+
 	.rodata : ALIGN(16) {
 		*(.rodata)
 		*(.rodata.*)
@@ -51,4 +55,4 @@ SECTIONS
 	}
 }
 
-ASSERT(__image_end < 0x200000, "AArch64 M1 image overlaps the future kernel area")
+ASSERT(__image_end < 0x800000, "AArch64 image overlaps the early allocator area")

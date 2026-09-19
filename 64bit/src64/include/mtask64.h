@@ -12,9 +12,14 @@
 #define TASK64_FLAGS_UNUSED    0
 #define TASK64_FLAGS_ALLOCATED 1
 #define TASK64_FLAGS_RUNNING   2
+#define TASK64_FLAGS_SLEEP_PENDING 3
 
 struct CONTEXT64 {
+#ifdef __aarch64__
+	uintptr_t frame;
+#else
 	uint64_t rsp;
+#endif
 };
 
 struct TASK64 {
@@ -55,5 +60,6 @@ void task_run64(struct TASK64 *task, int level, int priority);
 void task_sleep64(struct TASK64 *task);
 int task_kill64(struct TASK64 *task);
 void task_switch64(void);
+struct TASK64 *task_switch_prepare64(void);
 
 #endif

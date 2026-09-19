@@ -188,7 +188,7 @@ int arch64_fb_probe(struct BOOTINFO64 *bootinfo)
 	framebuffer_info.bpp = FB_DEPTH;
 	framebuffer_info.framebuffer_type = 1;
 	framebuffer_info.reserved2 = m[29];
-	framebuffer_info.vram = (uintptr_t) framebuffer_address;
+	framebuffer_info.vram = arch64_phys_to_virt((uintptr_t) framebuffer_address);
 	framebuffer_pixel_order = m[24];
 	*bootinfo = framebuffer_info;
 	cursor_x = FB_MARGIN_X;

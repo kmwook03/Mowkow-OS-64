@@ -1,10 +1,33 @@
 #include <asmfunc64.h>
+#ifdef __aarch64__
+#include <arch/arch64.h>
+#endif
 #include <memory64.h>
 
 struct MEMMAN64 memman64;
 
 static uintptr_t early_next;
 static uintptr_t early_limit;
+
+static uint64_t memory_lock64(void)
+{
+#ifdef __aarch64__
+	return arch64_irq_save();
+#else
+	uint64_t flags = io_load_rflags();
+	io_cli();
+	return flags;
+#endif
+}
+
+static void memory_unlock64(uint64_t state)
+{
+#ifdef __aarch64__
+	arch64_irq_restore(state);
+#else
+	io_store_rflags(state);
+#endif
+}
 
 uintptr_t align_up64(uintptr_t value, size_t alignment)
 {
@@ -155,10 +178,9 @@ size_t memman64_total(const struct MEMMAN64 *man)
 	uint64_t flags;
 	size_t total;
 
-	flags = io_load_rflags();
-	io_cli();
+	flags = memory_lock64();
 	total = memman64_total_nolock(man);
-	io_store_rflags(flags);
+	memory_unlock64(flags);
 	return total;
 }
 
@@ -167,10 +189,9 @@ uintptr_t memman64_alloc(struct MEMMAN64 *man, size_t size)
 	uint64_t flags;
 	uintptr_t addr;
 
-	flags = io_load_rflags();
-	io_cli();
+	flags = memory_lock64();
 	addr = memman64_alloc_nolock(man, size);
-	io_store_rflags(flags);
+	memory_unlock64(flags);
 	return addr;
 }
 
@@ -179,10 +200,9 @@ int memman64_free(struct MEMMAN64 *man, uintptr_t addr, size_t size)
 	uint64_t flags;
 	int status;
 
-	flags = io_load_rflags();
-	io_cli();
+	flags = memory_lock64();
 	status = memman64_free_nolock(man, addr, size);
-	io_store_rflags(flags);
+	memory_unlock64(flags);
 	return status;
 }
 
@@ -191,10 +211,9 @@ uintptr_t memman64_alloc_at_4k(struct MEMMAN64 *man, uintptr_t addr, size_t size
 	uint64_t flags;
 	uintptr_t result;
 
-	flags = io_load_rflags();
-	io_cli();
+	flags = memory_lock64();
 	result = memman64_alloc_at_4k_nolock(man, addr, size);
-	io_store_rflags(flags);
+	memory_unlock64(flags);
 	return result;
 }
 
@@ -256,12 +275,20 @@ int memman64_free_4k(struct MEMMAN64 *man, uintptr_t addr, size_t size)
 
 void init_memory64(void)
 {
+	uintptr_t heap_end;
 	uintptr_t heap_start;
 
-	early_alloc64_init(MEMMAN64_EARLY_START, MEMMAN64_EARLY_END);
+#ifdef __aarch64__
+	heap_start = arch64_phys_to_virt(MEMMAN64_EARLY_START);
+	heap_end = arch64_phys_to_virt(MEMMAN64_EARLY_END);
+#else
+	heap_start = MEMMAN64_EARLY_START;
+	heap_end = MEMMAN64_EARLY_END;
+#endif
+	early_alloc64_init(heap_start, heap_end);
 	heap_start = early_alloc64(MEMMAN64_PAGE_SIZE, MEMMAN64_PAGE_SIZE);
 	memman64_init(&memman64);
-	if (heap_start != 0 && heap_start < MEMMAN64_EARLY_END) {
-		memman64_free(&memman64, heap_start, MEMMAN64_EARLY_END - heap_start);
+	if (heap_start != 0 && heap_start < heap_end) {
+		memman64_free(&memman64, heap_start, heap_end - heap_start);
 	}
 }

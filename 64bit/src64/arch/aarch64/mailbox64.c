@@ -1,4 +1,5 @@
 /* VideoCore property mailbox transport for BCM2712. */
+#include <arch/arch64.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -14,7 +15,8 @@
 
 static volatile uint32_t *mailbox_reg64(uint32_t offset)
 {
-	return (volatile uint32_t *) (uintptr_t) (MAILBOX_BASE + offset);
+	return (volatile uint32_t *) arch64_phys_to_virt(
+		(uintptr_t) MAILBOX_BASE + offset);
 }
 
 static uint64_t counter64(void)
@@ -68,11 +70,14 @@ int aarch64_mailbox_call(uint8_t channel, volatile uint32_t *message, size_t byt
 	uint32_t request;
 	uint32_t response;
 	uint64_t deadline;
+	uintptr_t message_physical;
 
-	if ((((uintptr_t) message & 0x0f) != 0) || (uintptr_t) message > 0xfffffff0ULL) {
+	message_physical = arch64_virt_to_phys((uintptr_t) message);
+	if (((message_physical & 0x0f) != 0) ||
+		message_physical > 0xfffffff0ULL) {
 		return -1;
 	}
-	request = (uint32_t) (uintptr_t) message | (channel & 0x0f);
+	request = (uint32_t) message_physical | (channel & 0x0f);
 	cache_clean64((const void *) message, bytes);
 	deadline = deadline64(MAILBOX_TIMEOUT_MS);
 	while ((*mailbox_reg64(MAILBOX_STATUS1) & MAILBOX_FULL) != 0) {
