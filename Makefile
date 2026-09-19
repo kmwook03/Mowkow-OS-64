@@ -20,6 +20,7 @@ include common/mk/config.mk
 include 32bit/mk/x86.mk
 include 64bit/mk/micropython.mk
 include 64bit/mk/x86_64.mk
+include 64bit/mk/aarch64.mk
 
 # 32비트 이미지가 기본. include 순서와 상관없이 이것이 기본 목표가 되도록
 # .DEFAULT_GOAL로 못 박는다.
@@ -27,7 +28,8 @@ include 64bit/mk/x86_64.mk
 
 .PHONY : default help info \
 	run iso clean $(APPS) \
-	x86_64 run64 run64-ahci parity64 clean64 mpy-qstr
+	x86_64 run64 run64-ahci parity64 clean64 mpy-qstr \
+	aarch64 clean-a64
 
 default : $(IMG_FILE)
 
@@ -46,6 +48,10 @@ help :
 	@echo "    make run64-ahci QEMU로 실행 (q35 + AHCI 경로)"
 	@echo "    make parity64   머꼬 병행 검사 (호스트 CPython과 견주기)"
 	@echo "    make clean64    build64/ img64/ 지우기"
+	@echo ""
+	@echo "  Raspberry Pi 5 (AArch64, M1)"
+	@echo "    make aarch64    Pi 5 flat kernel_2712.img 빌드"
+	@echo "    make clean-a64  AArch64 빌드 산출물 지우기"
 	@echo ""
 	@echo "  그 밖에"
 	@echo "    make info       찾아낸 소스와 앱 목록 보기"
