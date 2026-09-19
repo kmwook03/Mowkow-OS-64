@@ -20,17 +20,26 @@ A64_CFLAGS = -O2 -ffreestanding -nostdlib -mgeneral-regs-only \
 	-MMD -MP -I$(SRC64_DIR)/include
 A64_LDFLAGS = -nostdlib -T $(A64_ARCH_DIR)/kernel64.ld
 
-A64_SRCS = $(A64_ARCH_DIR)/boot64.S $(A64_ARCH_DIR)/gioaon64.c
+A64_SRCS = $(A64_ARCH_DIR)/boot64.S $(A64_ARCH_DIR)/font64.S \
+	$(A64_ARCH_DIR)/gioaon64.c $(A64_ARCH_DIR)/mmu64.c \
+	$(A64_ARCH_DIR)/mailbox64.c $(A64_ARCH_DIR)/fb64.c \
+	$(SRC64_DIR)/lib/hangul64.c $(SRC64_DIR)/lib/utf864.c
 A64_OBJS = $(patsubst $(A64_ARCH_DIR)/%.S,$(A64_BUILD_DIR)/%.o,\
 	$(filter %.S,$(A64_SRCS))) \
 	$(patsubst $(A64_ARCH_DIR)/%.c,$(A64_BUILD_DIR)/%.o,\
-	$(filter %.c,$(A64_SRCS)))
+	$(filter $(A64_ARCH_DIR)/%.c,$(A64_SRCS))) \
+	$(patsubst $(SRC64_DIR)/lib/%.c,$(A64_BUILD_DIR)/lib/%.o,\
+	$(filter $(SRC64_DIR)/lib/%.c,$(A64_SRCS)))
 
 $(A64_BUILD_DIR)/%.o : $(A64_ARCH_DIR)/%.S
 	@$(MKDIR) $(dir $@)
 	$(A64_CC) $(A64_CFLAGS) -c $< -o $@
 
 $(A64_BUILD_DIR)/%.o : $(A64_ARCH_DIR)/%.c
+	@$(MKDIR) $(dir $@)
+	$(A64_CC) $(A64_CFLAGS) -c $< -o $@
+
+$(A64_BUILD_DIR)/lib/%.o : $(SRC64_DIR)/lib/%.c
 	@$(MKDIR) $(dir $@)
 	$(A64_CC) $(A64_CFLAGS) -c $< -o $@
 

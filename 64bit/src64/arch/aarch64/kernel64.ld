@@ -1,5 +1,11 @@
 ENTRY(_start)
 
+PHDRS
+{
+	text PT_LOAD FLAGS(5);
+	data PT_LOAD FLAGS(6);
+}
+
 SECTIONS
 {
 	. = 0x80000;
@@ -9,17 +15,17 @@ SECTIONS
 		KEEP(*(.text.boot))
 		*(.text)
 		*(.text.*)
-	}
+	} :text
 
 	.rodata : ALIGN(16) {
 		*(.rodata)
 		*(.rodata.*)
-	}
+	} :text
 
 	.data : ALIGN(16) {
 		*(.data)
 		*(.data.*)
-	}
+	} :data
 
 	.bss (NOLOAD) : ALIGN(16) {
 		__bss_start = .;
@@ -28,13 +34,13 @@ SECTIONS
 		*(.bss.*)
 		. = ALIGN(8);
 		__bss_end = .;
-	}
+	} :data
 
 	.stack (NOLOAD) : ALIGN(16) {
 		__stack_bottom = .;
 		. += 64K;
 		__stack_top = .;
-	}
+	} :data
 
 	__image_end = .;
 

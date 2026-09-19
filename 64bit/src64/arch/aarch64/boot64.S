@@ -3,7 +3,7 @@
 	.align 4
 	.global _start
 	.type _start, %function
-	.extern aarch64_m1_main
+	.extern aarch64_main
 	.extern arch64_panic_blink
 
 _start:
@@ -82,7 +82,7 @@ _start:
 	str	x19, [x1]
 	dsb	sy
 	isb
-	bl	aarch64_m1_main
+	bl	aarch64_main
 
 .Lpark:
 	wfe

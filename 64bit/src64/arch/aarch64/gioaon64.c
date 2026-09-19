@@ -1,5 +1,6 @@
 /* BCM2712 always-on GPIO: M1's only observable debug channel. */
 #include <arch/arch64.h>
+#include <bootinfo64.h>
 #include <stdint.h>
 
 #define GIO_AON_BASE 0x107d517c00ULL
@@ -88,12 +89,6 @@ void arch64_early_init(void)
 	act_led_init64();
 }
 
-void arch64_dbg_puts(const char *s)
-{
-	/* M1 has no text channel; HDMI output arrives in M2. */
-	(void) s;
-}
-
 void arch64_panic_blink(int code)
 {
 	int i;
@@ -113,11 +108,23 @@ void arch64_panic_blink(int code)
 	}
 }
 
-void aarch64_m1_main(void)
+void aarch64_main(void)
 {
-	arch64_early_init();
+	struct BOOTINFO64 bootinfo;
+	int status;
 
-	/* Success heartbeat: equal half-second on/off periods. */
+	arch64_early_init();
+	arch64_mmu_init();
+	status = arch64_fb_probe(&bootinfo);
+	if (status != 0) {
+		arch64_panic_blink(status == -2 ? 2 : 3);
+	}
+	arch64_dbg_puts("Mowkow OS\n");
+	arch64_dbg_puts("Raspberry Pi 5 / AArch64\n");
+	arch64_dbg_puts("M2: MMU + mailbox framebuffer OK\n\n");
+	arch64_dbg_puts("한글 화면 출력 성공\n");
+
+	/* Keep the M1 heartbeat as an independent liveness signal. */
 	for (;;) {
 		act_led_set64(1);
 		delay_ms64(500);
