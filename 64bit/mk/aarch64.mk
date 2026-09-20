@@ -17,8 +17,8 @@ A64_IMAGE = $(A64_BUILD_DIR)/kernel_2712.img
 A64_CFLAGS = -O2 -ffreestanding -nostdlib -mgeneral-regs-only \
 	-mcpu=cortex-a76 -mstrict-align -fno-stack-protector -fno-pic \
 	-fno-asynchronous-unwind-tables -fno-unwind-tables -Wall -Wextra \
-	-MMD -MP -I$(SRC64_DIR)/include
-A64_LDFLAGS = -nostdlib -T $(A64_ARCH_DIR)/kernel64.ld
+	-ffunction-sections -fdata-sections -MMD -MP -I$(SRC64_DIR)/include
+A64_LDFLAGS = -nostdlib --gc-sections -T $(A64_ARCH_DIR)/kernel64.ld
 
 A64_SRCS = $(A64_ARCH_DIR)/boot64.S $(A64_ARCH_DIR)/vectors64.S \
 	$(A64_ARCH_DIR)/font64.S \
@@ -28,10 +28,15 @@ A64_SRCS = $(A64_ARCH_DIR)/boot64.S $(A64_ARCH_DIR)/vectors64.S \
 	$(A64_ARCH_DIR)/gtimer64.c $(A64_ARCH_DIR)/sched64.c \
 	$(A64_ARCH_DIR)/sdhci64.c $(A64_ARCH_DIR)/pcie64.c \
 	$(A64_ARCH_DIR)/rp164.c $(A64_ARCH_DIR)/xhci64.c \
-	$(SRC64_DIR)/drivers/block64.c \
+	$(A64_ARCH_DIR)/usbhid64.c $(A64_ARCH_DIR)/keyboard64.c \
+	$(SRC64_DIR)/drivers/block64.c $(SRC64_DIR)/drivers/graphic64.c \
 	$(SRC64_DIR)/kernel/cache64.c $(SRC64_DIR)/kernel/fd64.c \
+	$(SRC64_DIR)/kernel/sheet64.c $(SRC64_DIR)/kernel/window64.c \
+	$(SRC64_DIR)/kernel/gui64.c $(SRC64_DIR)/kernel/console64.c \
 	$(SRC64_DIR)/kernel/memory64.c $(SRC64_DIR)/kernel/mtask64.c \
-	$(SRC64_DIR)/lib/hangul64.c $(SRC64_DIR)/lib/utf864.c \
+	$(SRC64_DIR)/lib/fifo64.c $(SRC64_DIR)/lib/hangul64.c \
+	$(SRC64_DIR)/lib/keymap64.c \
+	$(SRC64_DIR)/lib/utf864.c \
 	$(SRC64_DIR)/lib/kstring64.c
 A64_OBJS = $(patsubst $(A64_ARCH_DIR)/%.S,$(A64_BUILD_DIR)/%.o,\
 	$(filter %.S,$(A64_SRCS))) \

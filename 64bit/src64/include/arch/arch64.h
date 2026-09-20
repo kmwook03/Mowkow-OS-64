@@ -34,6 +34,7 @@ void arch64_mmu_finish_high(void);
 int arch64_mmu_self_test(void);
 void arch64_irqctl_init(void);
 void arch64_timer_init(struct FIFO64 *fifo);
+void arch64_timer_set_debug_output(int enabled);
 void arch64_input_init(struct FIFO64 *fifo);
 int arch64_fb_probe(struct BOOTINFO64 *bootinfo);
 void arch64_fb_set_hangul_font(const uint8_t *font);
@@ -41,8 +42,7 @@ int pcie64_probe_rp1(uint32_t *vendor_device, uint32_t *class_revision,
 	uint32_t *bar0, uint32_t *bar1, uint32_t *command_status,
 	uint32_t *root_bus_numbers, uint32_t *root_memory_base,
 	uint32_t *root_memory_limit);
-void pcie64_outbound_state(uint32_t *pci_base, uint32_t *base_limit,
-	uint32_t *base_high, uint32_t *limit_high, uint32_t *root_command);
+int pcie64_enable_rp1_dma(uint32_t state[4]);
 int rp164_probe(uint32_t bar1, uint32_t root_memory_base,
 	uint32_t command_status, uint32_t *chip_id, uint32_t *platform);
 int rp164_probe_uart0(uint32_t bar1, uint32_t root_memory_base,
@@ -53,6 +53,130 @@ int rp164_bar1_base(uint32_t bar1, uint32_t root_memory_base,
 	uintptr_t *virtual_base);
 int xhci64_probe_rp1(uintptr_t rp1_base, uint32_t capability[2],
 	uint32_t hcsparams1[2]);
+
+struct XHCI64_RESET_RESULT {
+	uint32_t command_before;
+	uint32_t status_before;
+	uint32_t command_after;
+	uint32_t status_after;
+};
+
+int xhci64_reset_rp1(uintptr_t rp1_base,
+	struct XHCI64_RESET_RESULT results[2]);
+
+struct XHCI64_START_RESULT {
+	uint32_t command;
+	uint32_t status;
+	uint32_t hcsparams2;
+	uint32_t port_status[3];
+};
+
+int xhci64_start_rp1(uintptr_t rp1_base,
+	struct XHCI64_START_RESULT *result);
+
+struct XHCI64_COMMAND_RESULT {
+	uint32_t event_status;
+	uint32_t event_control;
+	uint32_t command_pointer_low;
+	uint32_t controller_status;
+};
+
+int xhci64_noop_command(uintptr_t rp1_base,
+	struct XHCI64_COMMAND_RESULT *result);
+
+struct XHCI64_PORT_RESULT {
+	uint32_t port_id;
+	uint32_t protocol_major;
+	uint32_t status_before;
+	uint32_t status_after;
+};
+
+int xhci64_reset_connected_port(uintptr_t rp1_base,
+	struct XHCI64_PORT_RESULT *result);
+
+struct XHCI64_SLOT_RESULT {
+	uint32_t slot_id;
+	uint32_t event_status;
+	uint32_t event_control;
+	uint32_t command_pointer_low;
+};
+
+int xhci64_enable_slot(uintptr_t rp1_base,
+	struct XHCI64_SLOT_RESULT *result);
+
+struct XHCI64_ADDRESS_RESULT {
+	uint32_t device_address;
+	uint32_t slot_state;
+	uint32_t context_size;
+	uint32_t ep0_max_packet;
+	uint32_t event_status;
+	uint32_t event_control;
+	uint32_t command_pointer_low;
+};
+
+int xhci64_address_device(uintptr_t rp1_base, uint32_t port_id,
+	uint32_t port_speed, uint32_t slot_id,
+	struct XHCI64_ADDRESS_RESULT *result);
+
+struct XHCI64_DESCRIPTOR_RESULT {
+	uint32_t bcd_usb;
+	uint32_t device_class_protocol;
+	uint32_t ep0_max_packet;
+	uint32_t event_status;
+	uint32_t event_control;
+	uint32_t trb_pointer_low;
+};
+
+int xhci64_read_device_descriptor8(uintptr_t rp1_base, uint32_t slot_id,
+	struct XHCI64_DESCRIPTOR_RESULT *result);
+
+struct XHCI64_HID_RESULT {
+	uint32_t vendor_product;
+	uint32_t configuration_value;
+	uint32_t interface_number;
+	uint32_t endpoint_address;
+	uint32_t endpoint_max_packet;
+	uint32_t endpoint_interval;
+	uint32_t total_length;
+	uint32_t event_status;
+	uint32_t event_control;
+};
+
+int xhci64_find_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
+	struct XHCI64_HID_RESULT *result);
+
+struct XHCI64_CONFIGURE_RESULT {
+	uint32_t endpoint_id;
+	uint32_t endpoint_state;
+	uint32_t interval;
+	uint32_t event_status;
+	uint32_t event_control;
+	uint32_t command_pointer_low;
+};
+
+int xhci64_configure_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
+	uint32_t port_speed, const struct XHCI64_HID_RESULT *hid,
+	struct XHCI64_CONFIGURE_RESULT *result);
+
+struct XHCI64_KEY_RESULT {
+	uint32_t modifier;
+	uint32_t keycode;
+	uint32_t endpoint_id;
+	uint32_t event_status;
+	uint32_t event_control;
+	uint32_t trb_pointer_low;
+};
+
+int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid,
+	struct XHCI64_KEY_RESULT *result);
+int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid,
+	struct XHCI64_KEY_RESULT *result);
+int xhci64_keyboard_arm(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid);
+int xhci64_keyboard_poll(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid, uint8_t report[8]);
 
 void arch64_scheduler_init(void);
 uintptr_t arch64_scheduler_tick(uintptr_t frame);

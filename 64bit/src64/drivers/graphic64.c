@@ -3,7 +3,11 @@
  */
 
 #include <asmfunc64.h>
+#ifdef __aarch64__
+#include <arch/arch64.h>
+#endif
 #include <graphic64.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define PALETTE64_DAC_INDEX 0x03c8
@@ -30,23 +34,53 @@ static const uint8_t base_rgb[16 * 3] = {
 };
 
 static uint8_t cube_rgb[PALETTE64_APP_COUNT * 3];
+static uint8_t active_rgb[256 * 3];
 
 void set_palette64(int32_t start, int32_t end, const uint8_t *rgb)
 {
 	uint64_t rflags;
 	int32_t i;
+	const uint8_t *source;
 
+	if (start < 0 || end > 255 || start > end || rgb == NULL) {
+		return;
+	}
+	source = rgb;
+#ifdef __aarch64__
+	rflags = arch64_irq_save();
+#else
 	rflags = io_load_rflags();
 	io_cli();
 	io_out8(PALETTE64_DAC_INDEX, (uint8_t) start);
+#endif
 	for (i = start; i <= end; i++) {
+		active_rgb[i * 3 + 0] = source[0];
+		active_rgb[i * 3 + 1] = source[1];
+		active_rgb[i * 3 + 2] = source[2];
+		#ifdef __aarch64__
+		(void) i;
+		#else
 		/* DAC는 채널당 6비트라 8비트 값을 4로 나눈다. */
-		io_out8(PALETTE64_DAC_DATA, rgb[0] / 4);
-		io_out8(PALETTE64_DAC_DATA, rgb[1] / 4);
-		io_out8(PALETTE64_DAC_DATA, rgb[2] / 4);
-		rgb += 3;
+		io_out8(PALETTE64_DAC_DATA, source[0] / 4);
+		io_out8(PALETTE64_DAC_DATA, source[1] / 4);
+		io_out8(PALETTE64_DAC_DATA, source[2] / 4);
+		#endif
+		source += 3;
 	}
+	#ifdef __aarch64__
+	arch64_irq_restore(rflags);
+	#else
 	io_store_rflags(rflags);
+	#endif
+}
+
+uint32_t graphic64_rgb32(uint8_t index)
+{
+	uint32_t offset = (uint32_t) index * 3U;
+
+	return ((uint32_t) active_rgb[offset] << 16) |
+		((uint32_t) active_rgb[offset + 1U] << 8) |
+		(uint32_t) active_rgb[offset + 2U];
 }
 
 static void build_cube(void)

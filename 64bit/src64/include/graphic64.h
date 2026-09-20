@@ -14,6 +14,7 @@
 
 void set_palette64(int32_t start, int32_t end, const uint8_t *rgb);
 void init_palette64(void);
+uint32_t graphic64_rgb32(uint8_t index);
 
 /* 창이 자기 색표를 건다. rgb는 PALETTE64_APP_COUNT * 3 바이트.
    0-15는 건드리지 않는다. */

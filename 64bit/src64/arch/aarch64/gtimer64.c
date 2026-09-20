@@ -7,6 +7,7 @@
 
 static uint64_t timer_ticks;
 static uint32_t timer_interval;
+static int timer_debug_output;
 
 static void timer_reload64(void)
 {
@@ -24,9 +25,15 @@ void arch64_timer_init(struct FIFO64 *fifo)
 		timer_interval = 1;
 	}
 	timer_ticks = 0;
+	timer_debug_output = 1;
 	timer_reload64();
 	/* ENABLE=1, IMASK=0. */
 	__asm__ volatile ("msr cntp_ctl_el0, %0\n\tisb" :: "r" (1ULL) : "memory");
+}
+
+void arch64_timer_set_debug_output(int enabled)
+{
+	timer_debug_output = enabled != 0;
 }
 
 uintptr_t arch64_timer_handle_irq(uintptr_t frame)
@@ -35,7 +42,7 @@ uintptr_t arch64_timer_handle_irq(uintptr_t frame)
 	timer_reload64();
 	timer_ticks++;
 	frame = arch64_scheduler_tick(frame);
-	if (timer_ticks % TIMER_HZ == 0) {
+	if (timer_debug_output != 0 && timer_ticks % TIMER_HZ == 0) {
 		arch64_dbg_puts(arch64_scheduler_healthy() != 0 ? "M" : "?");
 	}
 	return frame;

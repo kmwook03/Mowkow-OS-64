@@ -14,12 +14,21 @@
 
 #define PCIE_MEM_WIN0_LO 0x400c
 #define PCIE_MEM_WIN0_HI 0x4010
+#define PCIE_MISC_MISC_CTRL 0x4008
+#define PCIE_MISC_MISC_CTRL_SCB_ACCESS_EN (1U << 12)
 #define PCIE_MISC_PCIE_STATUS 0x4068
 #define PCIE_STATUS_DL_ACTIVE (1U << 5)
 #define PCIE_STATUS_PHY_LINK_UP (1U << 4)
 #define PCIE_MEM_WIN0_BASE_LIMIT 0x4070
 #define PCIE_MEM_WIN0_BASE_HI 0x4080
 #define PCIE_MEM_WIN0_LIMIT_HI 0x4084
+#define PCIE_MISC_RC_BAR4_CONFIG_LO 0x40d4
+#define PCIE_MISC_RC_BAR4_CONFIG_HI 0x40d8
+#define PCIE_MISC_UBUS_BAR4_REMAP_LO 0x410c
+#define PCIE_MISC_UBUS_BAR4_REMAP_HI 0x4110
+#define PCIE_MISC_UBUS_BAR_REMAP_ENABLE (1U << 0)
+#define PCIE_RC_BAR_SIZE_64GB 0x15U
+#define RP1_SYSTEM_RAM_PCI_HI 0x10U
 #define PCIE_EXT_CFG_DATA 0x8000
 #define PCIE_EXT_CFG_INDEX 0x9000
 
@@ -84,25 +93,41 @@ static int configure_outbound_window64(uint32_t pci_base, uint32_t pci_limit)
 	return 0;
 }
 
-void pcie64_outbound_state(uint32_t *pci_base, uint32_t *base_limit,
-	uint32_t *base_high, uint32_t *limit_high, uint32_t *root_command)
+int pcie64_enable_rp1_dma(uint32_t state[4])
 {
-	if (pci_base != NULL) {
-		*pci_base = *(volatile uint32_t *) (pcie2 + PCIE_MEM_WIN0_LO);
+	uint32_t misc;
+
+	if (state == NULL) {
+		return -1;
 	}
-	if (base_limit != NULL) {
-		*base_limit = *(volatile uint32_t *)
-			(pcie2 + PCIE_MEM_WIN0_BASE_LIMIT);
+	/* RP1 bus masters address system RAM at PCIe 0x10_00000000 + physical.
+	   BCM2712 RC BAR4 translates that 64 GiB PCI aperture to CPU address 0. */
+	misc = *(volatile uint32_t *) (pcie2 + PCIE_MISC_MISC_CTRL);
+	*(volatile uint32_t *) (pcie2 + PCIE_MISC_MISC_CTRL) =
+		misc | PCIE_MISC_MISC_CTRL_SCB_ACCESS_EN;
+	*(volatile uint32_t *) (pcie2 + PCIE_MISC_RC_BAR4_CONFIG_LO) =
+		PCIE_RC_BAR_SIZE_64GB;
+	*(volatile uint32_t *) (pcie2 + PCIE_MISC_RC_BAR4_CONFIG_HI) =
+		RP1_SYSTEM_RAM_PCI_HI;
+	*(volatile uint32_t *) (pcie2 + PCIE_MISC_UBUS_BAR4_REMAP_HI) = 0;
+	*(volatile uint32_t *) (pcie2 + PCIE_MISC_UBUS_BAR4_REMAP_LO) =
+		PCIE_MISC_UBUS_BAR_REMAP_ENABLE;
+	__asm__ volatile ("dsb sy" ::: "memory");
+
+	state[0] = *(volatile uint32_t *)
+		(pcie2 + PCIE_MISC_RC_BAR4_CONFIG_LO);
+	state[1] = *(volatile uint32_t *)
+		(pcie2 + PCIE_MISC_RC_BAR4_CONFIG_HI);
+	state[2] = *(volatile uint32_t *)
+		(pcie2 + PCIE_MISC_UBUS_BAR4_REMAP_LO);
+	state[3] = *(volatile uint32_t *) (pcie2 + PCIE_MISC_MISC_CTRL);
+	if ((state[0] & 0x1fU) != PCIE_RC_BAR_SIZE_64GB ||
+			state[1] != RP1_SYSTEM_RAM_PCI_HI ||
+			(state[2] & PCIE_MISC_UBUS_BAR_REMAP_ENABLE) == 0 ||
+			(state[3] & PCIE_MISC_MISC_CTRL_SCB_ACCESS_EN) == 0) {
+		return -2;
 	}
-	if (base_high != NULL) {
-		*base_high = *(volatile uint32_t *) (pcie2 + PCIE_MEM_WIN0_BASE_HI);
-	}
-	if (limit_high != NULL) {
-		*limit_high = *(volatile uint32_t *) (pcie2 + PCIE_MEM_WIN0_LIMIT_HI);
-	}
-	if (root_command != NULL) {
-		*root_command = *(volatile uint16_t *) (pcie2 + 0x04);
-	}
+	return 0;
 }
 
 int pcie64_probe_rp1(uint32_t *vendor_device, uint32_t *class_revision,

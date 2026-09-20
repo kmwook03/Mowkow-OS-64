@@ -251,7 +251,7 @@ static void serial_sheet64_smoke(void)
 	}
 	smoke_buf_b[1 * 16 + 1] = 99;   /* 투명 픽셀 */
 
-	ctl = shtctl64_init(&memman64, smoke_vram, SMOKE_W, SMOKE_H, SMOKE_STRIDE);
+	ctl = shtctl64_init(&memman64, smoke_vram, SMOKE_W, SMOKE_H, SMOKE_STRIDE, 8);
 	if (ctl == NULL) {
 		serial_print("sheet64 smoke=alloc-failed\r\n");
 		return;

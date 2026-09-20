@@ -405,3 +405,822 @@ MTASK: MMMMM...
 
 오류 응답 또는 잘못된 capability header가 나오면 원시 register 값을 표시하고
 panic code 15를 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6a 검증 완료.
+- 두 controller 모두 `CAPLENGTH/HCIVERSION=0x01100020`,
+  `HCSPARAMS1=0x03000440`을 반환했다. 각각 xHCI 1.1, capability length 0x20,
+  64 device slots, 4 interrupters, 3 ports를 제공한다.
+
+### M6b — controller halt/reset lifecycle
+
+M6b는 두 controller의 Run/Stop을 내리고 `USBSTS.HCH`를 확인한 뒤
+`USBCMD.HCRST`를 수행한다. 각 단계는 1초 timeout을 두며 reset bit와
+`USBSTS.CNR`이 모두 해제되고 controller가 halted 상태이면 성공이다. 이 단계부터
+USB controller 상태를 변경하므로 연결된 장치는 일시적으로 reset된다.
+
+```text
+M6b: RP1 xHCI reset complete, xhci0 cmd/sts=0x......../0x........ xhci1 cmd/sts=0x......../0x........
+MTASK: MMMMM...
+```
+
+halt, host-controller reset 또는 Controller Not Ready 해제에 실패하면 초기 command와
+status를 표시하고 panic code 16을 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6b 검증 완료.
+- 두 controller 모두 reset 뒤 `USBCMD=0x00000000`,
+  `USBSTS=0x00000001(HCH)`인 정상 halted 상태가 됐다.
+
+### M6c — xHCI0 DMA structures와 Run
+
+M6c는 xHCI0에 64-slot DCBAA, 256-entry command ring, 256-entry event ring과 단일
+ERST entry를 설치한다. HCSPARAMS2가 요구하면 최대 4개의 scratchpad도 제공한다.
+RP1 bus master가 system RAM을 보는 inbound alias `0x10_00000000 + physical`을 DMA
+주소로 사용하며 controller를 Run 상태로 전환해 `USBSTS.HCH` 해제를 확인한다.
+xHCI1은 M6b의 halted 상태로 남겨 둔다.
+
+성공 문구의 세 `PORTSC` 값은 연결된 USB 장치에 따라 달라질 수 있다.
+
+```text
+M6c: RP1 xHCI0 running, cmd/sts=0x......../0x........ ports=0x......../0x......../0x........
+MTASK: MMMMM...
+```
+
+DMA 구조 설치 또는 Run 전환이 실패하면 `HCSPARAMS2`와 command/status를 표시하고
+panic code 17을 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6c 검증 완료.
+- xHCI0은 `USBCMD=0x00000001`, `USBSTS=0`으로 Run 상태가 됐고, 세 포트는
+  모두 `PORTSC=0x000002a0`이었다. 이후에도 `M` 출력이 계속됐다.
+
+### M6d — command/event ring DMA round-trip
+
+M6d는 command ring에 cycle bit가 설정된 No-op Command TRB를 넣고 doorbell 0을
+울린다. event ring을 cache invalidate하며 polling해 Command Completion Event,
+Success completion code와 원래 command TRB의 RP1 DMA 주소를 모두 확인한다. 이를
+통해 command fetch와 event write 양방향 DMA 및 cache maintenance를 검증한다.
+
+```text
+M6d: RP1 xHCI0 No-op completion, event=0x......../0x........ ptr-lo=0x........
+MTASK: MMMMM...
+```
+
+1초 안에 event cycle bit가 바뀌지 않거나 event type, completion code, command
+pointer가 다르면 원시 event와 `USBSTS`를 표시하고 panic code 18을 반복한다.
+
+#### No-op command의 event가 생성되지 않음
+
+- 증상: `status=0xfffffffe`, event와 pointer가 모두 0이고 `USBSTS=0`인 채로
+  timeout이 발생했다.
+- 해석: controller는 Run 상태를 유지했지만 command ring을 DMA로 가져오지
+  못했다. 따라서 xHCI register/ring 설정 문제가 아니라 RP1에서 system RAM으로
+  향하는 PCIe inbound translation 문제다.
+- 원인: command/event buffer에는 RP1의 system-RAM alias
+  `0x10_00000000 + physical`을 사용했지만, BCM2712 root complex의 해당 64 GiB
+  inbound aperture를 RC BAR4에 설정하지 않았다.
+- 해결: RC BAR4를 PCIe `0x10_00000000`, 64 GiB 크기로 설정하고 CPU address 0으로
+  UBUS remap한다. `MISC_CTRL.SCB_ACCESS_EN`도 명시적으로 켠 뒤 xHCI DMA 구조를
+  설치한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6d 검증 완료.
+- Command Completion Event는 `status=0x01000000`, `control=0x00008401`,
+  command pointer low `0x002a1000`을 반환했고 이후에도 `M` 출력이 계속됐다.
+- 이 결과로 RC BAR4 inbound translation, RP1의 command TRB fetch, event TRB write와
+  양방향 cache maintenance가 정상 동작함을 확인했다.
+
+### M6e — 연결 포트 감지와 root-port reset
+
+M6e는 xHCI0의 Supported Protocol extended capability를 따라 각 root port가 USB 2.x
+또는 USB 3.x인지 판별한다. 3초 안에 연결된 포트를 찾은 뒤 USB 2.x에는 Port Reset,
+USB 3.x에는 Warm Port Reset을 요청하고 50ms recovery delay 뒤 `CCS`, `PED`, port
+power와 negotiated speed를 확인한다.
+
+키보드를 부팅 전부터 연결하면 No-op Command Completion보다 Port Status Change
+Event가 먼저 올 수 있다. M6d는 command event가 나올 때까지 앞선 비동기 event를
+소비하고 ERDP를 전진시키므로 이 경우에도 그대로 통과한다.
+
+실기 검증 전 Raspberry Pi 5의 파란색 USB 3 Type-A 포트에 USB 키보드를 꽂고
+전원을 인가한다. 성공하면 다음 줄과 계속 증가하는 `M`을 확인한다.
+
+```text
+M6e: RP1 xHCI0 port reset complete, port/protocol=0x......../0x........ portsc=0x......../0x........
+MTASK: MMMMM...
+```
+
+연결된 포트가 없거나 protocol capability를 찾지 못하거나 reset/enable이 완료되지
+않으면 raw port와 `PORTSC` 전후 값을 표시하고 panic code 19를 반복한다.
+
+#### Port Reset 요청과 함께 port power가 꺼짐
+
+- 증상: USB 2.x port 1을 찾았지만 `status=0xfffffffb(-5)`, reset 전후
+  `PORTSC=0x000206e1/0x00020080`로 완료 change bit가 설정되지 않았다.
+- 해석: reset 전 값에는 `PP(bit 9)`가 있었지만 이후 값에서는 사라졌으며 port link
+  state도 Polling에서 Disabled로 바뀌었다. 즉 reset 자체가 실패한 것이 아니라
+  reset 요청을 기록할 때 root-port 전원을 함께 껐다.
+- 원인: `PORTSC`를 변경할 때 RO/RWS 필드만 보존하고 RW1C 필드는 0으로 만드는
+  neutral mask를 `0x0000fde9`로 잘못 계산해 `PP=0x200`을 빠뜨렸다.
+- 해결: port power까지 보존하는 `0x0000ffe9`로 수정했다. 기존 change bit는
+  기록하지 않으므로 의도치 않게 clear하지 않으면서 `PP`, link state와 protocol
+  speed 필드를 유지한 채 PR/WPR만 요청한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6e 검증 완료.
+- xHCI0의 USB 2.x port 1이 `PORTSC=0x000206e1`로 연결 감지됐고, reset 후
+  `0x00220603`에서 `CCS`, `PED`, `PP`, speed ID 1과 `PRC`를 확인했다.
+- 이후에도 `M` 출력이 계속되어 port reset과 50ms recovery delay 뒤에도 기존
+  timer/scheduler가 정상 동작함을 확인했다.
+
+### M6f — Enable Slot command
+
+M6f는 command ring의 다음 TRB에 Enable Slot Command를 넣고 doorbell 0을 울린다.
+M6e의 port reset이 만든 Port Status Change Event가 먼저 있으면 이를 소비한 뒤
+Command Completion Event를 찾아 success completion code, command pointer와 할당된
+slot ID를 검증한다. command/event ring의 producer/consumer 위치와 cycle state는
+이 단계부터 다음 명령에서도 이어서 사용할 수 있도록 유지한다.
+
+M6e와 동일하게 USB 키보드를 연결한 채 새 이미지를 부팅한다. 추가 조작은 필요
+없다. 성공 시 다음 줄과 계속 증가하는 `M`을 확인한다.
+
+```text
+M6f: RP1 xHCI0 slot enabled, slot=0x........ event=0x01000000/0x........ ptr-lo=0x........
+MTASK: MMMMM...
+```
+
+Enable Slot completion이 timeout, 오류 completion code, 잘못된 command pointer 또는
+범위를 벗어난 slot ID를 반환하면 원시 event 값을 표시하고 panic code 20을 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6f 검증 완료.
+- Enable Slot은 slot 1을 할당했고 Command Completion Event는
+  `status=0x01000000`, `control=0x01008401`, command pointer low
+  `0x002a1010`이었다. 이후에도 `M` 출력이 계속됐다.
+
+### M6g — Device/EP0 context와 Address Device
+
+M6g는 controller가 알린 32/64-byte context 크기에 맞춰 Input Context, Device
+Context와 EP0 transfer ring을 만든다. slot context에는 M6e의 root-port 번호와
+negotiated speed를, EP0 context에는 속도에 맞는 max packet size와 dequeue pointer를
+설정하고 DCBAA의 M6f slot에 Device Context를 연결한다. Address Device Command가
+완료되면 controller가 기록한 USB device address가 0이 아니고 slot state가
+Addressed(2)인지 확인한다.
+
+키보드는 같은 포트에 그대로 연결한다. 성공 시 다음 줄과 계속 증가하는 `M`을
+확인한다.
+
+```text
+M6g: RP1 xHCI0 device addressed, address/state=0x......../0x00000002 ctx/mps=0x......../0x........
+MTASK: MMMMM...
+```
+
+context 구성, Address Device completion 또는 output slot context 검증이 실패하면
+event와 context 진단값을 표시하고 panic code 21을 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6g 검증 완료.
+- controller는 64-byte context 형식을 사용했고 EP0 초기 max packet은 8이었다.
+  Address Device 뒤 USB address 1과 Addressed slot state 2를 확인했다.
+- 이후에도 `M` 출력이 계속되어 Device Context와 EP0 ring을 설치한 뒤에도 기존
+  timer/scheduler가 정상 동작함을 확인했다.
+
+### M6h — EP0 GET_DESCRIPTOR 8-byte transfer
+
+M6h는 EP0 transfer ring에 Setup/Data/Status Stage TRB로 구성한 표준
+`GET_DESCRIPTOR(Device)` control transfer를 넣고 slot doorbell의 endpoint target 1을
+울린다. Status Stage의 Transfer Event가 success인지, residual length가 0인지,
+slot/endpoint/TRB pointer가 모두 일치하는지 확인한 뒤 device descriptor 첫 8바이트의
+length, type, USB version, device class/subclass/protocol과 `bMaxPacketSize0`을 검증한다.
+
+키보드는 같은 포트에 그대로 연결한다. 성공 시 다음 줄과 계속 증가하는 `M`을
+확인한다.
+
+```text
+M6h: USB device descriptor8, usb/class=0x......../0x........ mps=0x........ event=0x01000000/0x........
+MTASK: MMMMM...
+```
+
+control transfer timeout, 오류 completion, 잘못된 event routing 또는 descriptor
+header/max-packet 검증 실패 시 원시 event 값을 표시하고 panic code 22를 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6h 검증 완료.
+- descriptor 첫 8바이트에서 USB version `0x0110`, device class/subclass/protocol 0,
+  `bMaxPacketSize0=8`을 확인했다.
+- Transfer Event는 `status=0x01000000`, `control=0x01018001`이었고 이후에도
+  `M` 출력이 계속됐다.
+
+### M6i — 전체 descriptor와 HID boot keyboard 탐색
+
+M6i는 18-byte Device Descriptor, 9-byte Configuration Descriptor header, 그리고
+header의 `wTotalLength`만큼 전체 configuration을 차례로 EP0에서 읽는다. descriptor
+chain을 경계 검사하며 순회해 class/subclass/protocol이 `3/1/1`인 HID boot keyboard
+interface와 interrupt-IN endpoint를 찾고 configuration/interface/endpoint 번호,
+max packet size와 interval을 보존한다.
+
+키보드는 같은 포트에 그대로 연결한다. 성공 시 다음 줄과 계속 증가하는 `M`을
+확인한다. `vid/pid`는 little-endian으로 vendor ID가 하위 16비트에 표시된다.
+
+```text
+M6i: USB boot keyboard found, vid/pid=0x........ cfg/intf/ep=0x......../0x......../0x........ mps/interval=0x......../0x........
+MTASK: MMMMM...
+```
+
+descriptor 전송/형식/길이가 잘못됐거나 boot-keyboard interrupt-IN endpoint가 없으면
+부분 파싱 결과와 마지막 event를 표시하고 panic code 23을 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6i 검증 완료.
+- keyboard는 VID `0x040b`, PID `0x0a67`, configuration 1, interface 0의 HID boot
+  keyboard이며 interrupt-IN endpoint `0x81`, max packet 8, interval 1ms였다.
+- 이후에도 `M` 출력이 계속되어 연속 EP0 transfer와 descriptor parser 동작을
+  확인했다.
+
+### M6j — SET_CONFIGURATION과 interrupt endpoint 구성
+
+M6j는 EP0에서 표준 `SET_CONFIGURATION` 요청을 완료한 뒤 interrupt-IN endpoint의
+DCI를 endpoint address에서 계산한다. output slot context를 input context로 복사해
+Context Entries를 확장하고, full-speed interval을 xHCI microframe exponent로 변환해
+Interrupt-IN Endpoint Context와 전용 transfer ring을 설치한다. Configure Endpoint
+Command 완료 후 output endpoint state가 Running(1)인지 확인한다.
+
+키보드는 같은 포트에 그대로 연결한다. 성공 시 다음 줄과 계속 증가하는 `M`을
+확인한다.
+
+```text
+M6j: USB keyboard configured, ep/state/interval=0x......../0x00000001/0x........ event=0x01000000/0x........
+MTASK: MMMMM...
+```
+
+SET_CONFIGURATION, Configure Endpoint completion 또는 endpoint state 검증이 실패하면
+부분 상태와 command event를 표시하고 panic code 24를 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6j 검증 완료.
+- endpoint `0x81`은 DCI 3, Running state 1이 됐고 full-speed 1ms polling
+  interval은 xHCI interval 3으로 설정됐다. Configure Endpoint event는
+  `status=0x01000000`, `control=0x01008401`이었다.
+- 이후에도 `M` 출력이 계속되어 SET_CONFIGURATION과 endpoint context 설치를
+  확인했다.
+
+### M6k — HID boot protocol과 첫 interrupt report
+
+M6k는 HID class `SET_PROTOCOL(boot)` 요청을 interface 0에 보내고 interrupt-IN
+transfer ring에 report buffer를 가리키는 Normal TRB를 제출한다. 화면에 안내를 먼저
+표시하고 10초 동안 Transfer Event를 기다린다. 8-byte boot keyboard report에서
+modifier와 첫 non-zero keycode를 확인한다.
+
+새 이미지로 부팅해 다음 안내가 나오면 10초 안에 `A` 키를 한 번 누른다. HID usage
+ID에서 `A`는 `0x04`이므로 modifier 없이 눌렀다면 key 값이 4여야 한다.
+
+```text
+M6k: press A on the USB keyboard within 10 seconds
+M6k: USB keyboard report received, ep/mod/key=0x00000003/0x00000000/0x00000004 event=0x01000000/0x........
+MTASK: MMMMM...
+```
+
+SET_PROTOCOL, interrupt transfer, event routing 또는 non-zero report 검증이 실패하면
+원시 report/event 값을 표시하고 panic code 25를 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6k 검증 완료.
+- `A` 입력은 DCI 3에서 modifier 0, HID usage `0x04`로 수신됐고 Transfer Event는
+  `status=0x01000000`, `control=0x01038001`이었다.
+- 이후에도 `M` 출력이 계속되어 HID boot protocol과 실제 interrupt-IN DMA 경로를
+  확인했다.
+
+### M6l — key release와 KEY64 make/break 변환
+
+M6l는 M6k의 `A` 입력 뒤 interrupt-IN TRB를 하나 더 제출해 modifier와 모든 key
+usage가 0인 release report를 실제 장치에서 받는다. 새 `usbhid64.c`의 usage table은
+HID usage를 공용 console이 쓰는 Set-1/`KEY64_EXT` 표현으로 변환하며 release에는
+하위 바이트의 break bit를 붙인다.
+
+M6k 안내에서 `A`를 누른 뒤 손을 뗀다. 이미 짧게 눌렀다면 release report가 endpoint에
+대기하므로 M6l 안내 직후 완료될 수 있다.
+
+```text
+M6l: release A on the USB keyboard within 10 seconds
+M6l: USB HID A make/break translated=0x0000001e/0x0000009e event=0x01000000/0x........
+MTASK: MMMMM...
+```
+
+release report, Transfer Event 또는 usage 변환이 실패하면 원시 값을 표시하고 panic
+code 26을 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6l 검증 완료.
+- HID usage `0x04`의 make/break가 공용 key 표현 `0x001e/0x009e`로 변환됐고,
+  release Transfer Event는 `status=0x01000000`, `control=0x01038001`이었다.
+- 이후에도 `M` 출력이 계속됐다.
+
+### M6 정상 출력 축약
+
+이 단계에서 M6a부터 M6i까지의 정상 출력을 먼저 한 줄로 합쳤으며, M6u 검증 완료
+뒤에는 아래 `화면 출력 축약` 절처럼 M6a부터 M6u 전체를 최종 한 줄로 합쳤다.
+각 단계의 상세 실패 진단과 panic code는 계속 유지한다.
+
+### M6m — 공용 event FIFO 전달
+
+M6m는 M6l에서 물리적으로 확인한 `A` make/break를 각각 `EVENT64_KEYBOARD`로 감싸
+공용 `FIFO64`에 넣는다. FIFO에서 두 이벤트를 다시 꺼내 순서, type, data와 최종
+empty 상태를 확인한다. 다음 단계에서 지속적인 USB report producer를 기존 console
+consumer에 연결할 때 사용하는 이벤트 형식과 큐 경로를 검증하는 단계다.
+
+M6k/M6l과 동일하게 `A`를 눌렀다 놓는다. 성공 시 다음 문구와 계속 증가하는 `M`을
+확인한다.
+
+```text
+M6m: USB keyboard FIFO make/break OK
+MTASK: MMMMM...
+```
+
+변환 또는 FIFO put/get 검증이 실패하면 잔여 이벤트 수와 마지막 type/data를 표시하고
+panic code 27을 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6m 검증 완료.
+- 물리적으로 수신한 `A` make/break가 `EVENT64_KEYBOARD` type과 `0x1e/0x9e`
+  data로 FIFO에 들어갔고 같은 순서로 소비된 뒤 queue가 비는 것을 확인했다.
+- 이후에도 `M` 출력이 계속됐다.
+
+### M6n — HID report 상태 차이와 modifier 순서
+
+M6n은 이전 8-byte boot report 상태를 보존하고 새 report와 비교해 modifier와 최대
+6-key rollover의 press/release만 FIFO event로 만든다. modifier press는 일반 key
+press보다 먼저, 일반 key release는 modifier release보다 먼저 전달해 기존 console의
+modifier 상태 추적 순서를 보장한다.
+
+안내가 나오면 왼쪽 Shift를 누른 채 `A`를 누른 뒤 둘 다 뗀다. 성공 기준은 FIFO에
+`0x2a, 0x1e, 0x9e, 0xaa`가 순서대로 들어가는 것이다.
+
+```text
+M6n: press and release Left Shift+A within 10 seconds
+M6n: HID report diff Shift+A make/break OK
+MTASK: MMMMM...
+```
+
+물리 report의 modifier/usage가 다르거나 report-diff/FIFO 순서가 틀리면 진단값을
+표시하고 panic code 28을 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6n 검증 완료.
+- 왼쪽 Shift+A의 물리 report에서 `0x2a, 0x1e, 0x9e, 0xaa` 순서의
+  `EVENT64_KEYBOARD` make/break가 생성됐고 이후에도 `M` 출력이 계속됐다.
+
+### M6o — 상시 non-blocking interrupt-IN producer
+
+M6o는 interrupt-IN Normal TRB 하나를 항상 endpoint에 대기시킨다. 메인 heartbeat
+loop는 event cycle bit만 non-blocking으로 검사하며, 완료 report를 공용 FIFO로
+변환한 직후 다음 TRB를 재등록한다. 따라서 NAK 중인 키보드를 기다리느라 scheduler나
+ACT LED heartbeat를 멈추지 않는다.
+
+M6n까지 완료된 뒤 `MTASK:`의 `M`이 증가하는 동안 `C`를 누른다. `C`의 KEY64 make
+code `0x2e`가 live FIFO에서 나오면 다음 문구를 한 번 표시하고 heartbeat를 계속한다.
+
+```text
+M6o: press C while MTASK is running
+MTASK: MMMM...
+M6o: live USB FIFO C event OK
+MTASK: MMMM...
+```
+
+TRB 등록, event 검증, report 변환 또는 재등록이 실패하면 panic code 29를 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6o 검증 완료.
+- `MTASK:` 뒤에 `M`이 네 번 이상 증가한 상태에서 `C`를 눌러 live FIFO make event
+  수신을 확인했고, 이후에도 `M` 출력이 계속됐다.
+- 초기 출력은 성공 문구를 별도 줄에 쓴 뒤 `MTASK:` 레이블을 다시 표시했기 때문에
+  성공 뒤의 `M`이 1개부터 다시 시작한 것처럼 보였다. scheduler나 heartbeat
+  counter가 reset된 것은 아니다. 성공 표식을 기존 `MTASK:` 줄 안에 삽입해 앞뒤의
+  `M`이 한 흐름으로 보이도록 수정했다.
+
+### M6p — live release와 연속 TRB 재등록
+
+M6p는 M6o에서 `C` make를 받은 직후 재등록한 interrupt-IN TRB가 `C` release report를
+받는지 확인한다. report-diff가 KEY64 break `0xae`를 FIFO에 넣어야 성공이다. 성공
+표식은 `MTASK:` 줄 안에 출력하므로 scheduler 진행이 초기화된 것처럼 보이지 않는다.
+
+```text
+M6o/p: press and release C while MTASK is running
+MTASK: MMMM [M6o: C make OK] [M6p: C break + rearm OK] MMMM...
+```
+
+별도의 추가 키는 필요 없다. `C`를 눌렀다 떼기만 하면 된다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6p 검증 완료.
+- 화면에 `MMMM [M6o: C make OK] M[M6p: C break + rearm OK] MMMM...`가
+  표시됐다. make와 release 사이 및 release 이후에도 `M`이 증가해 상시 input
+  polling이 scheduler/heartbeat를 막지 않음을 확인했다.
+
+### M6q — 공용 keyboard modifier consumer 연결
+
+M6q는 x86 PS/2 backend와 같은 `keyboard64_track_modifier()`, `keyboard64_shift()`,
+`keyboard64_ctrl()`, `keyboard64_alt()` API를 AArch64 backend에 제공한다. M6n에서
+만든 Shift+A FIFO 네 이벤트를 실제 공용 modifier consumer에 순서대로 전달해 Shift
+make 직후 상태 1, A make/break 동안 상태 1, Shift break 직후 상태 0을 확인한다.
+상시 M6o/p FIFO도 같은 consumer를 거치므로 이후 console 연결 시 modifier 상태를
+별도로 변환하지 않는다.
+
+정상 출력은 화면 절약을 위해 M6n과 한 줄로 합친다.
+
+```text
+M6n/q: HID report diff + shared modifier state OK
+```
+
+실기 절차는 M6n과 동일하다. 왼쪽 Shift+A를 눌렀다 놓고, 이후 M6o/p에서 `C`를
+눌렀다 놓는다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6q 검증 완료.
+- M6n/q를 통과한 뒤 `MMMM [M6o: C make OK] MM[M6p: C break + rearm OK]
+  MMMM...`가 계속 표시됐다. 이는 공용 modifier consumer 검증과 상시 입력 경로가
+  함께 정상 동작했음을 뜻한다.
+
+### M6r — 공용 console keymap 연결
+
+M6r은 `console64.c`의 영문/Shift/한글-mode Set-1 keymap을 `lib/keymap64.c`로
+분리한다. x86_64 console의 기존 변환 경로도 이 함수를 사용하고, AArch64 live FIFO
+consumer 역시 같은 `keymap64_translate()`를 호출한다. `C` make `0x2e`가 modifier
+상태 0에서 문자 `c`로 변환돼야 M6o 성공 표식을 표시한다.
+
+화면 공간을 아끼기 위해 M6o와 한 표식으로 합친다.
+
+```text
+MTASK: MMMM [M6o/r: C make + keymap OK] M[M6p: C break + rearm OK] MMMM...
+```
+
+실기 절차는 M6o/p와 동일하게 `C`를 눌렀다 놓는 것이다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6r 검증 완료.
+- 화면에 `MMMM [M6o/r: C make OK + keymap OK] M[M6p: C break + rearm
+  OK] MMMM...`가 표시되고 이후에도 heartbeat가 계속됐다. USB usage부터 공용
+  KEY64와 공용 console keymap을 거쳐 문자 `c`까지 이어지는 경로를 확인했다.
+
+### M6s — live 두벌식 자모와 공용 한글 composer
+
+M6s는 상시 USB FIFO에서 `R`, `K` make를 받아 공용 keymap으로 소문자 `r`, `k`로
+변환한다. `hangul64_key_to_cho('r')`의 초성 ㄱ과
+`hangul64_key_to_jung('k')`의 중성 ㅏ를 공용 `HANGUL64` 상태에 넣고,
+`hangul64_compose_utf8()` 결과가 `가(U+AC00)`인지 확인한다.
+
+M6o/p의 `C`를 눌렀다 놓은 뒤 `R`, `K`를 차례로 눌렀다 놓는다. 성공 표식은 기존
+`MTASK:` 흐름 안에 표시된다.
+
+```text
+M6o-s: press/release C, then R, then K during MTASK
+MTASK: MMM [M6o/r: C make + keymap OK] M[M6p: C break + rearm OK] MM[M6s: live Hangul rk -> U+AC00 OK] MMM...
+```
+
+조합 결과가 U+AC00이 아니면 panic code 30을 반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6s 검증 완료.
+- `C` release 뒤 사용자가 입력할 때까지 `M`이 계속 증가했고, `R`, `K` 입력 뒤
+  `[M6s: live Hangul rk -> U+AC00 OK]`가 표시된 후에도 heartbeat가 지속됐다.
+- M6p와 M6s 사이의 많은 `M`은 테스트 입력이 늦어진 동안 출력된 것으로, USB
+  endpoint가 NAK 상태일 때도 scheduler가 막히지 않는다는 추가 확인 결과다.
+
+### M6t — live 조합 UTF-8의 framebuffer 렌더링
+
+M6t는 M6s가 공용 composer로 만든 UTF-8 세 바이트를 상수 문구로 대체하지 않고
+그대로 `arch64_dbg_puts()`에 전달한다. SD 카드에서 읽은 H04.FNT renderer가 실제
+`가` glyph를 표시하면 USB 입력부터 keymap, 두벌식 조합, UTF-8 decode와 framebuffer
+한글 출력까지의 end-to-end 경로가 이어진 것이다.
+
+출력 공간을 아끼기 위해 M6s와 같은 표식을 사용한다.
+
+```text
+[M6s/t: live Hangul rk -> 가 OK]
+```
+
+실기에서는 `가`가 깨진 바이트나 빈 칸이 아닌 정상 한글 모양인지 함께 확인한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6t 검증 완료.
+- live 조합 buffer가 `[M6s/t: live Hangul rk -> 가 OK]`의 정상 `가` glyph로
+  표시됐고 이후에도 `M` 출력이 지속됐다.
+
+### M6u — 공용 순수 두벌식 상태 전이와 복수 음절
+
+M6u는 console의 화면 상태와 무관하게 사용할 수 있는 `hangul64_feed()`를 추가한다.
+입력마다 확정된 UTF-8 최대 두 글자, ASCII passthrough와 다음 preedit 상태를
+반환하며, 단모음/겹모음, 단받침/겹받침, 받침의 다음 초성 이동 규칙을 처리한다.
+
+M6s/t의 `가` 확인 뒤 Shift 없이 `G K S R M F`를 차례로 눌렀다 놓는다. 두벌식 문자열
+`gksrmf`에서 첫 음절 `한`이 commit되고 마지막 preedit `글`을 합친 결과가
+`한글`인지 검사한 뒤 실제 UTF-8 buffer를 렌더링한다.
+
+```text
+M6 test: A, Shift+A, C, R K, G K S R M F (no Shift)
+MTASK: MMMMM...[M6a-u: xHCI + USB HID + FIFO + keymap + 한글 OK] MMMMM...
+```
+
+상태 전이, commit/preedit 결합 또는 UTF-8 결과가 다르면 panic code 31을 반복한다.
+
+#### Troubleshooting: `gksrmf` 입력을 놓쳐 M6u가 진행되지 않음
+
+- 증상: M6s/t까지 성공하고 `G K S R M F`를 입력해도 heartbeat `M`만 계속되며
+  M6u 표식이 나타나지 않는다.
+- 원인: live 입력 루프가 ACT LED 점멸을 위해 500 ms씩 두 번 blocking delay를
+  실행했다. xHCI interrupt endpoint를 초당 한 번만 poll/rearm하므로 보통 속도의
+  연속 입력에서 중간 HID report가 유실됐다. `R K`처럼 천천히 입력한 짧은 시험은
+  우연히 통과할 수 있었다.
+- 해결: generic counter deadline으로 500 ms LED 상태를 비차단 전환하고, 메인
+  루프가 쉬지 않고 xHCI completion을 poll/rearm하도록 변경했다. scheduler heartbeat
+  호출 빈도와 LED 점멸 주기는 기존과 동일하게 유지한다.
+- 재검증: 안내 순서대로 입력하고 마지막 `G K S R M F`는 Shift 없이 보통
+  속도로 입력하여 통합 M6a-u 성공 표식과 이후의 `M` 출력을 확인한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6u 검증 완료.
+- M6s/t 뒤 `G K S R M F`를 연속 입력했을 때
+  `[M6u: full automaton -> 한글 OK]`가 표시되고 이후에도 `M` heartbeat가
+  지속됐다.
+- 이 결과로 비차단 ACT LED 전환 중의 연속 xHCI poll/rearm, HID report 보존,
+  공용 keymap과 `hangul64_feed()`의 복수 음절 commit/preedit 결합 및 실제 UTF-8
+  framebuffer 출력 경로를 확인했다.
+
+### M6v — 앱 raw TTY 한글 입력과 공용 오토마타 연결
+
+M6v는 나노 같은 앱이 사용하는 `console64` raw TTY 경로의 별도 두벌식 상태 전이를
+제거하고, M6u에서 실기로 검증한 `hangul64_feed()`를 직접 사용한다. 확정된 글자는
+`TTY_KIND_CHAR`, 현재 조합 글자는 `TTY_KIND_PREEDIT`으로 기존 ABI 그대로 전달한다.
+따라서 x86_64 앱 동작과 ABI를 바꾸지 않으면서 AArch64 USB 입력에서 검증한 상태기를
+실제 앱 입력 경로와 공유한다.
+
+이 단계는 장치 제어나 AArch64 실행 경로를 변경하지 않는다. x86_64 QEMU 부팅 시
+실행되는 `console64_hangul_smoke()`가 raw TTY 경로를 거쳐 있/닦/밖/겪/앉/없 및
+받침 불가 쌍자음 회귀를 검사하므로 별도의 Raspberry Pi 물리 재검증은 필요하지
+않다.
+
+- 2026-09-20: `make x86_64`와 `make aarch64` 빌드를 통과했다.
+- x86_64 QEMU 부팅에서 `hangul64 smoke=ok`와 정상 콘솔 prompt를 확인했다.
+- 이 결과로 앱 raw TTY의 CHAR/PREEDIT ABI를 유지한 공용 오토마타 전환을
+  검증했다.
+
+## M7 — 32bpp GUI와 console 통합
+
+M6은 M6a–M6v의 xHCI, USB boot keyboard, HID/FIFO, keymap 및 한글 입력 경로로
+종료한다. 여기서부터 작업 성격이 USB transport에서 공용 graphics/console stack으로
+바뀌므로 기존 M6w–M6ae를 다음과 같이 M7a–M7i로 재분류한다.
+
+| 새 번호 | 기존 번호 | 내용 |
+|---|---|---|
+| M7a–M7e | M6w–M6aa | 32bpp sheet, palette, window, 전체 GUI stack |
+| M7f–M7i | M6ab–M6ae | console 초기화, 줄 편집, FIFO, 별도 입력 태스크 |
+
+아래 실기 기록 안의 기존 번호와 당시 화면 문자열은 실제로 검증한 이미지를 정확히
+남기기 위해 보존한다. 재분류 이후 새 이미지와 후속 작업은 M7 번호만 사용한다.
+
+### M7a (기존 M6w) — 8bpp sheet와 Pi 32bpp framebuffer 경계
+
+기존 `sheet64`의 각 시트는 8-bit palette index를 저장하지만 Raspberry Pi 5
+mailbox framebuffer는 32bpp RGB다. M6w는 `SHTCTL64`에 출력 bpp를 추가하고,
+8bpp x86_64 경로는 그대로 복사하면서 32bpp에서는 기존 16색 및 6x6x6 palette
+index를 RGB 픽셀로 변환한다. VRAM stride는 바이트 단위로 유지한다.
+
+M6a-u 입력 검사가 끝나면 작은 가상 32bpp VRAM에 빨강/초록/파랑/흰색과 palette
+색을 sheet로 합성한다. 변환된 픽셀 값과 각 행의 padding이 보존됐는지 검사한다.
+성공 출력은 M6a-u와 같은 줄에 이어 붙인다.
+
+```text
+[M6a-u: xHCI + USB HID + FIFO + keymap + 한글 OK] [M6w: 32bpp sheet compositor OK]
+```
+
+색 변환, 32bpp 주소 계산 또는 stride padding 보존에 실패하면 원인 코드와 함께
+panic code 32를 반복한다. 이 단계가 통과하면 다음 단계에서 실제 Pi framebuffer에
+공용 GUI/console sheet를 올릴 수 있다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6w 검증 완료.
+- 통합 M6a-u 표식 뒤 `[M6w: 32bpp sheet compositor OK]`가 표시되고 이후에도
+  `M` heartbeat가 지속됐다.
+
+### M7b (기존 M6x) — 실제 Pi framebuffer sheet 출력
+
+M6x는 M6w의 변환기를 실제 mailbox framebuffer 일부에 연결한다. 화면 왼쪽 아래에
+32x32 크기의 빨강, 초록, 파랑, 흰색 블록 네 개를 연속으로 합성하며, 각 변경 행을
+`dc cvac`로 정리한 뒤 `dsb sy`로 display가 볼 수 있게 한다. 첫 행의 실제 VRAM
+픽셀도 다시 읽어 네 색의 RGB 값을 확인한다.
+
+M6w와 별도 입력은 필요 없으며 성공 표식은 한 줄로 합친다.
+
+```text
+[M6a-u: xHCI + USB HID + FIFO + keymap + 한글 OK] [M6w/x: 32bpp live sheet OK]
+```
+
+실기에서는 위 문구, 왼쪽 아래의 빨강·초록·파랑·흰색 띠, 이후 계속되는 `M`을
+함께 확인한다. 초기화나 실제 VRAM readback이 실패하면 상태값과 panic code 33을
+표시한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6x 검증 완료.
+- 왼쪽 아래에 빨강·초록·파랑·흰색 블록이 순서대로 표시됐고,
+  `[M6w/x: 32bpp live sheet OK]` 및 이후의 `M` heartbeat를 확인했다.
+
+### M7c (기존 M6y) — 공용 software palette 연결
+
+M6y는 sheet에 중복돼 있던 고정 RGB 변환표를 `graphic64`의 공용 palette 상태로
+옮긴다. x86_64에서는 같은 상태를 VGA DAC에도 기록하고, AArch64에서는 port I/O
+없이 software palette만 갱신한다. 따라서 앱이 `palette64_install()`로 바꾼
+16–231번 색도 Pi의 32bpp sheet 출력에 반영된다.
+
+M6x의 네 색 블록 오른쪽에 palette index 16을 통해 보라색(0x80,0x20,0xc0) 블록을
+하나 더 그리고 실제 VRAM 값을 확인한다. 별도 키 입력은 없다.
+
+```text
+[M6a-u: xHCI + USB HID + FIFO + keymap + 한글 OK] [M6w-y: 32bpp live sheet + palette OK]
+```
+
+실기에서는 왼쪽 아래에 빨강·초록·파랑·흰색·보라색 블록이 순서대로 보여야 한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6y 검증 완료.
+- 왼쪽 아래의 다섯 번째 보라색 블록, `[M6w-y: 32bpp live sheet + palette OK]`
+  표식과 이후의 `M` heartbeat를 확인했다.
+
+### M7d (기존 M6z) — 공용 window renderer의 실제 Pi sheet
+
+M6z는 `window64`가 `console64` 전역에서 글꼴을 가져오던 의존성을 명시적인
+`window64_set_hangul_font()`로 분리한다. 따라서 아직 전체 console을 올리기 전에도
+같은 window renderer를 AArch64에서 사용할 수 있다.
+
+M6x/y가 끝나면 실제 framebuffer 오른쪽 아래에 320x96 크기의 활성 창을 sheet로
+합성한다. 창 제목은 SD 카드에서 읽은 H04.FNT로 그린 `머꼬 M6z`이며, 테두리의
+회색·흰색·검정 픽셀을 실제 VRAM에서 다시 확인한다.
+
+```text
+[M6a-u: xHCI + USB HID + FIFO + keymap + 한글 OK] [M6w-z: 32bpp sheet + palette + window OK]
+```
+
+실기에서는 왼쪽 아래의 다섯 색 블록, 오른쪽 아래의 `머꼬 M6z` 창, 성공 표식과
+계속되는 `M`을 확인한다. 실패하면 상태값과 panic code 34를 표시한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6z 검증 완료.
+- 오른쪽 아래에 회색 배경, 파란 제목 표시줄, 닫기 버튼과 정상 한글 제목
+  `머꼬 M6z`가 있는 창이 표시됐다. 통합 성공 표식과 이후의 heartbeat도
+  지속됐다.
+
+### M7e (기존 M6aa) — 전체 공용 GUI sheet stack
+
+M6aa는 function/data section GC를 사용해 아직 포팅하지 않은 console event/command
+함수와 분리된 `gui64_init()` 경로를 AArch64 이미지에 연결한다. 실제 화면 크기의
+8bpp 배경과 콘솔 버퍼, sheet map 및 최상단 마우스 커서를 만들고 32bpp Pi
+framebuffer로 합성한다. 새 콘솔 버퍼는 화면에 올리기 전에 검정색으로 초기화한다.
+
+M6z의 시험용 색 띠와 작은 창은 이 단계에서 전체 화면 GUI 콘솔 sheet로 교체된다.
+왼쪽 위에는 공용 `putstr64()`로 다음 문구를 그리고 실제 framebuffer의 흰색 glyph
+픽셀을 다시 읽어 확인한다.
+
+```text
+머꼬 M6aa GUI console sheet
+[M6a-u: xHCI + USB HID + FIFO + keymap + 한글 OK] [M6w-aa: 32bpp GUI sheet stack OK]
+```
+
+실기에서는 검정 전체 화면, 왼쪽 위 문구, 화면 중앙의 마우스 커서, 성공 표식과
+이후의 `M`을 확인한다. 실패하면 상태값과 panic code 35를 표시한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6aa 검증 완료.
+- 검정 전체 화면으로 전환된 뒤 상단의 `머꼬 M6aa GUI console sheet`, 중앙의
+  통합 성공 표식과 이후의 `M` heartbeat를 확인했다. 성공 표식의 별도 색 배경은
+  GUI sheet 위에 기존 early-debug renderer가 직접 그리는 진단 셀 배경이다.
+
+### M7f (기존 M6ab) — 실제 `console64` 초기 화면
+
+M6ab는 M6aa가 만든 기존 GUI console sheet를 재사용해 `console64` 상태를
+초기화한다. 중복 `gui64_init()` 없이 `console64_init_on_sheet()`로 sheet를 붙이고,
+SD 카드 H04.FNT와 공용 palette/renderer를 사용하는 실제 콘솔 시작 문구와
+프롬프트를 그린다. AArch64에서는 x86 COM1 port I/O를 수행하지 않는다.
+
+```text
+머꼬 OS AArch64 콘솔
+한글 입력이 기본입니다. Shift+Space로 영어 입력으로 전환합니다.
+>
+[M6a-u: xHCI + USB HID + FIFO + keymap + 한글 OK] [M6w-ab: GUI sheet + console64 init OK]
+```
+
+실기에서는 M6aa 시험 문구가 위 실제 콘솔 초기 화면으로 교체되고, 중앙 마우스
+커서와 이후의 `M`이 유지되는지 확인한다. 실패하면 panic code 36을 표시한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6ab 검증 완료.
+- 왼쪽 위에 실제 AArch64 콘솔 시작 문구와 프롬프트가 표시되고 중앙 커서 및
+  heartbeat가 유지됐다. 중앙의 이전 M6 성공 표식과 색 배경은 timer IRQ의
+  early-debug 직접 출력이 console sheet를 우회해서 남은 것으로 확인했다.
+
+### M7g (기존 M6ac) — USB 키보드에서 실제 `console64` 줄 편집기로
+
+M6ac는 M6ab 이후의 live USB FIFO 이벤트를 `console64_process_input_key()`로
+전달한다. 이 함수는 실제 console의 modifier, keymap, 두벌식 조합, preedit 갱신,
+backspace 및 Enter 확정 경로를 사용하되 아직 AArch64 명령 실행기는 호출하지 않는다.
+
+GUI console이 활성화되는 순간 timer IRQ의 early-debug `M` framebuffer 직접 출력을
+중지한다. 따라서 중앙에 M6 표식이나 색 배경이 새로 남지 않고, scheduler liveness는
+기존 0.5초 ACT LED 점멸로 확인한다.
+
+초기화 후 다음 안내에서 Shift 없이 `G K S R M F`를 입력하고 Enter를 누른다.
+
+```text
+M6a-ab: USB HID + GUI + console64 init OK
+M6ac test: type G K S R M F without Shift
+> 한글
+>
+```
+
+`한글`이 실제 검정 console sheet 위에 조합돼 표시되고 Enter 뒤 새 프롬프트가
+나오며, ACT LED가 계속 점멸하면 성공이다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6ac 검증 완료.
+- USB 키보드의 `G K S R M F`가 실제 console sheet에서 `한글`로 조합됐고,
+  Enter 뒤 새 프롬프트가 표시됐다. 중앙 마우스 커서, early-debug 출력 중단 및
+  0.5초 ACT LED heartbeat도 모두 정상임을 확인했다.
+
+### M7h (기존 M6ad) — 실제 console key FIFO producer/consumer
+
+M6ad는 live USB consumer가 `console64_process_input_key()`를 직접 호출하지 않고
+`console64` 인스턴스의 64-entry key FIFO에 `EVENT64_KEYBOARD`를 넣도록 변경한다.
+메인 루프의 consumer가 큐를 비우며 같은 줄 편집기를 호출한다. 이후 console task를
+가동할 때 producer 쪽을 바꾸지 않고 FIFO의 wakeup task만 연결할 수 있다.
+
+FIFO뿐 아니라 조합 중 backspace도 함께 검증한다. Shift 없이 아래 순서대로 입력한다.
+
+```text
+G K S R M X, Backspace, F, Enter
+```
+
+중간의 `X`는 `한긑`을 만들고 Backspace가 마지막 받침을 지운 뒤 `F`가 ㄹ 받침을
+넣어 최종 결과를 `한글`로 복구해야 한다.
+
+```text
+M6ad test: G K S R M X, Backspace, F, Enter
+> 한글
+>
+```
+
+FIFO 초기화, enqueue 또는 drain이 실패하면 panic code 37을 표시한다. 성공 뒤에도
+ACT LED heartbeat가 지속돼야 한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M6ad 검증 완료.
+- `G K S R M X, Backspace, F, Enter`가 console key FIFO를 거쳐 전달됐고,
+  조합 중 마지막 받침을 지운 뒤 `한글`로 복구됐다. Enter 뒤 새 프롬프트,
+  direct `M` 출력 없음 및 0.5초 ACT LED heartbeat도 모두 정상임을 확인했다.
+
+### M7i (기존 M6ae) — 별도 console 입력 태스크와 FIFO wakeup
+
+M7i는 M7h의 FIFO consumer를 USB polling 메인 루프에서 분리해 scheduler가 실행하는
+전용 console 입력 태스크로 옮긴다. 태스크는 key FIFO가 비면 sleep하고, 메인 루프가
+USB HID 이벤트를 enqueue하면 FIFO에 연결된 태스크가 깨어나 줄 편집 입력을 처리한다.
+메인 루프는 더 이상 `console64_drain_input()`을 호출하지 않는다.
+
+콘솔이 표시되면 다음 순서로 입력한다.
+
+```text
+Shift+Space, H E L L O, Enter
+```
+
+첫 `Shift+Space`는 기본 한글 입력을 영어 입력으로 바꾼다. 이후 키 이름의 대문자 표기는
+물리 키를 뜻하므로 Shift를 누르지 않고 입력한다.
+
+```text
+M7i test: Shift+Space, H E L L O, Enter
+> hello
+>
+```
+
+`hello`와 새 프롬프트가 표시되고 ACT LED가 0.5초 간격으로 계속 점멸하면 producer인
+USB 메인 루프와 consumer인 console 태스크의 enqueue, wakeup, sleep이 모두 성공한
+것이다. 태스크 시작이 실패하면 console 초기화 panic 경로를, enqueue가 실패하면
+panic code 38을 표시한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M7i(당시 M6ae) 검증 완료.
+- `Shift+Space` 뒤 `H E L L O, Enter` 입력이 별도 console 태스크에서 처리되어
+  `hello`와 새 프롬프트가 표시됐다. FIFO wakeup/sleep과 0.5초 ACT LED heartbeat도
+  모두 정상임을 확인했다.
+
+### M7j — 실제 console command dispatcher와 FAT32 `ls`
+
+M7j는 M7i의 입력 전용 consumer를 정상 `console64` 태스크로 교체한다. Enter가 줄을
+확정하기만 하던 bring-up 경로 대신 `console64_process_key()`와 실제 command
+dispatcher를 호출한다. 아직 AArch64 user ABI를 연결하지 않았으므로 앱 실행과
+MicroPython 명령은 후속 M7 단계로 두고, `help`, `clear`, `mem`, `tasks`, `ls`,
+`목록`, `type readme.txt`, `xwindow`, `창` 내장 명령을 우선 제공한다.
+
+콘솔이 표시되면 다음 순서로 입력한다.
+
+```text
+Shift+Space, L S, Enter
+```
+
+`Shift+Space`로 영어 모드로 바꾼 뒤 `ls`를 Shift 없이 입력한다. SD 카드 FAT32의
+파일 이름과 크기가 출력되고 새 프롬프트가 표시되며 ACT LED heartbeat가 계속되면
+별도 console 태스크의 command dispatch와 storage read가 모두 성공한 것이다.
+태스크 시작 또는 FIFO enqueue 실패는 기존 panic code 38 경로로 표시한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M7j 검증 완료.
+- 영어 모드에서 `ls`를 실행했을 때 FAT32 파일 이름과 크기 및 새 프롬프트가
+  표시됐고, 별도 console 태스크와 0.5초 ACT LED heartbeat도 계속 정상 동작했다.
+
+### 화면 출력 축약
+
+M6 진단이 늘어나면서 framebuffer 세로 공간이 부족해졌으므로, 이미 실기 검증이
+끝난 M3/M4/M5의 정상 출력은 다음 한 줄씩으로 합쳤다. M6a부터 M6u까지도 모든
+검사가 끝난 뒤 한 줄만 표시한다. 개별 단계의 실패 문구와 panic code는
+troubleshooting을 위해 유지한다.
+
+```text
+M3: exceptions + scheduler + high-half paging OK
+M4: SDHCI + FAT32 + write + Hangul font OK
+M5: PCIe + RP1 BAR1 + UART loopback OK
+M6a-u: xHCI + USB HID + FIFO + keymap + 한글 OK
+```
+
+- 2026-09-20: Raspberry Pi 5 실기에서 통합 M6a-u 검증 완료.
+- `A`, `Shift+A`, `C`, `R K`, `G K S R M F` 순서의 단일 시험 뒤 통합 성공
+  표식이 표시됐고 이후에도 `M` heartbeat가 지속됐다.
+
+## M8 — USB HID 마우스와 GUI 상호작용
+
+마우스 작업은 keyboard/console 경로와 별개인 M8로 분리한다. HID boot mouse의
+enumeration과 report decoding부터 시작해 `gui64_mouse_dec()`가 소비하는 공용 이벤트
+형식으로 연결하고, 커서 이동, 버튼, 창 focus/drag 및 닫기 버튼을 순서대로 검증한다.
+M7의 console·syscall·application parity가 끝나기 전에는 M8 구현을 섞지 않는다.

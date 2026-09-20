@@ -246,7 +246,7 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	screen_size = (size_t) xsize * (size_t) ysize;
 
 	gui_ctl = shtctl64_init(&memman64, (uint8_t *) boot_info->vram,
-		xsize, ysize, stride);
+		xsize, ysize, stride, boot_info->bpp);
 	if (gui_ctl == NULL) {
 		return NULL;
 	}
@@ -279,6 +279,8 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	gui_back->vy0 = 0;
 
 	sheet64_setbuf(gui_console, gui_console_buf, xsize, ysize, -1);
+	boxfill64(gui_console_buf, xsize, COL64_000000,
+		0, 0, xsize - 1, ysize - 1);
 	gui_console->vx0 = 0;
 	gui_console->vy0 = 0;
 	gui_mode = GUI64_MODE_FULL;

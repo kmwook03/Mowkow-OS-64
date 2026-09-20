@@ -135,6 +135,152 @@ int hangul64_key_to_jong(char c)
 	}
 }
 
+static void hangul64_feed_set(struct HANGUL64 *hangul, int state,
+	int cho, int jung, int jong)
+{
+	hangul->state = state;
+	hangul->cho = cho;
+	hangul->jung = jung;
+	hangul->jong = jong;
+}
+
+static void hangul64_feed_commit(struct HANGUL64 *hangul,
+	struct HANGUL64_FEED_RESULT *result)
+{
+	char utf8[4];
+	int length;
+	int i;
+
+	if (hangul->state == 0 || result->committed_length >= 6U) {
+		return;
+	}
+	length = hangul64_compose_utf8(utf8, hangul);
+	if (length > 0 && length <= (int) (6U - result->committed_length)) {
+		for (i = 0; i < length; i++) {
+			result->committed[result->committed_length++] = utf8[i];
+		}
+		result->committed[result->committed_length] = '\0';
+	}
+	hangul64_init(hangul);
+}
+
+static int hangul64_cho_cannot_be_jong(int cho)
+{
+	return cho == 4 || cho == 8 || cho == 13;
+}
+
+int hangul64_feed(struct HANGUL64 *hangul, char key,
+	struct HANGUL64_FEED_RESULT *result)
+{
+	int cho;
+	int jung;
+	int jong;
+	int complex;
+	int first_jong;
+	int second_jong;
+	int next_cho;
+
+	if (hangul == 0 || result == 0) {
+		return -1;
+	}
+	result->committed[0] = '\0';
+	result->committed_length = 0;
+	result->passthrough = '\0';
+	cho = hangul64_key_to_cho(key);
+	jung = hangul64_key_to_jung(key);
+	jong = hangul64_key_to_jong(key);
+	switch (hangul->state) {
+	case 0:
+		if (cho != -1) {
+			hangul64_feed_set(hangul, 1, cho, -1, -1);
+		} else if (jung != -1) {
+			hangul64_feed_set(hangul, 1, -1, jung, -1);
+			hangul64_feed_commit(hangul, result);
+		} else {
+			result->passthrough = key;
+		}
+		break;
+	case 1:
+		if (jung != -1 && hangul->cho != -1) {
+			hangul64_feed_set(hangul, 2, hangul->cho, jung, -1);
+		} else if (cho != -1) {
+			hangul64_feed_commit(hangul, result);
+			hangul64_feed_set(hangul, 1, cho, -1, -1);
+		} else {
+			hangul64_feed_commit(hangul, result);
+			result->passthrough = key;
+		}
+		break;
+	case 2:
+		if (cho != -1 && hangul64_cho_cannot_be_jong(cho) != 0) {
+			hangul64_feed_commit(hangul, result);
+			hangul64_feed_set(hangul, 1, cho, -1, -1);
+		} else if (jong != -1) {
+			hangul->state = 3;
+			hangul->jong = jong;
+		} else if (jung != -1) {
+			complex = hangul64_composite_jung(hangul->jung, jung);
+			if (complex != -1) {
+				hangul->jung = complex;
+			} else {
+				hangul64_feed_commit(hangul, result);
+				hangul64_feed_set(hangul, 1, -1, jung, -1);
+				hangul64_feed_commit(hangul, result);
+			}
+		} else if (cho != -1) {
+			hangul64_feed_commit(hangul, result);
+			hangul64_feed_set(hangul, 1, cho, -1, -1);
+		} else {
+			hangul64_feed_commit(hangul, result);
+			result->passthrough = key;
+		}
+		break;
+	case 3:
+		if (jung != -1) {
+			next_cho = hangul64_jong_to_cho(hangul->jong);
+			hangul->state = 2;
+			hangul->jong = -1;
+			hangul64_feed_commit(hangul, result);
+			if (next_cho != -1) {
+				hangul64_feed_set(hangul, 2, next_cho, jung, -1);
+			}
+		} else if (cho != -1) {
+			complex = hangul64_composite_jong(hangul->jong, cho);
+			if (complex != -1) {
+				hangul->state = 4;
+				hangul->jong = complex;
+			} else {
+				hangul64_feed_commit(hangul, result);
+				hangul64_feed_set(hangul, 1, cho, -1, -1);
+			}
+		} else {
+			hangul64_feed_commit(hangul, result);
+			result->passthrough = key;
+		}
+		break;
+	case 4:
+		if (jung != -1) {
+			first_jong = hangul64_first_jong(hangul->jong);
+			second_jong = hangul64_second_jong(hangul->jong);
+			hangul->state = 3;
+			hangul->jong = first_jong;
+			hangul64_feed_commit(hangul, result);
+			hangul64_feed_set(hangul, 2, second_jong, jung, -1);
+		} else if (cho != -1) {
+			hangul64_feed_commit(hangul, result);
+			hangul64_feed_set(hangul, 1, cho, -1, -1);
+		} else {
+			hangul64_feed_commit(hangul, result);
+			result->passthrough = key;
+		}
+		break;
+	default:
+		hangul64_init(hangul);
+		return -2;
+	}
+	return 0;
+}
+
 int hangul64_compose_utf8(char *dest, const struct HANGUL64 *hangul)
 {
 	unsigned int unicode;

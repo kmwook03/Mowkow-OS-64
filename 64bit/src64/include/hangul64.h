@@ -10,6 +10,12 @@ struct HANGUL64 {
 	int jong;
 };
 
+struct HANGUL64_FEED_RESULT {
+	char committed[7];
+	uint8_t committed_length;
+	char passthrough;
+};
+
 void hangul64_init(struct HANGUL64 *hangul);
 int hangul64_key_to_cho(char c);
 int hangul64_key_to_jung(char c);
@@ -27,5 +33,7 @@ int hangul64_composite_jong(int jong, int cho);
 int hangul64_first_jong(int jong);
 int hangul64_second_jong(int jong);
 int hangul64_jong_to_cho(int jong);
+int hangul64_feed(struct HANGUL64 *hangul, char key,
+	struct HANGUL64_FEED_RESULT *result);
 
 #endif
