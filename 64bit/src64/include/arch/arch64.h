@@ -37,6 +37,22 @@ void arch64_timer_init(struct FIFO64 *fifo);
 void arch64_input_init(struct FIFO64 *fifo);
 int arch64_fb_probe(struct BOOTINFO64 *bootinfo);
 void arch64_fb_set_hangul_font(const uint8_t *font);
+int pcie64_probe_rp1(uint32_t *vendor_device, uint32_t *class_revision,
+	uint32_t *bar0, uint32_t *bar1, uint32_t *command_status,
+	uint32_t *root_bus_numbers, uint32_t *root_memory_base,
+	uint32_t *root_memory_limit);
+void pcie64_outbound_state(uint32_t *pci_base, uint32_t *base_limit,
+	uint32_t *base_high, uint32_t *limit_high, uint32_t *root_command);
+int rp164_probe(uint32_t bar1, uint32_t root_memory_base,
+	uint32_t command_status, uint32_t *chip_id, uint32_t *platform);
+int rp164_probe_uart0(uint32_t bar1, uint32_t root_memory_base,
+	uint32_t registers[5]);
+int rp164_uart0_loopback(uint32_t bar1, uint32_t root_memory_base,
+	uint32_t *echoed);
+int rp164_bar1_base(uint32_t bar1, uint32_t root_memory_base,
+	uintptr_t *virtual_base);
+int xhci64_probe_rp1(uintptr_t rp1_base, uint32_t capability[2],
+	uint32_t hcsparams1[2]);
 
 void arch64_scheduler_init(void);
 uintptr_t arch64_scheduler_tick(uintptr_t frame);

@@ -151,6 +151,23 @@ static int m4_load_hangul_font64(void)
 	return 0;
 }
 
+static void dbg_hex32(uint32_t value)
+{
+	static const char digits[] = "0123456789abcdef";
+	char text[11];
+	int shift;
+	int position;
+
+	text[0] = '0';
+	text[1] = 'x';
+	position = 2;
+	for (shift = 28; shift >= 0; shift -= 4) {
+		text[position++] = digits[(value >> shift) & 0x0fU];
+	}
+	text[position] = '\0';
+	arch64_dbg_puts(text);
+}
+
 void arch64_irq_disable(void)
 {
 	__asm__ volatile ("msr daifset, #2" ::: "memory");
@@ -218,6 +235,26 @@ void aarch64_main(void)
 void aarch64_high_main(void)
 {
 	struct BOOTINFO64 bootinfo;
+	uint32_t rp1_bar0;
+	uint32_t rp1_bar1;
+	uint32_t rp1_chip_id;
+	uint32_t rp1_class_revision;
+	uint32_t rp1_command_status;
+	uint32_t rp1_platform;
+	uint32_t rp1_vendor_device;
+	uint32_t rp1_uart0_registers[5];
+	uint32_t rp1_uart0_echo;
+	uint32_t root_bus_numbers;
+	uint32_t root_memory_base;
+	uint32_t root_memory_limit;
+	uint32_t window_base_high;
+	uint32_t window_base_limit;
+	uint32_t window_limit_high;
+	uint32_t window_pci_base;
+	uint32_t window_root_command;
+	uint32_t xhci_capability[2];
+	uint32_t xhci_hcsparams1[2];
+	uintptr_t rp1_base;
 	int status;
 
 	arch64_mmu_finish_high();
@@ -271,6 +308,149 @@ void aarch64_high_main(void)
 	}
 	arch64_dbg_puts("M4c: H04.FNT loaded from boot SD\n");
 	arch64_dbg_puts("M4c: SD 카드 한글 글꼴 적용 성공\n");
+	rp1_vendor_device = 0;
+	rp1_class_revision = 0;
+	rp1_bar0 = 0;
+	rp1_bar1 = 0;
+	rp1_command_status = 0;
+	root_bus_numbers = 0;
+	root_memory_base = 0;
+	root_memory_limit = 0;
+	status = pcie64_probe_rp1(&rp1_vendor_device, &rp1_class_revision,
+		&rp1_bar0, &rp1_bar1, &rp1_command_status, &root_bus_numbers,
+		&root_memory_base, &root_memory_limit);
+	if (status != 0) {
+		if (status == -1) {
+			arch64_dbg_puts("M5a: RP1 PCIe link down\n");
+		} else {
+			arch64_dbg_puts("M5a: RP1 config-space probe failed, id=");
+			dbg_hex32(rp1_vendor_device);
+			arch64_dbg_puts(" root-buses=");
+			dbg_hex32(root_bus_numbers);
+			arch64_dbg_puts(" root-mem=");
+			dbg_hex32(root_memory_base);
+			arch64_dbg_puts("-");
+			dbg_hex32(root_memory_limit);
+			arch64_dbg_puts("\n");
+		}
+		arch64_panic_blink(11);
+	}
+	arch64_dbg_puts("M5a: RP1 PCIe link up, id=");
+	dbg_hex32(rp1_vendor_device);
+	arch64_dbg_puts(" class/rev=");
+	dbg_hex32(rp1_class_revision);
+	arch64_dbg_puts(" bar0=");
+	dbg_hex32(rp1_bar0);
+	arch64_dbg_puts("\n");
+	pcie64_outbound_state(&window_pci_base, &window_base_limit,
+		&window_base_high, &window_limit_high, &window_root_command);
+	arch64_dbg_puts("M5b: outbound win0 pci-base=");
+	dbg_hex32(window_pci_base);
+	arch64_dbg_puts(" base/limit=");
+	dbg_hex32(window_base_limit);
+	arch64_dbg_puts(" high=");
+	dbg_hex32(window_base_high);
+	arch64_dbg_puts("/");
+	dbg_hex32(window_limit_high);
+	arch64_dbg_puts(" root-command=");
+	dbg_hex32(window_root_command);
+	arch64_dbg_puts("\n");
+	rp1_chip_id = 0;
+	rp1_platform = 0;
+	status = rp164_probe(rp1_bar1, root_memory_base, rp1_command_status,
+		&rp1_chip_id, &rp1_platform);
+	if (status != 0) {
+		arch64_dbg_puts("M5b: RP1 BAR1 probe failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts(" command/status=");
+		dbg_hex32(rp1_command_status);
+		arch64_dbg_puts(" bar1=");
+		dbg_hex32(rp1_bar1);
+		arch64_dbg_puts(" root-mem-base=");
+		dbg_hex32(root_memory_base);
+		arch64_dbg_puts(" root-mem-limit=");
+		dbg_hex32(root_memory_limit);
+		arch64_dbg_puts(" chip-id=");
+		dbg_hex32(rp1_chip_id);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(12);
+	}
+	arch64_dbg_puts("M5b: RP1 BAR1 MMIO ready, bar1=");
+	dbg_hex32(rp1_bar1);
+	arch64_dbg_puts(" root-mem-base=");
+	dbg_hex32(root_memory_base);
+	arch64_dbg_puts(" root-mem-limit=");
+	dbg_hex32(root_memory_limit);
+	arch64_dbg_puts(" chip-id=");
+	dbg_hex32(rp1_chip_id);
+	arch64_dbg_puts(" platform=");
+	dbg_hex32(rp1_platform);
+	arch64_dbg_puts("\n");
+	status = rp164_probe_uart0(rp1_bar1, root_memory_base,
+		rp1_uart0_registers);
+	if (status != 0) {
+		arch64_dbg_puts("M5c: RP1 UART0 register probe failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(13);
+	}
+	arch64_dbg_puts("M5c: RP1 UART0 registers accessible, fr=");
+	dbg_hex32(rp1_uart0_registers[0]);
+	arch64_dbg_puts(" ibrd=");
+	dbg_hex32(rp1_uart0_registers[1]);
+	arch64_dbg_puts(" fbrd=");
+	dbg_hex32(rp1_uart0_registers[2]);
+	arch64_dbg_puts(" lcrh=");
+	dbg_hex32(rp1_uart0_registers[3]);
+	arch64_dbg_puts(" cr=");
+	dbg_hex32(rp1_uart0_registers[4]);
+	arch64_dbg_puts("\n");
+	rp1_uart0_echo = 0;
+	status = rp164_uart0_loopback(rp1_bar1, root_memory_base,
+		&rp1_uart0_echo);
+	if (status != 0) {
+		arch64_dbg_puts("M5d: RP1 UART0 loopback failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts(" received=");
+		dbg_hex32(rp1_uart0_echo);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(14);
+	}
+	arch64_dbg_puts("M5d: RP1 UART0 internal loopback echoed ");
+	dbg_hex32(rp1_uart0_echo & 0xffU);
+	arch64_dbg_puts("\n");
+	if (rp164_bar1_base(rp1_bar1, root_memory_base, &rp1_base) != 0) {
+		arch64_dbg_puts("M6a: RP1 BAR1 address unavailable\n");
+		arch64_panic_blink(15);
+	}
+	xhci_capability[0] = 0;
+	xhci_capability[1] = 0;
+	xhci_hcsparams1[0] = 0;
+	xhci_hcsparams1[1] = 0;
+	status = xhci64_probe_rp1(rp1_base, xhci_capability, xhci_hcsparams1);
+	if (status != 0) {
+		arch64_dbg_puts("M6a: RP1 xHCI capability probe failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts(" usb0=");
+		dbg_hex32(xhci_capability[0]);
+		arch64_dbg_puts("/");
+		dbg_hex32(xhci_hcsparams1[0]);
+		arch64_dbg_puts(" usb1=");
+		dbg_hex32(xhci_capability[1]);
+		arch64_dbg_puts("/");
+		dbg_hex32(xhci_hcsparams1[1]);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(15);
+	}
+	arch64_dbg_puts("M6a: RP1 xHCI0 cap/hcs1=");
+	dbg_hex32(xhci_capability[0]);
+	arch64_dbg_puts("/");
+	dbg_hex32(xhci_hcsparams1[0]);
+	arch64_dbg_puts(" xHCI1 cap/hcs1=");
+	dbg_hex32(xhci_capability[1]);
+	arch64_dbg_puts("/");
+	dbg_hex32(xhci_hcsparams1[1]);
+	arch64_dbg_puts("\n");
 	arch64_dbg_puts("MTASK: ");
 	arch64_irq_enable();
 

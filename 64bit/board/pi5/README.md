@@ -263,3 +263,145 @@ M4c: SD 카드 한글 글꼴 적용 성공
 
 M4a의 SDHCI/CMD17/FAT32 mount, M4b의 CMD24/동기화/재부팅 지속성, M4c의
 부팅 SD 카드 한글 글꼴 로드를 모두 Raspberry Pi 5 실기에서 검증했다.
+
+## M5 PCIe/RP1 verification
+
+### M5a — firmware-preserved RP1 link와 config-space
+
+M5a는 `config.txt`의 `pciex4_reset=0`으로 firmware가 보존한 BCM2712 PCIe x4
+링크를 검사한다. 링크의 Data Link Active와 PHY Link Up 비트를 먼저 확인하고,
+root bridge의 primary/secondary/subordinate bus를 `0/1/1`로 배정한 뒤에만 bus 1,
+device 0, function 0의 config-space를 읽는다. 링크가 내려간 상태에서 downstream
+window에 접근하면 CPU abort가 발생할 수 있기 때문이다.
+
+RP1의 예상 vendor/device ID는 `0x00011de4`다. 성공 시 다음 형식으로 ID,
+class/revision과 BAR0을 표시하고 `M`이 계속 증가해야 한다.
+
+```text
+M5a: RP1 PCIe link up, id=0x00011de4 class/rev=0x........ bar0=0x........
+MTASK: MMMMM...
+```
+
+링크 또는 config-space 검증 실패는 panic code 11을 반복한다.
+
+초기 구현은 firmware가 root bridge bus 번호도 설정했다고 가정해 link-up 뒤
+곧바로 bus 1을 읽었고, 실기에서 `RP1 config-space probe failed`가 발생했다.
+`pciex4_reset=0`은 link 보존에는 필요하지만 PCI enumeration을 대신하지 않는다.
+따라서 root bridge의 type-1 bus-number register를 명시적으로 설정하도록 고쳤고,
+추가 실패 시 raw ID와 `root-buses` 값을 함께 표시한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M5a 검증 완료.
+- `id=0x00011de4`, `class/rev=0x02000000`, `bar0=0x80410000`을 확인했고,
+  뒤이어 `M`이 계속 출력되어 config-space 접근 후에도 scheduler가 정상 동작했다.
+
+### M5b — BAR1 RP1 peripheral window
+
+M5b는 RP1 config-space의 BAR1과 root bridge의 type-1 memory base를 읽어 BCM2712
+PCIe2 outbound CPU 주소
+`0x1f00000000 + ((BAR1 & ~0xf) - root_memory_base)`로 변환한다. firmware가
+downstream PCI memory window와 BAR를 높은 PCI 주소에 배치할 수 있으므로 둘 다
+0이라고 가정하지 않는다. 이 주소에서 RP1 SYSINFO의 chip ID와 platform
+register를 읽는다. 예상 chip ID는 RP1 C0의 `0x20001927`이다.
+
+성공 시 다음 줄과 이후 계속 증가하는 `M`을 확인한다. `bar1`과 `platform` 값은
+실기에서 출력된 값을 그대로 기록한다.
+
+```text
+M5b: outbound win0 pci-base=0x........ base/limit=0x........ high=0x......../0x........ root-command=0x........
+M5b: RP1 BAR1 MMIO ready, bar1=0x........ root-mem-base=0x........ root-mem-limit=0x........ chip-id=0x20001927 platform=0x........
+MTASK: MMMMM...
+```
+
+PCI command의 Memory Space Enable이 꺼져 있거나, BAR1이 I/O BAR이거나, chip ID가
+다르면 진단값을 출력하고 panic code 12를 반복한다.
+
+#### BAR1 PCI 주소를 CPU outbound offset으로 오해
+
+- 증상: `status=0xfffffffd`, `command/status=0x00100146`,
+  `bar1=0x80000000`, `chip-id=0xdeaddead`와 panic code 12가 표시됐다.
+- 해석: Memory Space Enable은 켜져 있었지만 `0xdeaddead`는 잘못된 downstream
+  MMIO 주소에서 반환된 오류 값이다.
+- 원인: 초기 구현은 BAR1의 PCI 주소 `0x80000000` 전체를 CPU outbound base에
+  더했다. firmware는 root bridge memory base 역시 `0x80000000`으로 설정하므로,
+  BAR1이 가리키는 실제 outbound offset은 0이다.
+- 해결: root bridge type-1 memory base/limit register에서 PCI memory base를
+  추출하고, BAR1에서 이를 뺀 값을 CPU outbound base에 더하도록 수정했다. 실패
+  진단과 성공 문구에도 `root-mem-base`를 추가했다.
+
+위 주소 보정만 적용한 두 번째 실기에서도 같은 `chip-id=0xdeaddead`가 반환됐다.
+이는 주소 계산과 별개로 BCM2712의 CPU-to-PCIe outbound window register가
+설정되지 않았음을 뜻한다. `pciex4_reset=0`으로 link와 endpoint config-space는
+보존됐지만 CPU MMIO translation은 사용할 수 없는 상태였다. Linux
+`pcie-brcmstb` 드라이버와 같은 방식으로 window 0의 PCI base, CPU base/limit
+low/high register를 root bridge memory aperture에 맞춰 설정하고, root bridge의
+Memory Space Enable과 Bus Master Enable도 켜도록 보완했다. 성공/실패 진단에는
+aperture 전체를 확인할 수 있도록 `root-mem-limit`도 추가했다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M5b 검증 완료.
+- outbound window 0은 `pci-base=0x80000000`, `base/limit=0x3ff00000`,
+  `high=0x0000001f/0x0000001f`, root command `0x00000146`으로 설정됐다.
+- root bridge aperture `0x80000000-0xbfffffff`와 BAR1 `0x80000000`을 변환해
+  RP1 SYSINFO에서 `chip-id=0x20001927`, `platform=0x00000002`를 읽었다.
+- 이후에도 `M`이 계속 출력되어 outbound MMIO 접근 뒤 scheduler 동작을 확인했다.
+
+### M5c — RP1 UART0 register window
+
+M5c는 BAR1 peripheral window의 `+0x30000`에 있는 RP1 UART0 PL011-AXI에서
+`FR`, `IBRD`, `FBRD`, `LCR_H`, `CR`을 읽는다. 아직 clock, pinmux, baud rate 또는
+UART enable 상태를 변경하지 않는 읽기 전용 검사다. RP1 device tree는 UART0을
+`arm,pl011-axi`, peripheral ID `0x00341011`로 정의한다.
+
+성공 시 다음 형식의 줄과 계속 증가하는 `M`을 확인한다. register 값은 firmware가
+남긴 상태에 따라 달라질 수 있다.
+
+```text
+M5c: RP1 UART0 registers accessible, fr=0x........ ibrd=0x........ fbrd=0x........ lcrh=0x........ cr=0x........
+MTASK: MMMMM...
+```
+
+downstream 오류 값 `0xdeaddead` 또는 `0xffffffff`가 반환되면 panic code 13을
+반복한다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M5c 검증 완료.
+- UART0에서 `FR=0x00000197`, `IBRD=0`, `FBRD=0`, `LCR_H=0`, `CR=0x300`을
+  읽었다. UART는 enable되지 않았지만 TX/RX 기능 비트가 남아 있는 초기 상태였다.
+
+### M5d — RP1 UART0 internal loopback
+
+M5d는 외부 배선 없이 PL011의 internal loopback으로 송수신 datapath를 검사한다.
+firmware가 제공한 48 MHz `clk_uart`를 기준으로 115200 baud, 8 data bits, FIFO를
+설정하고 `0x4d` 한 바이트를 송신한다. RX FIFO에서 같은 값과 오류 비트 0을
+확인한 뒤 M5c에서 읽은 기존 divisor, line-control, control 값을 복원한다.
+
+```text
+M5d: RP1 UART0 internal loopback echoed 0x0000004d
+MTASK: MMMMM...
+```
+
+TX FIFO 준비 또는 RX loopback에 timeout이 발생하거나 수신 값이 다르면 진단값을
+출력하고 panic code 14를 반복한다. 이 단계는 GPIO14/15 pinmux나 외부 UART
+어댑터를 요구하지 않는다.
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M5d 검증 완료.
+- UART0 internal loopback에서 송신한 `0x4d`가 오류 없이 그대로 수신됐고,
+  이후 `M` 출력도 계속됐다.
+
+M5a의 PCI config-space, M5b의 outbound BAR1 MMIO, M5c의 UART0 register window,
+M5d의 UART 송수신 datapath를 모두 실기에서 검증했다.
+
+## M6 xHCI/USB HID verification
+
+### M6a — RP1 dual xHCI capability probe
+
+RP1의 USB0/USB1은 BAR1의 `+0x200000`, `+0x300000`에 각각 1 MiB DWC3 host
+register window를 제공한다. M6a는 상태를 변경하지 않고 두 window의 xHCI
+`CAPLENGTH/HCIVERSION`과 `HCSPARAMS1`을 읽는다. capability length는 0x20 이상인
+4-byte 정렬값, interface version은 1.x여야 한다.
+
+```text
+M6a: RP1 xHCI0 cap/hcs1=0x......../0x........ xHCI1 cap/hcs1=0x......../0x........
+MTASK: MMMMM...
+```
+
+오류 응답 또는 잘못된 capability header가 나오면 원시 register 값을 표시하고
+panic code 15를 반복한다.

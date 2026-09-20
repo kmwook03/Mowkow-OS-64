@@ -11,6 +11,10 @@
 #define GIO_AON_BASE 0x107d517c00ULL
 #define GIC_BASE 0x107fff9000ULL
 #define SDHCI_BASE 0x1000fff000ULL
+#define PCIE2_BASE 0x1000120000ULL
+#define PCIE2_OUTBOUND_BASE 0x1f00000000ULL
+#define PCIE2_OUTBOUND_SIZE 0x100000000ULL
+#define L1_SPAN (1ULL << 30)
 
 #define DESC_VALID 0x1ULL
 #define DESC_TABLE_OR_PAGE 0x3ULL
@@ -31,7 +35,7 @@ static uint64_t low_l2[TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t low_l3[TABLE_ENTRIES][TABLE_ENTRIES]
 	__attribute__((aligned(PAGE_SIZE)));
 static uint64_t mmio_l2[TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
-static uint64_t mmio_l3[4][TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
+static uint64_t mmio_l3[5][TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 
 static uint64_t table_descriptor64(const void *table)
 {
@@ -48,6 +52,12 @@ static uint64_t normal_page_descriptor64(uint64_t physical)
 static uint64_t device_page_descriptor64(uint64_t physical)
 {
 	return (physical & DESC_ADDRESS_MASK) | DESC_TABLE_OR_PAGE |
+		DESC_ATTR_INDEX(1) | DESC_ACCESS_FLAG | DESC_PXN | DESC_UXN;
+}
+
+static uint64_t device_block_descriptor64(uint64_t physical)
+{
+	return (physical & ~(L1_SPAN - 1)) | DESC_VALID |
 		DESC_ATTR_INDEX(1) | DESC_ACCESS_FLAG | DESC_PXN | DESC_UXN;
 }
 
@@ -70,6 +80,7 @@ void arch64_mmu_init(void)
 {
 	uint64_t tcr;
 	uint64_t sctlr;
+	uint64_t outbound;
 	unsigned int l2_index;
 	unsigned int page;
 
@@ -91,6 +102,7 @@ void arch64_mmu_init(void)
 	map_device_window64(GIO_AON_BASE, 1);
 	map_device_window64(GIC_BASE, 2);
 	map_device_window64(SDHCI_BASE, 3);
+	map_device_window64(PCIE2_BASE, 4);
 
 	/* TTBR0 retains the low bootstrap map while TTBR1 supplies the canonical
 	   high-half kernel alias. A later user-mode step can replace TTBR0 without
@@ -101,6 +113,19 @@ void arch64_mmu_init(void)
 	ttbr1_l1[0] = table_descriptor64(low_l2);
 	ttbr1_l1[(MAILBOX_BASE >> 30) & 0x1ffULL] = table_descriptor64(mmio_l2);
 	ttbr1_l1[(SDHCI_BASE >> 30) & 0x1ffULL] = table_descriptor64(mmio_l2);
+
+	/* PCIe2 translates its 32-bit non-prefetchable PCI address space to this
+	   four-GiB CPU window. Map all four L1 blocks so firmware-assigned RP1 BARs
+	   remain usable even when their PCI address is not zero. */
+	for (outbound = PCIE2_OUTBOUND_BASE;
+			outbound < PCIE2_OUTBOUND_BASE + PCIE2_OUTBOUND_SIZE;
+			outbound += L1_SPAN) {
+		unsigned int index = (unsigned int) ((outbound >> 30) & 0x1ffULL);
+		uint64_t descriptor = device_block_descriptor64(outbound);
+
+		bootstrap_l1[index] = descriptor;
+		ttbr1_l1[index] = descriptor;
+	}
 
 	__asm__ volatile (
 		"dsb sy\n\t"
@@ -192,6 +217,15 @@ int arch64_mmu_self_test(void)
 	if (translate_el1_64(arch64_phys_to_virt((uintptr_t) SDHCI_BASE),
 			&physical) != 0 || physical != (uintptr_t) SDHCI_BASE) {
 		return -6;
+	}
+	if (translate_el1_64(arch64_phys_to_virt((uintptr_t) PCIE2_BASE),
+			&physical) != 0 || physical != (uintptr_t) PCIE2_BASE) {
+		return -7;
+	}
+	if (translate_el1_64(arch64_phys_to_virt(
+			(uintptr_t) PCIE2_OUTBOUND_BASE), &physical) != 0 ||
+			physical != (uintptr_t) PCIE2_OUTBOUND_BASE) {
+		return -8;
 	}
 	/* The empty user root has no mappings yet. */
 	if (translate_el1_64((uintptr_t) LOW_RAM_SIZE, &physical) == 0) {
