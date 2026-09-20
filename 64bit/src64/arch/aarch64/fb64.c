@@ -33,6 +33,7 @@ static uint32_t framebuffer_pixel_order;
 static uint32_t cursor_x;
 static uint32_t cursor_y;
 static int framebuffer_ready;
+static const uint8_t *active_hangul_font;
 
 static uint32_t fb_color64(uint8_t red, uint8_t green, uint8_t blue)
 {
@@ -143,7 +144,7 @@ static void draw_hangul64(unsigned int unicode)
 	for (i = 0; i < sizeof bitmap; i++) {
 		bitmap[i] = 0;
 	}
-	hangul64_draw_unicode(bitmap, 16, 0, 0, 1, hangul_font64, unicode);
+	hangul64_draw_unicode(bitmap, 16, 0, 0, 1, active_hangul_font, unicode);
 	draw_bitmap64(bitmap, 16, cursor_x, cursor_y);
 	cursor_x += 16 * FB_SCALE;
 }
@@ -190,12 +191,26 @@ int arch64_fb_probe(struct BOOTINFO64 *bootinfo)
 	framebuffer_info.reserved2 = m[29];
 	framebuffer_info.vram = arch64_phys_to_virt((uintptr_t) framebuffer_address);
 	framebuffer_pixel_order = m[24];
+	/* The image is linked low and executes through its TTBR1 alias. Avoid
+	   retaining the low value produced by a static pointer initializer. */
+	active_hangul_font = (const uint8_t *) (uintptr_t) hangul_font64;
+	if ((uintptr_t) active_hangul_font < (uintptr_t) ARCH64_KERNEL_VA_BASE) {
+		active_hangul_font = (const uint8_t *) arch64_phys_to_virt(
+			(uintptr_t) active_hangul_font);
+	}
 	*bootinfo = framebuffer_info;
 	cursor_x = FB_MARGIN_X;
 	cursor_y = FB_MARGIN_Y;
 	framebuffer_ready = 1;
 	fill64(fb_color64(0x00, 0x34, 0x3b));
 	return 0;
+}
+
+void arch64_fb_set_hangul_font(const uint8_t *font)
+{
+	if (font != NULL) {
+		active_hangul_font = font;
+	}
 }
 
 void arch64_dbg_puts(const char *s)

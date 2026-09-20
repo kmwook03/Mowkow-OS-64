@@ -1,6 +1,6 @@
 # Raspberry Pi 5 boot files
 
-M1은 아직 SD 카드 이미지를 만들지 않는다. FAT32 부트 파티션에 다음 두 파일을
+아직 전용 SD 카드 이미지를 만들지 않는다. FAT32 부트 파티션에 다음 두 파일을
 복사한다.
 
 - `config.txt`: 이 디렉터리의 파일
@@ -172,3 +172,94 @@ code 5가 없으면 high-half 실행, high SP 및 태스크 스택, 빈 user TTB
 M3의 exception vector, timer IRQ, 선점형 공용 스케줄러, 4KiB 페이지 테이블,
 TTBR1 high-half 커널과 user TTBR0 분리까지 Raspberry Pi 5 실기 검증을 모두
 완료했다.
+
+## M4 SDHCI/FAT32 verification
+
+M4는 BCM2712 `sdio1`을 polling PIO 방식으로 초기화하고 공용 `block64`,
+`cache64`, `fd64`를 통해 부팅 FAT32 파티션을 마운트한다. 정상적인 첫 부팅은
+다음 문구를 출력하고 루트에 `M4TEST.TXT`를 생성한 뒤 `fd64_sync()`로 내보낸다.
+
+```text
+M4a: SDHCI card ready
+M4a: FAT32 mounted from boot SD
+M4b: write smoke created; reboot to verify persistence
+```
+
+이 문구가 나온 뒤 전원을 정상적으로 껐다 켠 두 번째 부팅에서 다음 문구가
+나오면 CMD24, 캐시 writeback, FAT/디렉터리 metadata 기록과 재부팅 후 읽기를
+모두 통과한 것이다.
+
+```text
+M4b: write smoke persisted across reboot
+```
+
+실패 panic code는 다음과 같다.
+
+- 6회: SDHCI 초기화 또는 카드 명령 실패
+- 7회: FAT32 마운트 실패
+- 8회: 파일 생성, CMD24 또는 `fd64_sync()` 실패
+- 9회: 이전 부팅의 `M4TEST.TXT` 크기나 내용이 예상과 다름
+- 10회: `H04.FNT`가 없거나 크기/읽기 결과가 올바르지 않음
+
+### M4 troubleshooting
+
+#### SDHCI 첫 MMIO 접근에서 level-1 data abort
+
+- 증상: `ESR=0x96000005`, `ELR=0xffffff8000081c2c`,
+  `FAR=0xffffff9000fff0fe`.
+- 해석: `FAR`는 SDHCI `HOST_VERSION`(`0x1000fff0fe`)의 high-half 주소이며
+  FSC `0x05`는 level-1 translation fault다.
+- 원인: mailbox/GIC는 L1 슬롯 `0x41`, SDHCI는 `0x40`인데 기존 MMU가
+  mailbox 슬롯만 `mmio_l2`에 연결했다.
+- 해결: bootstrap TTBR0와 high-half TTBR1 양쪽의 SDHCI L1 슬롯을
+  `mmio_l2`에 연결하고 `arch64_mmu_self_test()`에 SDHCI 주소 변환 검사를
+  추가했다.
+
+#### `BLOCK64_OPS.read` 호출에서 저주소 instruction abort
+
+- 증상: `ESR=0x86000005`, `ELR=FAR=0x0000000000081b00`.
+- 해석: 해당 주소는 `sdhci64_read()`의 link-time 물리 주소이며 FSC `0x05`는
+  instruction level-1 translation fault다.
+- 원인: 커널은 저주소로 링크된 뒤 TTBR1 high-half 별칭에서 실행된다. 직접
+  호출은 PC-relative라 정상이나, 정적으로 초기화한 `sdhci64_ops` 내부의 함수와
+  문자열 포인터는 저주소 값으로 남았다. 빈 TTBR0 상태에서 그 함수 포인터를
+  간접 호출해 fault가 발생했다.
+- 해결: AArch64가 `sdhci64_ops`를 선택할 때 모든 내장 포인터를
+  `ARCH64_KERNEL_VA_BASE`의 high-half 주소로 rebase한 runtime ops 테이블을
+  만들도록 했다.
+
+## Verification status — M4
+
+- 2026-09-20: Raspberry Pi 5 실기에서 SDHCI 초기화와 FAT32 mount 검증 완료.
+- HDMI에 `M4a: SDHCI card ready`, `M4a: FAT32 mounted from boot SD`가 표시되고
+  `MTASK:` 뒤의 `M`이 계속 증가하는 것을 확인했다.
+- 이 결과로 SDHCI CMD0/CMD8/ACMD41/CMD2/CMD3/CMD9/CMD7 초기화,
+  CMD17 PIO 읽기, MBR 파티션 탐색, 공용 cache64/fd64 FAT32 mount 및 기존
+  timer/scheduler 회귀 없음을 확인했다.
+- 2026-09-20: CMD24와 재부팅 후 파일 유지 검증 완료.
+- 첫 부팅에서 `M4b: write smoke created; reboot to verify persistence`, 두 번째
+  부팅에서 `M4b: write smoke persisted across reboot`와 계속 증가하는 `M`을
+  확인했다.
+- 이 결과로 CMD24 PIO 쓰기, cache64 writeback, FAT 두 사본과 디렉터리
+  metadata 동기화 및 전원 재인가 뒤 CMD17 재읽기를 확인했다.
+
+### M4c — SD 카드 한글 글꼴
+
+M4c는 FAT32 루트의 `H04.FNT`를 정확히 11,520바이트 읽어 framebuffer 한글
+렌더러의 활성 글꼴로 교체한다. 성공 기준은 다음 두 줄이 정상 한글 모양으로
+표시되고 이후 `M`이 계속 증가하는 것이다.
+
+```text
+M4c: H04.FNT loaded from boot SD
+M4c: SD 카드 한글 글꼴 적용 성공
+```
+
+- 2026-09-20: Raspberry Pi 5 실기에서 M4c 검증 완료.
+- `H04.FNT`를 부팅 SD 카드의 FAT32 파티션에서 읽고, framebuffer 렌더러의
+  활성 한글 글꼴로 교체한 뒤 `M4c: SD 카드 한글 글꼴 적용 성공`이 정상적인
+  한글 모양으로 표시되는 것을 확인했다.
+- 이후에도 `MTASK:` 뒤의 `M`과 ACT LED heartbeat가 계속되어 SD 읽기와
+  framebuffer 글꼴 교체가 timer/scheduler에 회귀를 만들지 않았음을 확인했다.
+
+M4a의 SDHCI/CMD17/FAT32 mount, M4b의 CMD24/동기화/재부팅 지속성, M4c의
+부팅 SD 카드 한글 글꼴 로드를 모두 Raspberry Pi 5 실기에서 검증했다.

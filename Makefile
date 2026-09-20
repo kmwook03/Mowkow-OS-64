@@ -49,7 +49,7 @@ help :
 	@echo "    make parity64   머꼬 병행 검사 (호스트 CPython과 견주기)"
 	@echo "    make clean64    build64/ img64/ 지우기"
 	@echo ""
-	@echo "  Raspberry Pi 5 (AArch64, M1)"
+	@echo "  Raspberry Pi 5 (AArch64, M4)"
 	@echo "    make aarch64    Pi 5 flat kernel_2712.img 빌드"
 	@echo "    make clean-a64  AArch64 빌드 산출물 지우기"
 	@echo ""

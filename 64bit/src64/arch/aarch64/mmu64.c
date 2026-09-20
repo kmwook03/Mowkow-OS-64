@@ -10,6 +10,7 @@
 #define MAILBOX_BASE 0x107c013880ULL
 #define GIO_AON_BASE 0x107d517c00ULL
 #define GIC_BASE 0x107fff9000ULL
+#define SDHCI_BASE 0x1000fff000ULL
 
 #define DESC_VALID 0x1ULL
 #define DESC_TABLE_OR_PAGE 0x3ULL
@@ -30,7 +31,7 @@ static uint64_t low_l2[TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t low_l3[TABLE_ENTRIES][TABLE_ENTRIES]
 	__attribute__((aligned(PAGE_SIZE)));
 static uint64_t mmio_l2[TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
-static uint64_t mmio_l3[3][TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
+static uint64_t mmio_l3[4][TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 
 static uint64_t table_descriptor64(const void *table)
 {
@@ -84,18 +85,22 @@ void arch64_mmu_init(void)
 		}
 	}
 
-	/* All three devices live in L1 slot 65, but in separate 2 MiB windows. */
+	/* SDHCI is in L1 slot 0x40; the other BCM2712 devices are in 0x41.
+	   Their L2 indices do not overlap, so both slots can share this L2 table. */
 	map_device_window64(MAILBOX_BASE, 0);
 	map_device_window64(GIO_AON_BASE, 1);
 	map_device_window64(GIC_BASE, 2);
+	map_device_window64(SDHCI_BASE, 3);
 
 	/* TTBR0 retains the low bootstrap map while TTBR1 supplies the canonical
 	   high-half kernel alias. A later user-mode step can replace TTBR0 without
 	   rebuilding or disturbing the kernel half. */
 	bootstrap_l1[0] = table_descriptor64(low_l2);
 	bootstrap_l1[(MAILBOX_BASE >> 30) & 0x1ffULL] = table_descriptor64(mmio_l2);
+	bootstrap_l1[(SDHCI_BASE >> 30) & 0x1ffULL] = table_descriptor64(mmio_l2);
 	ttbr1_l1[0] = table_descriptor64(low_l2);
 	ttbr1_l1[(MAILBOX_BASE >> 30) & 0x1ffULL] = table_descriptor64(mmio_l2);
+	ttbr1_l1[(SDHCI_BASE >> 30) & 0x1ffULL] = table_descriptor64(mmio_l2);
 
 	__asm__ volatile (
 		"dsb sy\n\t"
@@ -183,6 +188,10 @@ int arch64_mmu_self_test(void)
 			&physical) != 0 ||
 		physical != (uintptr_t) MAILBOX_BASE) {
 		return -3;
+	}
+	if (translate_el1_64(arch64_phys_to_virt((uintptr_t) SDHCI_BASE),
+			&physical) != 0 || physical != (uintptr_t) SDHCI_BASE) {
+		return -6;
 	}
 	/* The empty user root has no mappings yet. */
 	if (translate_el1_64((uintptr_t) LOW_RAM_SIZE, &physical) == 0) {

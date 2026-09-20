@@ -36,6 +36,7 @@ void arch64_irqctl_init(void);
 void arch64_timer_init(struct FIFO64 *fifo);
 void arch64_input_init(struct FIFO64 *fifo);
 int arch64_fb_probe(struct BOOTINFO64 *bootinfo);
+void arch64_fb_set_hangul_font(const uint8_t *font);
 
 void arch64_scheduler_init(void);
 uintptr_t arch64_scheduler_tick(uintptr_t frame);

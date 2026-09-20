@@ -1,6 +1,9 @@
 /* BCM2712 always-on GPIO: M1's only observable debug channel. */
 #include <arch/arch64.h>
 #include <bootinfo64.h>
+#include <block64.h>
+#include <fd64.h>
+#include <memory64.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -9,6 +12,9 @@
 #define GIO_IODIR_OFFSET 0x08
 #define ACT_LED_PIN 9
 #define ACT_LED_MASK (1U << ACT_LED_PIN)
+#define HANGUL_FONT_SIZE 11520U
+
+static uint8_t disk_hangul_font[HANGUL_FONT_SIZE];
 
 static uintptr_t gio_address64(uint32_t offset)
 {
@@ -79,6 +85,70 @@ static void delay_ms64(uint32_t milliseconds)
 	while ((int64_t) (counter64() - deadline) < 0) {
 		__asm__ volatile ("yield");
 	}
+}
+
+static int m4_write_smoke64(void)
+{
+	static const char payload[] = "Mowkow OS M4 SDHCI write smoke\n";
+	struct FDHANDLE64 fh;
+	char buffer[sizeof(payload) - 1];
+	size_t i;
+	size_t n;
+
+	if (fd64_open(&fh, "M4TEST.TXT") != 0) {
+		if (fh.info.size != sizeof(payload) - 1) {
+			return -2;
+		}
+		n = fd64_read(&fh, buffer, sizeof(buffer));
+		if (n != sizeof(buffer)) {
+			return -2;
+		}
+		for (i = 0; i < sizeof(buffer); i++) {
+			if (buffer[i] != payload[i]) {
+				return -2;
+			}
+		}
+		return 1; /* A previous boot wrote and synced this exact payload. */
+	}
+	if (fd64_create(&fh, "M4TEST.TXT") == 0 ||
+			fd64_write(&fh, payload, sizeof(payload) - 1) !=
+				sizeof(payload) - 1 || fd64_sync() < 0) {
+		return -1;
+	}
+	/* Re-open through fd64 so the directory entry and length are checked too. */
+	if (fd64_open(&fh, "M4TEST.TXT") == 0 ||
+			fh.info.size != sizeof(payload) - 1 ||
+			fd64_read(&fh, buffer, sizeof(buffer)) != sizeof(buffer)) {
+		return -1;
+	}
+	for (i = 0; i < sizeof(buffer); i++) {
+		if (buffer[i] != payload[i]) {
+			return -1;
+		}
+	}
+	return 0;
+}
+
+static int m4_load_hangul_font64(void)
+{
+	struct FDHANDLE64 fh;
+	size_t loaded;
+	size_t n;
+
+	if (fd64_open(&fh, "H04.FNT") == 0 || fh.info.size != HANGUL_FONT_SIZE) {
+		return -1;
+	}
+	loaded = 0;
+	while (loaded < HANGUL_FONT_SIZE) {
+		n = fd64_read(&fh, disk_hangul_font + loaded,
+			HANGUL_FONT_SIZE - loaded);
+		if (n == 0) {
+			return -1;
+		}
+		loaded += n;
+	}
+	arch64_fb_set_hangul_font(disk_hangul_font);
+	return 0;
 }
 
 void arch64_irq_disable(void)
@@ -172,6 +242,35 @@ void aarch64_high_main(void)
 	arch64_dbg_puts("M3c: shared mtask64 scheduler\n");
 	arch64_dbg_puts("M3d: 4 KiB TTBR0 + TTBR1 paging\n");
 	arch64_dbg_puts("M3e: TTBR1 high-half kernel + empty user TTBR0\n");
+	init_memory64();
+	if (block64_init() != 0) {
+		arch64_dbg_puts("M4a: SDHCI init failed\n");
+		arch64_panic_blink(6);
+	}
+	arch64_dbg_puts("M4a: SDHCI card ready\n");
+	if (fd64_init() != 0) {
+		arch64_dbg_puts("M4a: FAT32 mount failed\n");
+		arch64_panic_blink(7);
+	}
+	arch64_dbg_puts("M4a: FAT32 mounted from boot SD\n");
+	status = m4_write_smoke64();
+	if (status == 0) {
+		arch64_dbg_puts("M4b: write smoke created; reboot to verify persistence\n");
+	} else if (status == 1) {
+		arch64_dbg_puts("M4b: write smoke persisted across reboot\n");
+	} else if (status == -2) {
+		arch64_dbg_puts("M4b: existing write smoke is corrupt\n");
+		arch64_panic_blink(9);
+	} else {
+		arch64_dbg_puts("M4b: write smoke failed\n");
+		arch64_panic_blink(8);
+	}
+	if (m4_load_hangul_font64() != 0) {
+		arch64_dbg_puts("M4c: H04.FNT load failed\n");
+		arch64_panic_blink(10);
+	}
+	arch64_dbg_puts("M4c: H04.FNT loaded from boot SD\n");
+	arch64_dbg_puts("M4c: SD 카드 한글 글꼴 적용 성공\n");
 	arch64_dbg_puts("MTASK: ");
 	arch64_irq_enable();
 
