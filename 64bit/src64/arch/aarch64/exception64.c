@@ -1,5 +1,7 @@
 /* EL1 exception setup and early fault reporting. */
 #include <arch/arch64.h>
+#include <interrupt64.h>
+#include <syscall64.h>
 #include <stdint.h>
 
 extern char arch64_vector_table[];
@@ -40,4 +42,37 @@ void arch64_exception_handler(uint64_t vector, uint64_t esr, uint64_t elr,
 	print_hex64(far);
 	arch64_dbg_puts("\n");
 	arch64_panic_blink(4);
+}
+
+struct ARCH64_EXCEPTION_FRAME {
+	uint64_t x[31];
+	uint64_t elr;
+	uint64_t spsr;
+	uint64_t reserved;
+};
+
+uint64_t arch64_sync_dispatch(struct ARCH64_EXCEPTION_FRAME *frame,
+	uint64_t esr)
+{
+	struct INTERRUPT_FRAME64 syscall_frame = {0};
+	uint64_t exception_class;
+	uint64_t action;
+
+	exception_class = (esr >> 26) & 0x3fU;
+	if (exception_class != 0x15U) {
+		uint64_t far;
+
+		__asm__ volatile ("mrs %0, far_el1" : "=r" (far));
+		arch64_exception_handler(8, esr, frame->elr, far);
+	}
+	syscall_frame.rax = frame->x[8];
+	syscall_frame.rdi = frame->x[0];
+	syscall_frame.rsi = frame->x[1];
+	syscall_frame.rdx = frame->x[2];
+	syscall_frame.r10 = frame->x[3];
+	syscall_frame.r8 = frame->x[4];
+	syscall_frame.r9 = frame->x[5];
+	action = syscall_handler64(&syscall_frame);
+	frame->x[0] = syscall_frame.rax;
+	return action;
 }

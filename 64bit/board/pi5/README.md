@@ -1,11 +1,23 @@
 # Raspberry Pi 5 boot files
 
-아직 전용 SD 카드 이미지를 만들지 않는다. FAT32 부트 파티션에 다음 두 파일을
+아직 전용 SD 카드 이미지를 만들지 않는다. FAT32 부트 파티션에 다음 파일을
 복사한다.
 
 - `config.txt`: 이 디렉터리의 파일
 - `kernel_2712.img`: `make aarch64`가 만든
   `build64/aarch64/kernel_2712.img`
+- `HELLO.ELF`: M7k부터 `make aarch64`가 함께 만드는
+  `build64/aarch64-app/hello.elf`
+- `CAT.ELF`: M7l부터 `make aarch64`가 함께 만드는
+  `build64/aarch64-app/cat.elf`
+- `KTEST.ELF`: M7m부터 `make aarch64`가 함께 만드는
+  `build64/aarch64-app/ktest.elf`
+- `MTEST.ELF`: M7n부터 `make aarch64`가 함께 만드는
+  `build64/aarch64-app/mtest.elf`
+- `WTEST.ELF`: M7o부터 `make aarch64`가 함께 만드는
+  `build64/aarch64-app/wtest.elf`
+- `나노.ELF`: M7p부터 `make aarch64`가 함께 만드는
+  `build64/aarch64-app/나노.elf`
 
 전원을 넣으면 정상 부팅 시 녹색 ACT LED가 0.5초 간격으로 계속 켜지고 꺼진다.
 초기 exception level이 예상과 다르면 panic code 1(0.15초 한 번 점멸 후 1.2초
@@ -430,18 +442,18 @@ status를 표시하고 panic code 16을 반복한다.
 - 두 controller 모두 reset 뒤 `USBCMD=0x00000000`,
   `USBSTS=0x00000001(HCH)`인 정상 halted 상태가 됐다.
 
-### M6c — xHCI0 DMA structures와 Run
+### M6c — 연결된 xHCI controller의 DMA structures와 Run
 
-M6c는 xHCI0에 64-slot DCBAA, 256-entry command ring, 256-entry event ring과 단일
-ERST entry를 설치한다. HCSPARAMS2가 요구하면 최대 4개의 scratchpad도 제공한다.
+M6c는 xHCI0과 xHCI1의 root port를 검사해 장치가 연결된 controller를 선택한다.
+둘 다 연결됐거나 둘 다 비어 있으면 xHCI0을 우선한다. 선택된 controller에 64-slot
+DCBAA, 256-entry command ring, 256-entry event ring과 단일 ERST entry를 설치한다.
+HCSPARAMS2가 요구하면 최대 4개의 scratchpad도 제공한다.
 RP1 bus master가 system RAM을 보는 inbound alias `0x10_00000000 + physical`을 DMA
 주소로 사용하며 controller를 Run 상태로 전환해 `USBSTS.HCH` 해제를 확인한다.
-xHCI1은 M6b의 halted 상태로 남겨 둔다.
-
-성공 문구의 세 `PORTSC` 값은 연결된 USB 장치에 따라 달라질 수 있다.
+선택되지 않은 controller는 M6b의 halted 상태로 남겨 둔다.
 
 ```text
-M6c: RP1 xHCI0 running, cmd/sts=0x......../0x........ ports=0x......../0x......../0x........
+M6c: RP1 xHCI running, controller=0x........ cmd/sts=0x......../0x........
 MTASK: MMMMM...
 ```
 
@@ -489,8 +501,9 @@ pointer가 다르면 원시 event와 `USBSTS`를 표시하고 panic code 18을 �
 
 ### M6e — 연결 포트 감지와 root-port reset
 
-M6e는 xHCI0의 Supported Protocol extended capability를 따라 각 root port가 USB 2.x
-또는 USB 3.x인지 판별한다. 3초 안에 연결된 포트를 찾은 뒤 USB 2.x에는 Port Reset,
+M6e는 M6c에서 선택한 xHCI controller의 Supported Protocol extended capability를
+따라 각 root port가 USB 2.x 또는 USB 3.x인지 판별한다. 3초 안에 연결된 포트를
+찾은 뒤 USB 2.x에는 Port Reset,
 USB 3.x에는 Warm Port Reset을 요청하고 50ms recovery delay 뒤 `CCS`, `PED`, port
 power와 negotiated speed를 확인한다.
 
@@ -502,7 +515,7 @@ Event가 먼저 올 수 있다. M6d는 command event가 나올 때까지 앞선 
 전원을 인가한다. 성공하면 다음 줄과 계속 증가하는 `M`을 확인한다.
 
 ```text
-M6e: RP1 xHCI0 port reset complete, port/protocol=0x......../0x........ portsc=0x......../0x........
+M6e: RP1 xHCI port reset complete, port/protocol=0x......../0x........ portsc=0x......../0x........
 MTASK: MMMMM...
 ```
 
@@ -1200,6 +1213,219 @@ Shift+Space, L S, Enter
 - 영어 모드에서 `ls`를 실행했을 때 FAT32 파일 이름과 크기 및 새 프롬프트가
   표시됐고, 별도 console 태스크와 0.5초 ACT LED heartbeat도 계속 정상 동작했다.
 
+### M7k — AArch64 ELF64 실행과 기본 syscall
+
+M7k는 공용 ELF/process/syscall 계층을 AArch64에 연결한다. 앱 이미지는 TTBR0의
+EL0 전용 identity mapping에, 커널은 기존 TTBR1 high-half mapping에 둔다. AArch64
+syscall ABI는 번호를 `x8`, 인수를 `x0`–`x5`, 반환값을 `x0`에 두고 `svc #0`을
+사용한다. 첫 검증은 `SYS_WRITE`와 `SYS_EXIT`만 사용하는 `hello.elf`다.
+
+`make aarch64` 뒤 `build64/aarch64-app/hello.elf`를 FAT32 부트 파티션에
+`HELLO.ELF`라는 이름으로 복사한다. 새 kernel image로 부팅해 영어 입력 모드에서
+다음을 실행한다.
+
+```text
+run HELLO.ELF
+```
+
+정상 결과는 앱이 EL0에서 문자열을 출력하고 status 0으로 console task에 복귀한
+뒤 새 프롬프트를 표시하는 것이다. 그 뒤에도 ACT LED heartbeat가 계속돼야 한다.
+
+```text
+hello from app64
+exit 0
+>
+```
+
+ELF machine은 `EM_AARCH64(183)`만 허용한다. 사용자 image, stack, heap은 syscall
+진입 때 범위를 검사하며 앱 종료 뒤 TTBR0 mapping과 backing memory를 회수한다.
+
+- 2026-09-24: Raspberry Pi 5 실기에서 M7k 검증 완료.
+- `run hello.elf` 실행 뒤 `hello from app64`, `exit 0`과 새 프롬프트가 표시됐다.
+  AArch64 ELF 적재, EL0 진입, `SYS_WRITE`, `SYS_EXIT` 및 console task 복귀가 모두
+  정상 동작함을 확인했다.
+
+### 부팅 입력 회귀 검사 축약
+
+M7k까지 실기 검증이 끝난 뒤에는 과거 M6 bring-up 단계의 `A`, `Shift+A`, `C`,
+`R K`, `G K S R M F` 연속 입력을 매 부팅마다 반복하지 않는다. 현재 부팅 검사는
+문자 키 하나를 눌렀다 놓아 interrupt report, KEY64 make/break 변환과 event FIFO를
+확인한 뒤 바로 GUI와 console task를 시작한다. 이후 키 입력은 처음부터 console
+FIFO로 전달한다.
+
+interrupt TRB를 안내 문구보다 먼저 등록하고 timeout 없이 press/release를 기다린다.
+따라서 안내가 보이자마자 키를 빠르게 눌렀다 떼어도 report를 놓치지 않는다. 과거
+10초 blocking read에서 이벤트가 모두 0인 채 `M6k status=-4`가 되던 경로는 제거했다.
+
+- 2026-09-24: Raspberry Pi 5 실기에서 수정된 단일 문자 키 검증 완료.
+- 키 press/release 뒤 M6k timeout 없이 console task가 시작되는 것을 확인했다.
+
+콘솔 초기화가 이미 제목, 한글 입력 안내와 프롬프트를 출력하므로 별도의
+`M7j test: Shift+Space, L S, Enter` 안내 문구와 중복 프롬프트도 제거했다.
+과거 스케줄러 bring-up용 `MTASK:` 화면 문구도 제거했다. 스케줄러 상태 갱신과
+0.5초 ACT LED heartbeat는 출력 없이 계속 동작한다.
+
+### M7l — AArch64 파일 syscall과 `cat.elf`
+
+M7l은 M7k의 기본 앱 실행 경로를 `SYS_OPEN`, `SYS_READ`, `SYS_CLOSE`까지 넓힌다.
+공용 `cat` 앱을 AArch64 ELF로 함께 빌드하며, 인수 전달과 앱 스택의 읽기 버퍼도
+EL0 mapping 및 syscall 사용자 범위 검사를 통과해야 한다.
+
+`make aarch64` 뒤 `build64/aarch64-app/cat.elf`를 FAT32 부트 파티션에
+`CAT.ELF`라는 이름으로 복사한다. 같은 파티션에 읽을 파일이 있는지 `ls`로 확인한
+뒤 다음과 같이 실행한다.
+
+```text
+run CAT.ELF README.TXT
+```
+
+파일 내용 뒤에 `exit 0`과 새 프롬프트가 표시되면 인수 전달과 open/read/close
+syscall 경로가 정상이다. 파일 이름은 `ls`에 실제 표시된 이름을 사용한다.
+
+- 2026-09-24: Raspberry Pi 5 실기에서 M7l 검증 완료.
+- `cat.elf`가 지정한 파일을 출력한 뒤 `exit 0`으로 console task에 복귀했다.
+  AArch64 인수 전달과 `SYS_OPEN`, `SYS_READ`, `SYS_CLOSE`가 정상 동작함을 확인했다.
+
+### M7m — AArch64 raw TTY와 `ktest.elf`
+
+M7m은 공용 `ktest` 앱을 AArch64 ELF로 빌드해 `SYS_TTY` 전체 경로를 검증한다.
+앱은 raw mode로 전환한 뒤 화면 크기 조회, 셀 지우기, 커서 이동, 전경·배경색 변경,
+키/PREEDIT 이벤트 대기 및 dirty 영역 flush를 사용한다. 특히 `tty_clear()`는 x0부터
+x4까지 사용하는 5인자 syscall이므로 AArch64 SVC 인수 전달도 함께 확인한다.
+
+`build64/aarch64-app/ktest.elf`를 FAT32 부트 파티션에 `KTEST.ELF`로 복사한 뒤
+다음을 실행한다.
+
+```text
+run KTEST.ELF
+```
+
+반전색 제목과 `^X quit` 상태 줄이 나타나면 영문 키, 화살표 키, 한글 조합을 각각
+입력해 마지막 이벤트와 조합 중 글자가 갱신되는지 확인한다. `Ctrl+X`로 종료했을 때
+화면이 기본 console로 복구되고 `exit 0`과 새 프롬프트가 표시되면 성공이다. 앱은
+일부러 raw mode를 끄지 않으므로 종료 시 커널의 강제 복구 경로까지 검증한다.
+
+- 2026-09-24: Raspberry Pi 5 실기에서 M7m 검증 완료.
+- `ktest.elf`에서 raw TTY 화면과 키 이벤트를 확인하고 `Ctrl+X`로 종료한 뒤
+  `exit 0`과 기본 console 프롬프트가 정상 복구됐다.
+
+### AArch64 앱 직접 실행
+
+x86_64 머꼬OS와 마찬가지로 내장 명령에 해당하지 않는 첫 단어를 앱 이름으로
+간주한다. 따라서 `run` 접두사는 선택 사항이며 다음처럼 실행할 수 있다.
+
+```text
+hello
+cat README.TXT
+ktest
+```
+
+FAT 파티션에 앱이 확장자 없는 `HELLO`, `CAT`, `KTEST`로 들어 있으면 그 이름을
+먼저 찾는다. 파일이 `HELLO.ELF`, `CAT.ELF`, `KTEST.ELF` 형태라면 명령 이름에 점이
+없을 때 `.elf`를 자동으로 붙여 다시 찾는다. 명시적인 `run CAT.ELF README.TXT`
+형식도 호환성을 위해 계속 지원한다.
+
+### M7n — AArch64 사용자 heap과 `mtest`
+
+M7n은 공용 `mtest`와 `crt/malloc.c`를 AArch64 ELF로 빌드한다. 커널의 1 MiB EL0
+heap mapping과 `SYS_ALLOC`으로 4 KiB chunk를 받고, 앱 내부 free-list가 해제된
+메모리를 재사용하는지 검사한다. 기본 할당, 4 MiB churn, 인접 블록 병합, 큰 블록
+분할 및 교차 할당 뒤 데이터 보존을 순서대로 수행한다.
+
+`build64/aarch64-app/mtest.elf`를 FAT32 부트 파티션에 `MTEST.ELF`로 복사하고
+직접 실행한다.
+
+```text
+mtest
+```
+
+각 항목이 `ok`로 표시되고 마지막에 다음 결과와 `exit 0`이 나오면 성공이다.
+
+```text
+mtest: all passed
+exit 0
+```
+
+- 2026-09-24: Raspberry Pi 5 실기에서 M7n 검증 완료.
+- 모든 allocator 항목이 `ok`였고 `mtest: all passed`, `exit 0`을 확인했다.
+  EL0 heap mapping, `SYS_ALLOC`과 앱 free-list의 재사용·분할·병합이 정상 동작했다.
+
+### M7o — AArch64 FAT32 쓰기와 `wtest`
+
+M7o는 공용 `wtest`를 AArch64 ELF로 빌드해 앱 syscall을 통한 FAT32 쓰기를
+검증한다. `SYS_OPEN`의 `O_CREAT | O_TRUNC`, `SYS_WRITE`, `SYS_READ`, `SYS_CLOSE`를
+사용하며 작은 파일과 1,500바이트 다중 클러스터 파일을 생성하고 즉시 다시 읽어
+내용을 비교한다. `fd64_write()`가 데이터, FAT, 디렉터리 순으로 `fd64_sync()`까지
+수행하므로 재부팅 뒤에도 파일이 남아야 한다.
+
+`build64/aarch64-app/wtest.elf`를 FAT32 부트 파티션에 `WTEST.ELF`로 복사하고
+다음처럼 실행한다.
+
+```text
+wtest
+```
+
+정상 결과는 다음과 같다.
+
+```text
+wtest: ok
+exit 0
+```
+
+그 뒤 재부팅해서 `cat TEST.TXT`가 `phase0 fat12 write ok`를 출력하는지 확인한다.
+1.5 MiB 할당과 전체 readback은 시간이 오래 걸리는 선택 시험으로 분리한다.
+
+```text
+wtest HUGE
+```
+
+- 2026-09-24: Raspberry Pi 5 실기에서 M7o 검증 완료.
+- `wtest: ok`, `exit 0`을 확인한 뒤 재부팅했고, `cat TEST.TXT`가
+  `phase0 fat12 write ok`를 출력했다. FAT32 데이터와 메타데이터의 매체 영속성이
+  정상 동작함을 확인했다.
+
+### M7p — AArch64 `나노` 편집기
+
+M7p는 기존 공용 `나노` 소스를 AArch64 ELF로 빌드한다. 파일 읽기와 인수 전달,
+EL0 heap allocator, raw TTY 화면, 이동 키, 한글 CHAR/PREEDIT, 파일 truncate·쓰기와
+종료 시 console 복구까지 지금까지 연결한 M7 기능을 실제 응용 프로그램에서 함께
+검증한다.
+
+`build64/aarch64-app/나노.elf`를 FAT32 부트 파티션에 `나노.ELF`로 복사하고,
+보존해도 되는 시험 파일을 연다.
+
+```text
+나노 NANO64.TXT
+```
+
+영문과 한글을 입력하고 화살표·Home·End·Backspace가 동작하는지 확인한다.
+`Ctrl+O`로 저장했을 때 `저장했습니다`가 표시되어야 하며, `Ctrl+X`로 종료하면
+기본 console과 `exit 0` 프롬프트로 복귀해야 한다. 재부팅한 뒤 다음 명령으로
+저장 내용이 유지되는지 확인한다.
+
+```text
+cat NANO64.TXT
+```
+
+이 단계까지 통과하면 M7의 console·syscall·application parity를 완료하고 M8의
+USB HID 마우스 및 GUI 상호작용으로 넘어간다.
+
+- 2026-09-24: Raspberry Pi 5 실기에서 M7p 검증 완료.
+- `나노 NANO64.TXT`로 영문·한글 편집, 이동 및 삭제, `Ctrl+O` 저장과 `Ctrl+X`
+  종료를 확인했다. 재부팅 뒤 `cat NANO64.TXT`로 저장 내용이 유지되는 것도
+  확인해 raw TTY, EL0 heap, 파일 syscall과 FAT32 영속성의 통합 경로가 통과했다.
+
+### M7 완료 기록
+
+Raspberry Pi 5 실기에서 `hello`, `cat`, `ktest`, `mtest`, `wtest`, `나노`까지
+AArch64 ELF 앱 실행을 확인했다. 이 과정에서 EL0 진입과 SVC, 앱 인수, 표준 출력,
+FAT32 읽기·쓰기, raw TTY, 한글 입력, 사용자 heap 및 앱 종료 후 console 복귀를
+검증했다. 명령 디스패처는 x86_64와 같이 `run` 없이 앱 이름을 직접 실행하며,
+필요하면 `.elf` 확장자를 자동 보완한다.
+
+M7의 console·syscall·application parity는 완료 상태다. 사용자 요청에 따라 M8은
+아직 착수하지 않는다.
+
 ### 화면 출력 축약
 
 M6 진단이 늘어나면서 framebuffer 세로 공간이 부족해졌으므로, 이미 실기 검증이
@@ -1215,10 +1441,12 @@ M6a-u: xHCI + USB HID + FIFO + keymap + 한글 OK
 ```
 
 - 2026-09-20: Raspberry Pi 5 실기에서 통합 M6a-u 검증 완료.
-- `A`, `Shift+A`, `C`, `R K`, `G K S R M F` 순서의 단일 시험 뒤 통합 성공
-  표식이 표시됐고 이후에도 `M` heartbeat가 지속됐다.
+- 현재 부팅 회귀 검사는 문자 키 하나를 눌렀다 놓는 것으로 축약했으며, 이후
+  입력은 곧바로 console task에 전달된다.
 
 ## M8 — USB HID 마우스와 GUI 상호작용
+
+상태: 미착수.
 
 마우스 작업은 keyboard/console 경로와 별개인 M8로 분리한다. HID boot mouse의
 enumeration과 report decoding부터 시작해 `gui64_mouse_dec()`가 소비하는 공용 이벤트

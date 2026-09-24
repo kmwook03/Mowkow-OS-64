@@ -32,9 +32,13 @@ void arch64_cpu_init(void);
 void arch64_mmu_init(void);
 void arch64_mmu_finish_high(void);
 int arch64_mmu_self_test(void);
+int arch64_user_map_range(uintptr_t base, size_t size, int executable);
+void arch64_user_unmap_all(void);
+void arch64_sync_user_code(uintptr_t physical, size_t size);
 void arch64_irqctl_init(void);
 void arch64_timer_init(struct FIFO64 *fifo);
 void arch64_timer_set_debug_output(int enabled);
+uint64_t arch64_timer_ticks(void);
 void arch64_input_init(struct FIFO64 *fifo);
 int arch64_fb_probe(struct BOOTINFO64 *bootinfo);
 void arch64_fb_set_hangul_font(const uint8_t *font);
@@ -65,6 +69,7 @@ int xhci64_reset_rp1(uintptr_t rp1_base,
 	struct XHCI64_RESET_RESULT results[2]);
 
 struct XHCI64_START_RESULT {
+	uint32_t controller_id;
 	uint32_t command;
 	uint32_t status;
 	uint32_t hcsparams2;
@@ -173,6 +178,8 @@ int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
 int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_KEY_RESULT *result);
+int xhci64_keyboard_set_boot_protocol(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid);
 int xhci64_keyboard_arm(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid);
 int xhci64_keyboard_poll(uintptr_t rp1_base, uint32_t slot_id,

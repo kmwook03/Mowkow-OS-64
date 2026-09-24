@@ -376,7 +376,6 @@ static int m7f_console_init64(const struct BOOTINFO64 *bootinfo)
 	}
 	console64_set_hangul_font(disk_hangul_font);
 	console64_init_on_sheet(bootinfo, m7e_console_sheet);
-	console64_puts("\nM7j test: Shift+Space, L S, Enter\n> ");
 	if (console64_start_task(console64_active()) != 0) {
 		return -2;
 	}
@@ -492,30 +491,14 @@ void aarch64_high_main(void)
 	struct XHCI64_HID_RESULT xhci_hid;
 	struct XHCI64_CONFIGURE_RESULT xhci_configure;
 	struct XHCI64_KEY_RESULT xhci_key;
-	struct XHCI64_KEY_RESULT xhci_release;
-	struct XHCI64_KEY_RESULT xhci_shift_key;
-	struct XHCI64_KEY_RESULT xhci_shift_release;
 	struct USBHID64_STATE hid_state;
 	uint8_t hid_report[8];
+	uint32_t hid_index;
 	uint16_t key_make;
 	uint16_t key_break;
 	struct FIFO64 hid_fifo;
 	struct EVENT64 hid_event_buffer[32];
 	struct EVENT64 hid_event;
-	uint32_t hid_sequence[4];
-	unsigned int hid_index;
-	int live_key_state;
-	struct HANGUL64 live_hangul;
-	char live_hangul_utf8[4];
-	char live_character;
-	int live_hangul_length;
-	int live_decode_length;
-	struct HANGUL64 live_engine;
-	struct HANGUL64_FEED_RESULT live_feed;
-	char live_word[7];
-	static const char live_word_keys[] = "gksrmf";
-	unsigned int live_word_length;
-	unsigned int live_word_step;
 	uint64_t heartbeat_frequency;
 	uint64_t heartbeat_deadline;
 	uint64_t heartbeat_half_period;
@@ -680,6 +663,7 @@ void aarch64_high_main(void)
 	xhci_start.command = 0;
 	xhci_start.status = 0;
 	xhci_start.hcsparams2 = 0;
+	xhci_start.controller_id = 0;
 	xhci_start.port_status[0] = 0;
 	xhci_start.port_status[1] = 0;
 	xhci_start.port_status[2] = 0;
@@ -702,7 +686,9 @@ void aarch64_high_main(void)
 	}
 	status = xhci64_start_rp1(rp1_base, &xhci_start);
 	if (status != 0) {
-		arch64_dbg_puts("M6c: RP1 xHCI0 start failed, status=");
+		arch64_dbg_puts("M6c: RP1 xHCI start failed, controller=");
+		dbg_hex32(xhci_start.controller_id);
+		arch64_dbg_puts(" status=");
 		dbg_hex32((uint32_t) status);
 		arch64_dbg_puts(" hcs2=");
 		dbg_hex32(xhci_start.hcsparams2);
@@ -713,13 +699,22 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(17);
 	}
+	arch64_dbg_puts("M6c: RP1 xHCI running, controller=");
+	dbg_hex32(xhci_start.controller_id);
+	arch64_dbg_puts(" cmd/sts=");
+	dbg_hex32(xhci_start.command);
+	arch64_dbg_puts("/");
+	dbg_hex32(xhci_start.status);
+	arch64_dbg_puts("\n");
 	xhci_command.event_status = 0;
 	xhci_command.event_control = 0;
 	xhci_command.command_pointer_low = 0;
 	xhci_command.controller_status = 0;
 	status = xhci64_noop_command(rp1_base, &xhci_command);
 	if (status != 0) {
-		arch64_dbg_puts("M6d: RP1 xHCI0 No-op failed, status=");
+		arch64_dbg_puts("M6d: RP1 xHCI No-op failed, controller=");
+		dbg_hex32(xhci_start.controller_id);
+		arch64_dbg_puts(" status=");
 		dbg_hex32((uint32_t) status);
 		arch64_dbg_puts(" event=");
 		dbg_hex32(xhci_command.event_status);
@@ -746,7 +741,9 @@ void aarch64_high_main(void)
 	xhci_port.status_after = 0;
 	status = xhci64_reset_connected_port(rp1_base, &xhci_port);
 	if (status != 0) {
-		arch64_dbg_puts("M6e: RP1 xHCI0 port reset failed, status=");
+		arch64_dbg_puts("M6e: RP1 xHCI port reset failed, controller=");
+		dbg_hex32(xhci_start.controller_id);
+		arch64_dbg_puts(" status=");
 		dbg_hex32((uint32_t) status);
 		arch64_dbg_puts(" port/protocol=");
 		dbg_hex32(xhci_port.port_id);
@@ -765,7 +762,7 @@ void aarch64_high_main(void)
 	xhci_slot.command_pointer_low = 0;
 	status = xhci64_enable_slot(rp1_base, &xhci_slot);
 	if (status != 0) {
-		arch64_dbg_puts("M6f: RP1 xHCI0 Enable Slot failed, status=");
+		arch64_dbg_puts("M6f: RP1 xHCI Enable Slot failed, status=");
 		dbg_hex32((uint32_t) status);
 		arch64_dbg_puts(" slot=");
 		dbg_hex32(xhci_slot.slot_id);
@@ -789,7 +786,7 @@ void aarch64_high_main(void)
 		(xhci_port.status_after >> 10) & 0xfU, xhci_slot.slot_id,
 		&xhci_address);
 	if (status != 0) {
-		arch64_dbg_puts("M6g: RP1 xHCI0 Address Device failed, status=");
+		arch64_dbg_puts("M6g: RP1 xHCI Address Device failed, status=");
 		dbg_hex32((uint32_t) status);
 		arch64_dbg_puts(" address/state=");
 		dbg_hex32(xhci_address.device_address);
@@ -817,7 +814,7 @@ void aarch64_high_main(void)
 	status = xhci64_read_device_descriptor8(rp1_base, xhci_slot.slot_id,
 		&xhci_descriptor);
 	if (status != 0) {
-		arch64_dbg_puts("M6h: RP1 xHCI0 descriptor read failed, status=");
+		arch64_dbg_puts("M6h: RP1 xHCI descriptor read failed, status=");
 		dbg_hex32((uint32_t) status);
 		arch64_dbg_puts(" usb/class=");
 		dbg_hex32(xhci_descriptor.bcd_usb);
@@ -892,15 +889,42 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(24);
 	}
-	arch64_dbg_puts("M6 test: A, Shift+A, C, R K, G K S R M F (no Shift)\n");
 	xhci_key.modifier = 0;
 	xhci_key.keycode = 0;
-	xhci_key.endpoint_id = 0;
+	xhci_key.endpoint_id = ((xhci_hid.endpoint_address & 0x0fU) << 1) + 1U;
 	xhci_key.event_status = 0;
 	xhci_key.event_control = 0;
 	xhci_key.trb_pointer_low = 0;
-	status = xhci64_read_boot_key(rp1_base, xhci_slot.slot_id, &xhci_hid,
-		&xhci_key);
+	status = xhci64_keyboard_set_boot_protocol(rp1_base, xhci_slot.slot_id,
+		&xhci_hid);
+	if (status == 0) {
+		status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid);
+	}
+	arch64_dbg_puts("M6 keyboard test: press and release one letter key\n");
+	while (status == 0 && xhci_key.keycode == 0) {
+		status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
+			&xhci_hid, hid_report);
+		if (status == 0) {
+			__asm__ volatile ("yield");
+			continue;
+		}
+		if (status < 0) {
+			break;
+		}
+		xhci_key.modifier = hid_report[0];
+		for (hid_index = 2U; hid_index < 8U; hid_index++) {
+			if (hid_report[hid_index] != 0) {
+				xhci_key.keycode = hid_report[hid_index];
+				break;
+			}
+		}
+		if (xhci_key.keycode != 0) {
+			status = 0;
+		} else {
+			status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id,
+				&xhci_hid);
+		}
+	}
 	if (status != 0) {
 		arch64_dbg_puts("M6k: USB keyboard report failed, status=");
 		dbg_hex32((uint32_t) status);
@@ -919,16 +943,34 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(25);
 	}
-	xhci_release.modifier = 0;
-	xhci_release.keycode = 0;
-	xhci_release.endpoint_id = 0;
-	xhci_release.event_status = 0;
-	xhci_release.event_control = 0;
-	xhci_release.trb_pointer_low = 0;
 	key_make = 0;
 	key_break = 0;
-	status = xhci64_read_boot_release(rp1_base, xhci_slot.slot_id,
-		&xhci_hid, &xhci_release);
+	status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid);
+	while (status == 0) {
+		int key_still_pressed = 0;
+
+		status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
+			&xhci_hid, hid_report);
+		if (status == 0) {
+			__asm__ volatile ("yield");
+			continue;
+		}
+		if (status < 0) {
+			break;
+		}
+		for (hid_index = 2U; hid_index < 8U; hid_index++) {
+			if (hid_report[hid_index] == xhci_key.keycode) {
+				key_still_pressed = 1;
+				break;
+			}
+		}
+		if (key_still_pressed == 0) {
+			status = 0;
+			break;
+		}
+		status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id,
+			&xhci_hid);
+	}
 	if (status == 0) {
 		status = usbhid64_key_transition((uint8_t) xhci_key.keycode, 1,
 			&key_make);
@@ -943,11 +985,7 @@ void aarch64_high_main(void)
 		arch64_dbg_puts(" usage/release=");
 		dbg_hex32(xhci_key.keycode);
 		arch64_dbg_puts("/");
-		dbg_hex32(xhci_release.keycode);
-		arch64_dbg_puts(" event=");
-		dbg_hex32(xhci_release.event_status);
-		arch64_dbg_puts("/");
-		dbg_hex32(xhci_release.event_control);
+		dbg_hex32(0);
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(26);
 	}
@@ -983,89 +1021,41 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(27);
 	}
-	xhci_shift_key.modifier = 0;
-	xhci_shift_key.keycode = 0;
-	xhci_shift_key.endpoint_id = 0;
-	xhci_shift_key.event_status = 0;
-	xhci_shift_key.event_control = 0;
-	xhci_shift_key.trb_pointer_low = 0;
-	xhci_shift_release = xhci_shift_key;
-	status = xhci64_read_boot_key(rp1_base, xhci_slot.slot_id, &xhci_hid,
-		&xhci_shift_key);
-	if (status == 0) {
-		status = xhci64_read_boot_release(rp1_base, xhci_slot.slot_id,
-			&xhci_hid, &xhci_shift_release);
-	}
-	if (status == 0 && (xhci_shift_key.modifier & 0x02U) == 0) {
-		status = -6;
-	}
-	if (status == 0 && xhci_shift_key.keycode != 0x04U) {
-		status = -7;
-	}
-	if (status == 0) {
-		fifo64_init(&hid_fifo, 8U, hid_event_buffer, NULL);
-		usbhid64_state_init(&hid_state);
-		for (hid_index = 0; hid_index < sizeof(hid_report); hid_index++) {
-			hid_report[hid_index] = 0;
-		}
-		hid_report[0] = (uint8_t) xhci_shift_key.modifier;
-		hid_report[2] = (uint8_t) xhci_shift_key.keycode;
-		if (usbhid64_process_report(&hid_fifo, &hid_state,
-				hid_report) != 2) {
-			status = -8;
-		}
-	}
-	if (status == 0) {
-		for (hid_index = 0; hid_index < sizeof(hid_report); hid_index++) {
-			hid_report[hid_index] = 0;
-		}
-		if (usbhid64_process_report(&hid_fifo, &hid_state,
-				hid_report) != 2) {
-			status = -9;
-		}
-	}
-	if (status == 0) {
-		for (hid_index = 0; hid_index < 4U; hid_index++) {
-			if (fifo64_get(&hid_fifo, &hid_event) != 0 ||
-					hid_event.type != EVENT64_KEYBOARD) {
-				status = -10;
-				break;
-			}
-			hid_sequence[hid_index] = hid_event.data;
-			if (hid_index == 0U &&
-					(keyboard64_track_modifier((uint16_t) hid_event.data) == 0 ||
-					keyboard64_shift() == 0)) {
-				status = -12;
-				break;
-			}
-			if ((hid_index == 1U || hid_index == 2U) &&
-					(keyboard64_track_modifier((uint16_t) hid_event.data) != 0 ||
-					keyboard64_shift() == 0)) {
-				status = -13;
-				break;
-			}
-			if (hid_index == 3U &&
-					(keyboard64_track_modifier((uint16_t) hid_event.data) == 0 ||
-					keyboard64_shift() != 0)) {
-				status = -14;
-				break;
-			}
-		}
-	}
-	if (status == 0 && (hid_sequence[0] != 0x2aU ||
-			hid_sequence[1] != 0x1eU || hid_sequence[2] != 0x9eU ||
-			hid_sequence[3] != 0xaaU || fifo64_status(&hid_fifo) != 0)) {
-		status = -11;
-	}
+	status = m7a_sheet32_smoke64();
 	if (status != 0) {
-		arch64_dbg_puts("M6n: USB HID report diff failed, status=");
+		arch64_dbg_puts("M7a: 32bpp sheet compositor failed, status=");
 		dbg_hex32((uint32_t) status);
-		arch64_dbg_puts(" mod/key=");
-		dbg_hex32(xhci_shift_key.modifier);
-		arch64_dbg_puts("/");
-		dbg_hex32(xhci_shift_key.keycode);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(28);
+		arch64_panic_blink(32);
+	}
+	status = m7b_live_sheet64(&bootinfo);
+	if (status != 0) {
+		arch64_dbg_puts("M7b/c: live framebuffer sheet failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(33);
+	}
+	status = m7d_live_window64(&bootinfo);
+	if (status != 0) {
+		arch64_dbg_puts("M7d: live window sheet failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(34);
+	}
+	status = m7e_gui_stack64(&bootinfo);
+	if (status != 0) {
+		arch64_dbg_puts("M7e: GUI sheet stack failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(35);
+	}
+	arch64_timer_set_debug_output(0);
+	status = m7f_console_init64(&bootinfo);
+	if (status != 0) {
+		arch64_dbg_puts("M7f/j: console64 init failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(36);
 	}
 	fifo64_init(&hid_fifo, 32U, hid_event_buffer, NULL);
 	usbhid64_state_init(&hid_state);
@@ -1076,13 +1066,6 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(29);
 	}
-	live_key_state = 0;
-	hangul64_init(&live_hangul);
-	hangul64_init(&live_engine);
-	live_word[0] = '\0';
-	live_word_length = 0;
-	live_word_step = 0;
-	arch64_dbg_puts("MTASK: ");
 	__asm__ volatile ("mrs %0, cntfrq_el0" : "=r" (heartbeat_frequency));
 	heartbeat_half_period = heartbeat_frequency / 2U;
 	if (heartbeat_half_period == 0U) {
@@ -1112,121 +1095,10 @@ void aarch64_high_main(void)
 				arch64_panic_blink(29);
 			}
 			while (fifo64_get(&hid_fifo, &hid_event) == 0) {
-				if (live_key_state >= 5) {
-					if (console64_post_input_key(console64_active(),
-							(uint16_t) hid_event.data) != 0) {
-						arch64_dbg_puts("M7j: console task FIFO failed\n");
-						arch64_panic_blink(38);
-					}
-					continue;
-				}
-				keyboard64_track_modifier((uint16_t) hid_event.data);
-				live_character = '\0';
-				if (hid_event.type == EVENT64_KEYBOARD &&
-						(hid_event.data & (KEY64_EXT | 0x80U)) == 0) {
-					live_character = keymap64_translate(
-						(uint8_t) hid_event.data, keyboard64_shift(), 0);
-				}
-				if (live_key_state == 0 &&
-						hid_event.type == EVENT64_KEYBOARD &&
-						hid_event.data == 0x2eU &&
-						keymap64_translate((uint8_t) hid_event.data,
-							keyboard64_shift(), 0) == 'c') {
-					live_key_state = 1;
-				} else if (live_key_state == 1 &&
-						hid_event.type == EVENT64_KEYBOARD &&
-						hid_event.data == 0xaeU) {
-					live_key_state = 2;
-				} else if (live_key_state == 2 && live_character == 'r' &&
-						hangul64_key_to_cho(live_character) == 0) {
-					live_hangul.state = 1;
-					live_hangul.cho = 0;
-					live_hangul.jung = -1;
-					live_hangul.jong = -1;
-					live_key_state = 3;
-				} else if (live_key_state == 3 && live_character == 'k' &&
-						hangul64_key_to_jung(live_character) == 0) {
-					live_hangul.state = 2;
-					live_hangul.jung = 0;
-					live_hangul_length = hangul64_compose_utf8(
-						live_hangul_utf8, &live_hangul);
-					if (live_hangul_length != 3 ||
-							utf8_to_unicode64(live_hangul_utf8,
-								&live_decode_length) != 0xac00U) {
-						arch64_dbg_puts(" [M6s: live Hangul compose failed] ");
-						arch64_panic_blink(30);
-					}
-					live_key_state = 4;
-				} else if (live_key_state == 4 && live_character != '\0' &&
-						live_word_step < sizeof(live_word_keys) - 1U &&
-						live_character == live_word_keys[live_word_step]) {
-					if (hangul64_feed(&live_engine, live_character,
-							&live_feed) != 0 || live_feed.passthrough != '\0' ||
-							live_word_length + live_feed.committed_length > 6U) {
-						arch64_panic_blink(31);
-					}
-					for (hid_index = 0;
-							hid_index < live_feed.committed_length; hid_index++) {
-						live_word[live_word_length++] =
-							live_feed.committed[hid_index];
-					}
-					live_word_step++;
-					if (live_word_step == sizeof(live_word_keys) - 1U) {
-						live_hangul_length = hangul64_compose_utf8(
-							live_hangul_utf8, &live_engine);
-						if (live_hangul_length != 3 || live_word_length + 3U > 6U) {
-							arch64_panic_blink(31);
-						}
-						for (hid_index = 0; hid_index < 3U; hid_index++) {
-							live_word[live_word_length++] = live_hangul_utf8[hid_index];
-						}
-						live_word[live_word_length] = '\0';
-						if ((unsigned char) live_word[0] != 0xedU ||
-								(unsigned char) live_word[1] != 0x95U ||
-								(unsigned char) live_word[2] != 0x9cU ||
-								(unsigned char) live_word[3] != 0xeaU ||
-								(unsigned char) live_word[4] != 0xb8U ||
-								(unsigned char) live_word[5] != 0x80U) {
-							arch64_panic_blink(31);
-						}
-						status = m7a_sheet32_smoke64();
-						if (status != 0) {
-							arch64_dbg_puts("M7a: 32bpp sheet compositor failed, status=");
-							dbg_hex32((uint32_t) status);
-							arch64_dbg_puts("\n");
-							arch64_panic_blink(32);
-						}
-						status = m7b_live_sheet64(&bootinfo);
-						if (status != 0) {
-							arch64_dbg_puts("M7b/c: live framebuffer sheet failed, status=");
-							dbg_hex32((uint32_t) status);
-							arch64_dbg_puts("\n");
-							arch64_panic_blink(33);
-						}
-						status = m7d_live_window64(&bootinfo);
-						if (status != 0) {
-							arch64_dbg_puts("M7d: live window sheet failed, status=");
-							dbg_hex32((uint32_t) status);
-							arch64_dbg_puts("\n");
-							arch64_panic_blink(34);
-						}
-						status = m7e_gui_stack64(&bootinfo);
-						if (status != 0) {
-							arch64_dbg_puts("M7e: GUI sheet stack failed, status=");
-							dbg_hex32((uint32_t) status);
-							arch64_dbg_puts("\n");
-							arch64_panic_blink(35);
-						}
-						arch64_timer_set_debug_output(0);
-						status = m7f_console_init64(&bootinfo);
-						if (status != 0) {
-							arch64_dbg_puts("M7f/j: console64 init failed, status=");
-							dbg_hex32((uint32_t) status);
-							arch64_dbg_puts("\n");
-							arch64_panic_blink(36);
-						}
-						live_key_state = 5;
-					}
+				if (console64_post_input_key(console64_active(),
+						(uint16_t) hid_event.data) != 0) {
+					arch64_dbg_puts("M7j: console task FIFO failed\n");
+					arch64_panic_blink(38);
 				}
 			}
 		}

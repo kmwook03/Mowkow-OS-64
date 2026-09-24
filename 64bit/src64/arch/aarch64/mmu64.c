@@ -21,6 +21,7 @@
 #define DESC_ATTR_INDEX(n) ((uint64_t) (n) << 2)
 #define DESC_INNER_SHAREABLE (3ULL << 8)
 #define DESC_ACCESS_FLAG (1ULL << 10)
+#define DESC_AP_EL0_RW (1ULL << 6)
 #define DESC_PXN (1ULL << 53)
 #define DESC_UXN (1ULL << 54)
 #define DESC_ADDRESS_MASK 0x0000fffffffff000ULL
@@ -30,6 +31,11 @@
 
 static uint64_t bootstrap_l1[TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t user_l1[TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
+static uint64_t user_l2[TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
+#define USER_L3_TABLES 8U
+static uint64_t user_l3[USER_L3_TABLES][TABLE_ENTRIES]
+	__attribute__((aligned(PAGE_SIZE)));
+static uint16_t user_l3_index[USER_L3_TABLES];
 static uint64_t ttbr1_l1[TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t low_l2[TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 static uint64_t low_l3[TABLE_ENTRIES][TABLE_ENTRIES]
@@ -39,7 +45,111 @@ static uint64_t mmio_l3[5][TABLE_ENTRIES] __attribute__((aligned(PAGE_SIZE)));
 
 static uint64_t table_descriptor64(const void *table)
 {
-	return ((uintptr_t) table & DESC_ADDRESS_MASK) | DESC_TABLE_OR_PAGE;
+	return (arch64_virt_to_phys((uintptr_t) table) & DESC_ADDRESS_MASK) |
+		DESC_TABLE_OR_PAGE;
+}
+
+static void flush_user_tlb64(void)
+{
+	__asm__ volatile (
+		"dsb ishst\n\t"
+		"tlbi vmalle1\n\t"
+		"dsb ish\n\t"
+		"isb"
+		::: "memory");
+}
+
+void arch64_user_unmap_all(void)
+{
+	unsigned int i;
+	unsigned int j;
+
+	for (i = 0; i < TABLE_ENTRIES; i++) {
+		user_l1[i] = 0;
+		user_l2[i] = 0;
+	}
+	for (i = 0; i < USER_L3_TABLES; i++) {
+		user_l3_index[i] = 0xffffU;
+		for (j = 0; j < TABLE_ENTRIES; j++) {
+			user_l3[i][j] = 0;
+		}
+	}
+	flush_user_tlb64();
+}
+
+int arch64_user_map_range(uintptr_t base, size_t size, int executable)
+{
+	uintptr_t current;
+	uintptr_t end;
+	unsigned int slot;
+
+	if (size == 0 || base + size < base || base + size > LOW_RAM_SIZE) {
+		return -1;
+	}
+	current = base & ~(uintptr_t) (PAGE_SIZE - 1);
+	end = (base + size + PAGE_SIZE - 1) & ~(uintptr_t) (PAGE_SIZE - 1);
+	user_l1[0] = table_descriptor64(user_l2);
+	while (current < end) {
+		unsigned int l2_index = (unsigned int) ((current >> 21) & 0x1ffU);
+		unsigned int l3_index = (unsigned int) ((current >> 12) & 0x1ffU);
+		uint64_t flags = DESC_TABLE_OR_PAGE | DESC_ATTR_INDEX(0) |
+			DESC_INNER_SHAREABLE | DESC_ACCESS_FLAG | DESC_AP_EL0_RW |
+			DESC_PXN;
+
+		for (slot = 0; slot < USER_L3_TABLES; slot++) {
+			if (user_l3_index[slot] == l2_index) {
+				break;
+			}
+		}
+		if (slot == USER_L3_TABLES) {
+			for (slot = 0; slot < USER_L3_TABLES; slot++) {
+				if (user_l3_index[slot] == 0xffffU) {
+					user_l3_index[slot] = (uint16_t) l2_index;
+					user_l2[l2_index] = table_descriptor64(user_l3[slot]);
+					break;
+				}
+			}
+		}
+		if (slot == USER_L3_TABLES) {
+			arch64_user_unmap_all();
+			return -2;
+		}
+		if (executable == 0) {
+			flags |= DESC_UXN;
+		}
+		user_l3[slot][l3_index] = (current & DESC_ADDRESS_MASK) | flags;
+		current += PAGE_SIZE;
+	}
+	flush_user_tlb64();
+	return 0;
+}
+
+void arch64_sync_user_code(uintptr_t physical, size_t size)
+{
+	uintptr_t address;
+	uintptr_t end;
+	uintptr_t line_size;
+	uint64_t ctr;
+
+	if (size == 0) {
+		return;
+	}
+	__asm__ volatile ("mrs %0, ctr_el0" : "=r" (ctr));
+	address = arch64_phys_to_virt(physical);
+	end = address + size;
+	line_size = 4ULL << ((ctr >> 16) & 0xfU);
+	for (address &= ~(line_size - 1); address < end;
+			address += line_size) {
+		__asm__ volatile ("dc cvau, %0" :: "r" (address) : "memory");
+	}
+	__asm__ volatile ("dsb ish" ::: "memory");
+	address = arch64_phys_to_virt(physical);
+	line_size = 4ULL << (ctr & 0xfU);
+	for (address &= ~(line_size - 1); address < end;
+			address += line_size) {
+		__asm__ volatile ("ic ivau, %0" :: "r" (address) : "memory");
+	}
+	__asm__ volatile ("dsb ish\n\tisb" ::: "memory");
 }
 
 static uint64_t normal_page_descriptor64(uint64_t physical)
@@ -162,6 +272,7 @@ void arch64_mmu_finish_high(void)
 
 	/* This function is entered through TTBR1. Drop the temporary identity map
 	   and leave TTBR0 pointing at an empty, EL0-ready translation root. */
+	arch64_user_unmap_all();
 	root_physical = arch64_virt_to_phys((uintptr_t) user_l1);
 	__asm__ volatile (
 		"msr ttbr0_el1, %0\n\t"

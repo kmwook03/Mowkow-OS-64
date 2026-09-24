@@ -103,6 +103,37 @@ static uint32_t xhci0_ep0_cycle;
 static uint32_t xhci0_interrupt_enqueue;
 static uint32_t xhci0_interrupt_cycle;
 static uint64_t xhci0_keyboard_pending_pointer;
+static uint32_t xhci_controller_offset = RP1_USB0_BASE;
+
+static volatile uint8_t *xhci_capability64(uintptr_t rp1_base)
+{
+	return (volatile uint8_t *) (rp1_base + xhci_controller_offset);
+}
+
+static int controller_has_connection64(uintptr_t base)
+{
+	volatile uint8_t *capability = (volatile uint8_t *) base;
+	volatile uint8_t *operational;
+	uint32_t caplength;
+	uint32_t hcsparams1;
+	uint32_t port_count;
+	uint32_t port;
+
+	caplength = *(volatile uint32_t *) capability & 0xffU;
+	hcsparams1 = *(volatile uint32_t *)
+		(capability + XHCI_HCSPARAMS1);
+	port_count = (hcsparams1 >> 24) & 0xffU;
+	operational = capability + caplength;
+	for (port = 0; port < port_count; port++) {
+		uint32_t status = *(volatile uint32_t *) (operational +
+			XHCI_PORTSC_BASE + port * XHCI_PORT_STRIDE);
+
+		if ((status & XHCI_PORTSC_CCS) != 0) {
+			return 1;
+		}
+	}
+	return 0;
+}
 
 static uint64_t rp1_dma_address64(const void *address)
 {
@@ -443,6 +474,7 @@ int xhci64_reset_rp1(uintptr_t rp1_base,
 	if (results == NULL) {
 		return -1;
 	}
+	xhci_controller_offset = RP1_USB0_BASE;
 	status = reset_controller64(rp1_base + RP1_USB0_BASE, &results[0]);
 	if (status != 0) {
 		return -10 + status;
@@ -457,8 +489,7 @@ int xhci64_reset_rp1(uintptr_t rp1_base,
 int xhci64_start_rp1(uintptr_t rp1_base,
 	struct XHCI64_START_RESULT *result)
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability;
 	volatile uint8_t *operational;
 	volatile uint8_t *runtime;
 	volatile uint8_t *interrupter;
@@ -472,6 +503,15 @@ int xhci64_start_rp1(uintptr_t rp1_base,
 	if (result == NULL) {
 		return -1;
 	}
+	if (!controller_has_connection64(rp1_base + RP1_USB0_BASE) &&
+			controller_has_connection64(rp1_base + RP1_USB1_BASE)) {
+		xhci_controller_offset = RP1_USB1_BASE;
+	} else {
+		xhci_controller_offset = RP1_USB0_BASE;
+	}
+	result->controller_id =
+		xhci_controller_offset == RP1_USB1_BASE ? 1U : 0U;
+	capability = xhci_capability64(rp1_base);
 	caplength = *(volatile uint32_t *) capability & 0xffU;
 	hcsparams1 = *(volatile uint32_t *)
 		(capability + XHCI_HCSPARAMS1);
@@ -564,8 +604,7 @@ int xhci64_start_rp1(uintptr_t rp1_base,
 int xhci64_noop_command(uintptr_t rp1_base,
 	struct XHCI64_COMMAND_RESULT *result)
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint8_t *operational;
 	volatile uint8_t *runtime;
 	volatile uint8_t *interrupter;
@@ -602,8 +641,7 @@ int xhci64_noop_command(uintptr_t rp1_base,
 int xhci64_enable_slot(uintptr_t rp1_base,
 	struct XHCI64_SLOT_RESULT *result)
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint8_t *operational;
 	volatile uint8_t *runtime;
 	volatile uint8_t *interrupter;
@@ -661,8 +699,7 @@ int xhci64_address_device(uintptr_t rp1_base, uint32_t port_id,
 	uint32_t port_speed, uint32_t slot_id,
 	struct XHCI64_ADDRESS_RESULT *result)
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint8_t *operational;
 	volatile uint8_t *runtime;
 	volatile uint8_t *interrupter;
@@ -770,8 +807,7 @@ static int read_descriptor64(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t descriptor_type, uint32_t descriptor_index, uint32_t length,
 	struct XHCI64_DESCRIPTOR_RESULT *result)
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint8_t *runtime;
 	volatile uint8_t *interrupter;
 	volatile uint32_t *doorbells;
@@ -968,8 +1004,7 @@ static int control_no_data64(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t request_type, uint32_t request, uint32_t value,
 	uint32_t request_index)
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint8_t *runtime;
 	volatile uint8_t *interrupter;
 	volatile uint32_t *doorbells;
@@ -1031,8 +1066,7 @@ int xhci64_configure_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t port_speed, const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_CONFIGURE_RESULT *result)
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint8_t *operational;
 	volatile uint8_t *runtime;
 	volatile uint8_t *interrupter;
@@ -1149,8 +1183,7 @@ int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_KEY_RESULT *result)
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint8_t *runtime;
 	volatile uint8_t *interrupter;
 	volatile uint32_t *doorbells;
@@ -1182,8 +1215,7 @@ int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
 	transfer.trb_pointer_low = 0;
 	endpoint_id = ((hid->endpoint_address & 0x0fU) << 1) + 1U;
 	result->endpoint_id = endpoint_id;
-	status = control_no_data64(rp1_base, slot_id, 0x21U, 0x0bU, 0,
-		hid->interface_number);
+	status = xhci64_keyboard_set_boot_protocol(rp1_base, slot_id, hid);
 	if (status != 0) {
 		return -2;
 	}
@@ -1234,12 +1266,21 @@ int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
 	return -5;
 }
 
+int xhci64_keyboard_set_boot_protocol(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid)
+{
+	if (hid == NULL || slot_id == 0) {
+		return -1;
+	}
+	return control_no_data64(rp1_base, slot_id, 0x21U, 0x0bU, 0,
+		hid->interface_number);
+}
+
 int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_KEY_RESULT *result)
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint8_t *runtime;
 	volatile uint8_t *interrupter;
 	volatile uint32_t *doorbells;
@@ -1322,8 +1363,7 @@ int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
 int xhci64_keyboard_arm(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid)
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint32_t *doorbells;
 	uint32_t endpoint_id;
 	uint32_t index;
@@ -1358,8 +1398,7 @@ int xhci64_keyboard_arm(uintptr_t rp1_base, uint32_t slot_id,
 int xhci64_keyboard_poll(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid, uint8_t report[8])
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint8_t *runtime;
 	volatile uint8_t *interrupter;
 	struct XHCI64_TRB *event;
@@ -1411,8 +1450,7 @@ int xhci64_keyboard_poll(uintptr_t rp1_base, uint32_t slot_id,
 int xhci64_reset_connected_port(uintptr_t rp1_base,
 	struct XHCI64_PORT_RESULT *result)
 {
-	volatile uint8_t *capability =
-		(volatile uint8_t *) (rp1_base + RP1_USB0_BASE);
+	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint8_t *operational;
 	volatile uint32_t *portsc;
 	uint64_t deadline;

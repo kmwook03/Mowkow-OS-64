@@ -8,6 +8,9 @@
  * 아직 페이지 단위 보호가 없어서 이 검사가 유일한 방어선이다.
  */
 #include <console64.h>
+#ifdef __aarch64__
+#include <arch/arch64.h>
+#endif
 #include <fd64.h>
 #include <interrupt64.h>
 #include <process64.h>
@@ -150,7 +153,11 @@ uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame)
 		return 0;
 	}
 	if (nr == SYS_TICKS) {
+#ifdef __aarch64__
+		frame->rax = arch64_timer_ticks();
+#else
 		frame->rax = timerctl64.count;
+#endif
 		return 0;
 	}
 	if (nr == SYS_TTY) {

@@ -792,7 +792,6 @@ static int str_eq(const char *a, const char *b)
 	return *a == *b;
 }
 
-#ifndef __aarch64__
 static int str_starts_with(const char *s, const char *prefix)
 {
 	while (*prefix != '\0') {
@@ -804,7 +803,6 @@ static int str_starts_with(const char *s, const char *prefix)
 	}
 	return 1;
 }
-#endif
 
 /* FAT32 + VFAT라 이름은 8.3 자리가 아니라 널 종료 문자열로 온다. */
 static void print_file_name(struct CONSOLE64 *con, const char *name)
@@ -876,14 +874,50 @@ static void clear_screen(struct CONSOLE64 *con)
 	con->cursor_y = 0;
 }
 
-#ifndef __aarch64__
 /* 실행 파일을 돌린다. 그런 파일이 없으면 0 -- 부르는 쪽이 "알 수 없는
    명령어"로 넘어간다. */
 static int run_program(struct CONSOLE64 *con, const char *cmdline)
 {
+	char elf_cmdline[CONSOLE_INPUT_MAX + 1];
+	size_t command_len;
+	size_t line_len;
+	size_t i;
+	int has_extension;
 	int status;
 
 	status = process64_exec_file(cmdline, cmdline, con);
+	/* x86_64 이미지는 앱을 확장자 없는 이름으로 넣지만, Pi의 FAT 파티션에는
+	   빌드 산출물을 HELLO.ELF처럼 복사하기도 한다. 둘 다 `hello`로 실행되게
+	   첫 토큰에 점이 없을 때만 .elf를 붙여 한 번 더 찾는다. */
+	if (status == -2) {
+		command_len = 0;
+		has_extension = 0;
+		while (cmdline[command_len] != '\0' &&
+				cmdline[command_len] != ' ') {
+			if (cmdline[command_len] == '.') {
+				has_extension = 1;
+			}
+			command_len++;
+		}
+		line_len = command_len;
+		while (cmdline[line_len] != '\0') {
+			line_len++;
+		}
+		if (has_extension == 0 && command_len != 0 &&
+				line_len + 4 < sizeof(elf_cmdline)) {
+			for (i = 0; i < command_len; i++) {
+				elf_cmdline[i] = cmdline[i];
+			}
+			elf_cmdline[command_len + 0] = '.';
+			elf_cmdline[command_len + 1] = 'e';
+			elf_cmdline[command_len + 2] = 'l';
+			elf_cmdline[command_len + 3] = 'f';
+			for (i = command_len; i <= line_len; i++) {
+				elf_cmdline[i + 4] = cmdline[i];
+			}
+			status = process64_exec_file(elf_cmdline, elf_cmdline, con);
+		}
+	}
 	if (status == -2) {
 		return 0;
 	}
@@ -896,7 +930,6 @@ static int run_program(struct CONSOLE64 *con, const char *cmdline)
 	puts_con(con, "\n");
 	return 1;
 }
-#endif
 
 static void execute_command(struct CONSOLE64 *con)
 {
@@ -909,7 +942,7 @@ static void execute_command(struct CONSOLE64 *con)
 	}
 	if (str_eq(con->input_line, "help")) {
 #ifdef __aarch64__
-		puts_con(con, "commands: help clear mem tasks ls 목록 type readme.txt xwindow 창\n");
+		puts_con(con, "commands: help clear mem tasks ls 목록 type readme.txt APP [ARGS] xwindow 창\n");
 #else
 		puts_con(con, "commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY xwindow 창 new 새창\n");
 #endif
@@ -1005,7 +1038,6 @@ static void execute_command(struct CONSOLE64 *con)
 			}
 			puts_con(con, "\n");
 		}
-#ifndef __aarch64__
 	} else if (str_starts_with(con->input_line, "run ") || str_starts_with(con->input_line, "실행 ")) {
 		const char *args;
 
@@ -1015,6 +1047,7 @@ static void execute_command(struct CONSOLE64 *con)
 		if (run_program(con, args) == 0) {
 			puts_con(con, "파일 없음\n");
 		}
+#ifndef __aarch64__
 	} else if (str_eq(con->input_line, "py") || str_eq(con->input_line, "파이썬")) {
 		mpport_repl();
 	} else if (str_starts_with(con->input_line, "py ")) {
@@ -1024,15 +1057,11 @@ static void execute_command(struct CONSOLE64 *con)
 	} else if (str_starts_with(con->input_line, "머꼬 ")) {
 		/* "머꼬 "는 UTF-8로 7바이트다 */
 		mpport_run_mowkow(con->input_line + 7);
+#endif
 	} else if (run_program(con, con->input_line) == 0) {
 		/* 내장 명령도 아니고 그런 실행 파일도 없다 */
 		puts_con(con, "알 수 없는 명령어\n");
 	}
-#else
-	} else {
-		puts_con(con, "알 수 없는 명령어\n");
-	}
-#endif
 	con->input_len = 0;
 	con->line_full_warned = 0;
 	prompt(con);

@@ -36,6 +36,11 @@ void arch64_timer_set_debug_output(int enabled)
 	timer_debug_output = enabled != 0;
 }
 
+uint64_t arch64_timer_ticks(void)
+{
+	return timer_ticks;
+}
+
 uintptr_t arch64_timer_handle_irq(uintptr_t frame)
 {
 	/* Move the compare point first so the level interrupt deasserts before EOI. */
