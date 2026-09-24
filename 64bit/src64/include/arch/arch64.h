@@ -78,6 +78,21 @@ struct XHCI64_START_RESULT {
 
 int xhci64_start_rp1(uintptr_t rp1_base,
 	struct XHCI64_START_RESULT *result);
+int xhci64_start_controller(uintptr_t rp1_base, uint32_t controller_id,
+	struct XHCI64_START_RESULT *result);
+int xhci64_select_controller(uint32_t controller_id);
+
+#define XHCI64_INVENTORY_PORTS 4U
+
+struct XHCI64_PORT_INVENTORY {
+	uint32_t port_count;
+	uint32_t connected_mask;
+	uint32_t enabled_mask;
+	uint32_t port_status[XHCI64_INVENTORY_PORTS];
+};
+
+int xhci64_port_inventory(uintptr_t rp1_base,
+	struct XHCI64_PORT_INVENTORY inventory[2]);
 
 struct XHCI64_COMMAND_RESULT {
 	uint32_t event_status;
@@ -149,6 +164,8 @@ struct XHCI64_HID_RESULT {
 
 int xhci64_find_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
 	struct XHCI64_HID_RESULT *result);
+int xhci64_find_boot_mouse(uintptr_t rp1_base, uint32_t slot_id,
+	struct XHCI64_HID_RESULT *result);
 
 struct XHCI64_CONFIGURE_RESULT {
 	uint32_t endpoint_id;
@@ -160,6 +177,9 @@ struct XHCI64_CONFIGURE_RESULT {
 };
 
 int xhci64_configure_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
+	uint32_t port_speed, const struct XHCI64_HID_RESULT *hid,
+	struct XHCI64_CONFIGURE_RESULT *result);
+int xhci64_configure_boot_hid(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t port_speed, const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_CONFIGURE_RESULT *result);
 
@@ -180,10 +200,17 @@ int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
 	struct XHCI64_KEY_RESULT *result);
 int xhci64_keyboard_set_boot_protocol(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid);
+int xhci64_hid_set_boot_protocol(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid);
 int xhci64_keyboard_arm(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid);
 int xhci64_keyboard_poll(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid, uint8_t report[8]);
+int xhci64_hid_arm(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid);
+int xhci64_hid_poll(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid, uint8_t *report,
+	size_t report_length);
 
 void arch64_scheduler_init(void);
 uintptr_t arch64_scheduler_tick(uintptr_t frame);

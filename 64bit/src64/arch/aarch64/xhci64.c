@@ -75,35 +75,73 @@ struct XHCI64_ERST_ENTRY {
 	uint32_t reserved;
 };
 
-static uint64_t xhci0_dcbaa[XHCI_MAX_SLOTS + 1]
-	__attribute__((aligned(64)));
-static struct XHCI64_TRB xhci0_command_ring[XHCI_RING_TRBS]
+struct XHCI64_CONTROLLER_STATE {
+	uint64_t dcbaa[XHCI_MAX_SLOTS + 1] __attribute__((aligned(64)));
+	struct XHCI64_TRB command_ring[XHCI_RING_TRBS]
+		__attribute__((aligned(4096)));
+	struct XHCI64_TRB event_ring[XHCI_RING_TRBS]
+		__attribute__((aligned(4096)));
+	struct XHCI64_ERST_ENTRY erst __attribute__((aligned(64)));
+	uint64_t scratchpad_array[XHCI_MAX_SCRATCHPADS]
+		__attribute__((aligned(64)));
+	uint8_t scratchpads[XHCI_MAX_SCRATCHPADS][4096]
+		__attribute__((aligned(4096)));
+	uint32_t input_context[1024] __attribute__((aligned(4096)));
+	uint32_t device_context[1024] __attribute__((aligned(4096)));
+	struct XHCI64_TRB ep0_ring[XHCI_RING_TRBS]
+		__attribute__((aligned(4096)));
+	struct XHCI64_TRB interrupt_ring[XHCI_RING_TRBS]
+		__attribute__((aligned(4096)));
+	uint8_t descriptor_buffer[512] __attribute__((aligned(64)));
+	uint8_t interrupt_report[64] __attribute__((aligned(64)));
+	uint32_t command_enqueue;
+	uint32_t command_cycle;
+	uint32_t event_dequeue;
+	uint32_t event_cycle;
+	uint32_t ep0_enqueue;
+	uint32_t ep0_cycle;
+	uint32_t interrupt_enqueue;
+	uint32_t interrupt_cycle;
+	uint64_t interrupt_pending_pointer;
+};
+
+static struct XHCI64_CONTROLLER_STATE xhci_states[2]
 	__attribute__((aligned(4096)));
-static struct XHCI64_TRB xhci0_event_ring[XHCI_RING_TRBS]
-	__attribute__((aligned(4096)));
-static struct XHCI64_ERST_ENTRY xhci0_erst __attribute__((aligned(64)));
-static uint64_t xhci0_scratchpad_array[XHCI_MAX_SCRATCHPADS]
-	__attribute__((aligned(64)));
-static uint8_t xhci0_scratchpads[XHCI_MAX_SCRATCHPADS][4096]
-	__attribute__((aligned(4096)));
-static uint32_t xhci0_input_context[1024] __attribute__((aligned(4096)));
-static uint32_t xhci0_device_context[1024] __attribute__((aligned(4096)));
-static struct XHCI64_TRB xhci0_ep0_ring[XHCI_RING_TRBS]
-	__attribute__((aligned(4096)));
-static struct XHCI64_TRB xhci0_interrupt_ring[XHCI_RING_TRBS]
-	__attribute__((aligned(4096)));
-static uint8_t xhci0_descriptor_buffer[512] __attribute__((aligned(64)));
-static uint8_t xhci0_keyboard_report[64] __attribute__((aligned(64)));
-static uint32_t xhci0_command_enqueue;
-static uint32_t xhci0_command_cycle;
-static uint32_t xhci0_event_dequeue;
-static uint32_t xhci0_event_cycle;
-static uint32_t xhci0_ep0_enqueue;
-static uint32_t xhci0_ep0_cycle;
-static uint32_t xhci0_interrupt_enqueue;
-static uint32_t xhci0_interrupt_cycle;
-static uint64_t xhci0_keyboard_pending_pointer;
+static uint32_t xhci_controller_id;
 static uint32_t xhci_controller_offset = RP1_USB0_BASE;
+
+#define xhci0_dcbaa (xhci_states[xhci_controller_id].dcbaa)
+#define xhci0_command_ring (xhci_states[xhci_controller_id].command_ring)
+#define xhci0_event_ring (xhci_states[xhci_controller_id].event_ring)
+#define xhci0_erst (xhci_states[xhci_controller_id].erst)
+#define xhci0_scratchpad_array (xhci_states[xhci_controller_id].scratchpad_array)
+#define xhci0_scratchpads (xhci_states[xhci_controller_id].scratchpads)
+#define xhci0_input_context (xhci_states[xhci_controller_id].input_context)
+#define xhci0_device_context (xhci_states[xhci_controller_id].device_context)
+#define xhci0_ep0_ring (xhci_states[xhci_controller_id].ep0_ring)
+#define xhci0_interrupt_ring (xhci_states[xhci_controller_id].interrupt_ring)
+#define xhci0_descriptor_buffer (xhci_states[xhci_controller_id].descriptor_buffer)
+#define xhci0_keyboard_report (xhci_states[xhci_controller_id].interrupt_report)
+#define xhci0_command_enqueue (xhci_states[xhci_controller_id].command_enqueue)
+#define xhci0_command_cycle (xhci_states[xhci_controller_id].command_cycle)
+#define xhci0_event_dequeue (xhci_states[xhci_controller_id].event_dequeue)
+#define xhci0_event_cycle (xhci_states[xhci_controller_id].event_cycle)
+#define xhci0_ep0_enqueue (xhci_states[xhci_controller_id].ep0_enqueue)
+#define xhci0_ep0_cycle (xhci_states[xhci_controller_id].ep0_cycle)
+#define xhci0_interrupt_enqueue (xhci_states[xhci_controller_id].interrupt_enqueue)
+#define xhci0_interrupt_cycle (xhci_states[xhci_controller_id].interrupt_cycle)
+#define xhci0_keyboard_pending_pointer \
+	(xhci_states[xhci_controller_id].interrupt_pending_pointer)
+
+int xhci64_select_controller(uint32_t controller_id)
+{
+	if (controller_id > 1U) {
+		return -1;
+	}
+	xhci_controller_id = controller_id;
+	xhci_controller_offset = controller_id == 0U ? RP1_USB0_BASE : RP1_USB1_BASE;
+	return 0;
+}
 
 static volatile uint8_t *xhci_capability64(uintptr_t rp1_base)
 {
@@ -474,7 +512,7 @@ int xhci64_reset_rp1(uintptr_t rp1_base,
 	if (results == NULL) {
 		return -1;
 	}
-	xhci_controller_offset = RP1_USB0_BASE;
+	xhci64_select_controller(0);
 	status = reset_controller64(rp1_base + RP1_USB0_BASE, &results[0]);
 	if (status != 0) {
 		return -10 + status;
@@ -486,7 +524,7 @@ int xhci64_reset_rp1(uintptr_t rp1_base,
 	return 0;
 }
 
-int xhci64_start_rp1(uintptr_t rp1_base,
+static int start_selected_controller64(uintptr_t rp1_base,
 	struct XHCI64_START_RESULT *result)
 {
 	volatile uint8_t *capability;
@@ -503,14 +541,7 @@ int xhci64_start_rp1(uintptr_t rp1_base,
 	if (result == NULL) {
 		return -1;
 	}
-	if (!controller_has_connection64(rp1_base + RP1_USB0_BASE) &&
-			controller_has_connection64(rp1_base + RP1_USB1_BASE)) {
-		xhci_controller_offset = RP1_USB1_BASE;
-	} else {
-		xhci_controller_offset = RP1_USB0_BASE;
-	}
-	result->controller_id =
-		xhci_controller_offset == RP1_USB1_BASE ? 1U : 0U;
+	result->controller_id = xhci_controller_id;
 	capability = xhci_capability64(rp1_base);
 	caplength = *(volatile uint32_t *) capability & 0xffU;
 	hcsparams1 = *(volatile uint32_t *)
@@ -597,6 +628,70 @@ int xhci64_start_rp1(uintptr_t rp1_base,
 	for (i = 0; i < 3; i++) {
 		result->port_status[i] = *(volatile uint32_t *) (operational +
 			XHCI_PORTSC_BASE + i * XHCI_PORT_STRIDE);
+	}
+	return 0;
+}
+
+int xhci64_start_controller(uintptr_t rp1_base, uint32_t controller_id,
+	struct XHCI64_START_RESULT *result)
+{
+	if (xhci64_select_controller(controller_id) != 0) {
+		return -1;
+	}
+	return start_selected_controller64(rp1_base, result);
+}
+
+int xhci64_start_rp1(uintptr_t rp1_base,
+	struct XHCI64_START_RESULT *result)
+{
+	uint32_t controller_id;
+
+	/* USB1은 M6/M7에서 검증된 keyboard controller다. USB0 mouse와 함께
+	   연결된 경우에도 keyboard를 먼저 초기화한다. */
+	controller_id = controller_has_connection64(rp1_base + RP1_USB1_BASE) ?
+		1U : 0U;
+	return xhci64_start_controller(rp1_base, controller_id, result);
+}
+
+int xhci64_port_inventory(uintptr_t rp1_base,
+	struct XHCI64_PORT_INVENTORY inventory[2])
+{
+	static const uint32_t offsets[2] = { RP1_USB0_BASE, RP1_USB1_BASE };
+	uint32_t controller;
+
+	if (inventory == NULL) {
+		return -1;
+	}
+	for (controller = 0; controller < 2U; controller++) {
+		volatile uint8_t *capability = (volatile uint8_t *)
+			(rp1_base + offsets[controller]);
+		volatile uint8_t *operational;
+		uint32_t caplength;
+		uint32_t count;
+		uint32_t port;
+
+		caplength = *(volatile uint32_t *) capability & 0xffU;
+		count = (*(volatile uint32_t *)
+			(capability + XHCI_HCSPARAMS1) >> 24) & 0xffU;
+		operational = capability + caplength;
+		inventory[controller].port_count = count;
+		inventory[controller].connected_mask = 0;
+		inventory[controller].enabled_mask = 0;
+		for (port = 0; port < XHCI64_INVENTORY_PORTS; port++) {
+			uint32_t status = 0;
+
+			if (port < count) {
+				status = *(volatile uint32_t *) (operational +
+					XHCI_PORTSC_BASE + port * XHCI_PORT_STRIDE);
+				if ((status & XHCI_PORTSC_CCS) != 0) {
+					inventory[controller].connected_mask |= 1U << port;
+				}
+				if ((status & XHCI_PORTSC_PED) != 0) {
+					inventory[controller].enabled_mask |= 1U << port;
+				}
+			}
+			inventory[controller].port_status[port] = status;
+		}
 	}
 	return 0;
 }
@@ -900,13 +995,13 @@ int xhci64_read_device_descriptor8(uintptr_t rp1_base, uint32_t slot_id,
 	return 0;
 }
 
-int xhci64_find_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
-	struct XHCI64_HID_RESULT *result)
+static int find_boot_hid64(uintptr_t rp1_base, uint32_t slot_id,
+	uint32_t protocol, struct XHCI64_HID_RESULT *result)
 {
 	struct XHCI64_DESCRIPTOR_RESULT transfer;
 	uint32_t offset;
 	uint32_t total_length;
-	int keyboard_interface;
+	int hid_interface;
 	int status;
 
 	if (result == NULL) {
@@ -960,7 +1055,7 @@ int xhci64_find_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
 		return -7;
 	}
 
-	keyboard_interface = 0;
+	hid_interface = 0;
 	for (offset = 0; offset + 2U <= total_length;) {
 		uint32_t descriptor_length = xhci0_descriptor_buffer[offset];
 		uint32_t descriptor_type = xhci0_descriptor_buffer[offset + 1U];
@@ -969,16 +1064,16 @@ int xhci64_find_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
 			return -8;
 		}
 		if (descriptor_type == 4U && descriptor_length >= 9U) {
-			keyboard_interface =
+			hid_interface =
 				xhci0_descriptor_buffer[offset + 5U] == 3U &&
 				xhci0_descriptor_buffer[offset + 6U] == 1U &&
-				xhci0_descriptor_buffer[offset + 7U] == 1U;
-			if (keyboard_interface != 0) {
+				xhci0_descriptor_buffer[offset + 7U] == protocol;
+			if (hid_interface != 0) {
 				result->interface_number =
 					xhci0_descriptor_buffer[offset + 2U];
 			}
 		} else if (descriptor_type == 5U && descriptor_length >= 7U &&
-				keyboard_interface != 0 &&
+				hid_interface != 0 &&
 				(xhci0_descriptor_buffer[offset + 2U] & 0x80U) != 0 &&
 				(xhci0_descriptor_buffer[offset + 3U] & 3U) == 3U) {
 			result->endpoint_address =
@@ -998,6 +1093,18 @@ int xhci64_find_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
 		return -9;
 	}
 	return 0;
+}
+
+int xhci64_find_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
+	struct XHCI64_HID_RESULT *result)
+{
+	return find_boot_hid64(rp1_base, slot_id, 1U, result);
+}
+
+int xhci64_find_boot_mouse(uintptr_t rp1_base, uint32_t slot_id,
+	struct XHCI64_HID_RESULT *result)
+{
+	return find_boot_hid64(rp1_base, slot_id, 2U, result);
 }
 
 static int control_no_data64(uintptr_t rp1_base, uint32_t slot_id,
@@ -1062,7 +1169,7 @@ static uint32_t endpoint_interval64(uint32_t port_speed, uint32_t interval)
 	return encoded;
 }
 
-int xhci64_configure_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
+int xhci64_configure_boot_hid(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t port_speed, const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_CONFIGURE_RESULT *result)
 {
@@ -1179,6 +1286,14 @@ int xhci64_configure_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
 	return 0;
 }
 
+int xhci64_configure_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
+	uint32_t port_speed, const struct XHCI64_HID_RESULT *hid,
+	struct XHCI64_CONFIGURE_RESULT *result)
+{
+	return xhci64_configure_boot_hid(rp1_base, slot_id, port_speed, hid,
+		result);
+}
+
 int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_KEY_RESULT *result)
@@ -1266,7 +1381,7 @@ int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
 	return -5;
 }
 
-int xhci64_keyboard_set_boot_protocol(uintptr_t rp1_base, uint32_t slot_id,
+int xhci64_hid_set_boot_protocol(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid)
 {
 	if (hid == NULL || slot_id == 0) {
@@ -1274,6 +1389,12 @@ int xhci64_keyboard_set_boot_protocol(uintptr_t rp1_base, uint32_t slot_id,
 	}
 	return control_no_data64(rp1_base, slot_id, 0x21U, 0x0bU, 0,
 		hid->interface_number);
+}
+
+int xhci64_keyboard_set_boot_protocol(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid)
+{
+	return xhci64_hid_set_boot_protocol(rp1_base, slot_id, hid);
 }
 
 int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
@@ -1360,7 +1481,7 @@ int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
 	return -4;
 }
 
-int xhci64_keyboard_arm(uintptr_t rp1_base, uint32_t slot_id,
+int xhci64_hid_arm(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid)
 {
 	volatile uint8_t *capability = xhci_capability64(rp1_base);
@@ -1369,7 +1490,7 @@ int xhci64_keyboard_arm(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t index;
 
 	if (hid == NULL || slot_id == 0 || xhci0_keyboard_pending_pointer != 0 ||
-			hid->endpoint_max_packet < 8U ||
+			hid->endpoint_max_packet < 3U ||
 			hid->endpoint_max_packet > sizeof(xhci0_keyboard_report) ||
 			xhci0_interrupt_enqueue >= XHCI_RING_TRBS - 1U) {
 		return -1;
@@ -1395,21 +1516,25 @@ int xhci64_keyboard_arm(uintptr_t rp1_base, uint32_t slot_id,
 	return 0;
 }
 
-int xhci64_keyboard_poll(uintptr_t rp1_base, uint32_t slot_id,
-	const struct XHCI64_HID_RESULT *hid, uint8_t report[8])
+int xhci64_hid_poll(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid, uint8_t *report,
+	size_t report_length)
 {
 	volatile uint8_t *capability = xhci_capability64(rp1_base);
 	volatile uint8_t *runtime;
 	volatile uint8_t *interrupter;
 	struct XHCI64_TRB *event;
 	uint64_t event_pointer;
+	uint32_t actual_length;
 	uint32_t completion_code;
 	uint32_t control;
 	uint32_t endpoint_id;
 	uint32_t i;
+	uint32_t residual_length;
 	uint32_t type;
 
-	if (hid == NULL || report == NULL || slot_id == 0 ||
+	if (hid == NULL || report == NULL || report_length == 0 ||
+			report_length > sizeof(xhci0_keyboard_report) || slot_id == 0 ||
 			xhci0_keyboard_pending_pointer == 0) {
 		return -1;
 	}
@@ -1431,20 +1556,47 @@ int xhci64_keyboard_poll(uintptr_t rp1_base, uint32_t slot_id,
 		if (type != XHCI_TRB_TYPE_TRANSFER_EVENT) {
 			continue;
 		}
-		if (completion_code != 1U || (event->status & 0x00ffffffU) != 0 ||
+		residual_length = event->status & 0x00ffffffU;
+		if ((completion_code != 1U && completion_code != 13U) ||
+				residual_length > hid->endpoint_max_packet ||
 				((control >> 16) & 0x1fU) != endpoint_id ||
 				(control >> 24) != slot_id ||
 				event_pointer != xhci0_keyboard_pending_pointer) {
 			return -2;
 		}
+		actual_length = hid->endpoint_max_packet - residual_length;
+		if (actual_length == 0U) {
+			return -3;
+		}
+		if (actual_length > report_length) {
+			actual_length = (uint32_t) report_length;
+		}
 		invalidate_cache64(xhci0_keyboard_report,
 			hid->endpoint_max_packet);
-		for (i = 0; i < 8U; i++) {
-			report[i] = xhci0_keyboard_report[i];
+		for (i = 0; i < report_length; i++) {
+			report[i] = i < actual_length ?
+				xhci0_keyboard_report[i] : 0;
 		}
 		xhci0_keyboard_pending_pointer = 0;
-		return 1;
+		return (int) actual_length;
 	}
+}
+
+int xhci64_keyboard_arm(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid)
+{
+	if (hid == NULL || hid->endpoint_max_packet < 8U) {
+		return -1;
+	}
+	return xhci64_hid_arm(rp1_base, slot_id, hid);
+}
+
+int xhci64_keyboard_poll(uintptr_t rp1_base, uint32_t slot_id,
+	const struct XHCI64_HID_RESULT *hid, uint8_t report[8])
+{
+	int status = xhci64_hid_poll(rp1_base, slot_id, hid, report, 8U);
+
+	return status > 0 && status < 8 ? -3 : status;
 }
 
 int xhci64_reset_connected_port(uintptr_t rp1_base,

@@ -227,6 +227,28 @@ static int m7a_sheet32_smoke64(void)
 	return 0;
 }
 
+static int m8a_mouse_report_smoke64(void)
+{
+	static const uint8_t report3[3] = { 0x05U, 0x05U, 0xfbU };
+	static const uint8_t report4[4] = { 0x02U, 0x80U, 0x7fU, 0xffU };
+	struct USBHID64_MOUSE_REPORT decoded;
+
+	if (usbhid64_decode_mouse_report(report3, sizeof(report3), &decoded) != 0 ||
+			decoded.buttons != 0x05U || decoded.dx != 5 || decoded.dy != -5 ||
+			decoded.wheel != 0) {
+		return -1;
+	}
+	if (usbhid64_decode_mouse_report(report4, sizeof(report4), &decoded) != 0 ||
+			decoded.buttons != 0x02U || decoded.dx != -128 || decoded.dy != 127 ||
+			decoded.wheel != -1) {
+		return -2;
+	}
+	if (usbhid64_decode_mouse_report(report3, 2U, &decoded) == 0) {
+		return -3;
+	}
+	return 0;
+}
+
 static int m7b_live_sheet64(const struct BOOTINFO64 *bootinfo)
 {
 	static const uint8_t purple[3] = { 0x80U, 0x20U, 0xc0U };
@@ -483,6 +505,7 @@ void aarch64_high_main(void)
 	uint32_t xhci_hcsparams1[2];
 	struct XHCI64_RESET_RESULT xhci_reset[2];
 	struct XHCI64_START_RESULT xhci_start;
+	struct XHCI64_PORT_INVENTORY xhci_inventory[2];
 	struct XHCI64_COMMAND_RESULT xhci_command;
 	struct XHCI64_PORT_RESULT xhci_port;
 	struct XHCI64_SLOT_RESULT xhci_slot;
@@ -491,9 +514,20 @@ void aarch64_high_main(void)
 	struct XHCI64_HID_RESULT xhci_hid;
 	struct XHCI64_CONFIGURE_RESULT xhci_configure;
 	struct XHCI64_KEY_RESULT xhci_key;
+	struct XHCI64_START_RESULT mouse_start;
+	struct XHCI64_PORT_RESULT mouse_port;
+	struct XHCI64_SLOT_RESULT mouse_slot;
+	struct XHCI64_ADDRESS_RESULT mouse_address;
+	struct XHCI64_DESCRIPTOR_RESULT mouse_descriptor;
+	struct XHCI64_HID_RESULT mouse_hid;
+	struct XHCI64_CONFIGURE_RESULT mouse_configure;
 	struct USBHID64_STATE hid_state;
+	struct USBHID64_MOUSE_REPORT mouse_decoded;
+	struct CONSOLE64 *focused_console;
 	uint8_t hid_report[8];
+	uint8_t mouse_report[8];
 	uint32_t hid_index;
+	uint32_t mouse_stage;
 	uint16_t key_make;
 	uint16_t key_break;
 	struct FIFO64 hid_fifo;
@@ -504,6 +538,7 @@ void aarch64_high_main(void)
 	uint64_t heartbeat_half_period;
 	int heartbeat_led_on;
 	uintptr_t rp1_base;
+	int mouse_status;
 	int status;
 
 	arch64_mmu_finish_high();
@@ -705,6 +740,24 @@ void aarch64_high_main(void)
 	dbg_hex32(xhci_start.command);
 	arch64_dbg_puts("/");
 	dbg_hex32(xhci_start.status);
+	arch64_dbg_puts("\n");
+	status = xhci64_port_inventory(rp1_base, xhci_inventory);
+	if (status != 0) {
+		arch64_dbg_puts("M8b: xHCI root-port inventory failed\n");
+		arch64_panic_blink(40);
+	}
+	arch64_dbg_puts("M8b: ports usb0 count/connected/enabled=");
+	dbg_hex32(xhci_inventory[0].port_count);
+	arch64_dbg_puts("/");
+	dbg_hex32(xhci_inventory[0].connected_mask);
+	arch64_dbg_puts("/");
+	dbg_hex32(xhci_inventory[0].enabled_mask);
+	arch64_dbg_puts(" usb1=");
+	dbg_hex32(xhci_inventory[1].port_count);
+	arch64_dbg_puts("/");
+	dbg_hex32(xhci_inventory[1].connected_mask);
+	arch64_dbg_puts("/");
+	dbg_hex32(xhci_inventory[1].enabled_mask);
 	arch64_dbg_puts("\n");
 	xhci_command.event_status = 0;
 	xhci_command.event_control = 0;
@@ -1021,6 +1074,84 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(27);
 	}
+	status = m8a_mouse_report_smoke64();
+	if (status != 0) {
+		arch64_dbg_puts("M8a: USB HID mouse report decode failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(39);
+	}
+	mouse_start = (struct XHCI64_START_RESULT) { 0 };
+	mouse_port = (struct XHCI64_PORT_RESULT) { 0 };
+	mouse_slot = (struct XHCI64_SLOT_RESULT) { 0 };
+	mouse_address = (struct XHCI64_ADDRESS_RESULT) { 0 };
+	mouse_descriptor = (struct XHCI64_DESCRIPTOR_RESULT) { 0 };
+	mouse_hid = (struct XHCI64_HID_RESULT) { 0 };
+	mouse_configure = (struct XHCI64_CONFIGURE_RESULT) { 0 };
+	mouse_stage = 1U;
+	status = xhci64_start_controller(rp1_base, 0U, &mouse_start);
+	if (status == 0) {
+		mouse_stage = 2U;
+		status = xhci64_reset_connected_port(rp1_base, &mouse_port);
+	}
+	if (status == 0) {
+		mouse_stage = 3U;
+		status = xhci64_enable_slot(rp1_base, &mouse_slot);
+	}
+	if (status == 0) {
+		mouse_stage = 4U;
+		status = xhci64_address_device(rp1_base, mouse_port.port_id,
+			(mouse_port.status_after >> 10) & 0xfU, mouse_slot.slot_id,
+			&mouse_address);
+	}
+	if (status == 0) {
+		mouse_stage = 5U;
+		status = xhci64_read_device_descriptor8(rp1_base,
+			mouse_slot.slot_id, &mouse_descriptor);
+	}
+	if (status == 0) {
+		mouse_stage = 6U;
+		status = xhci64_find_boot_mouse(rp1_base, mouse_slot.slot_id,
+			&mouse_hid);
+	}
+	if (status == 0) {
+		mouse_stage = 7U;
+		status = xhci64_configure_boot_hid(rp1_base, mouse_slot.slot_id,
+			(mouse_port.status_after >> 10) & 0xfU, &mouse_hid,
+			&mouse_configure);
+	}
+	if (status == 0) {
+		mouse_stage = 8U;
+		status = xhci64_hid_set_boot_protocol(rp1_base,
+			mouse_slot.slot_id, &mouse_hid);
+	}
+	if (status != 0) {
+		arch64_dbg_puts("M8c: USB boot mouse init failed, stage/status=");
+		dbg_hex32(mouse_stage);
+		arch64_dbg_puts("/");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts(" port/portsc=");
+		dbg_hex32(mouse_port.port_id);
+		arch64_dbg_puts("/");
+		dbg_hex32(mouse_port.status_after);
+		arch64_dbg_puts(" slot/vidpid=");
+		dbg_hex32(mouse_slot.slot_id);
+		arch64_dbg_puts("/");
+		dbg_hex32(mouse_hid.vendor_product);
+		arch64_dbg_puts(" cfg/intf/ep/mps=");
+		dbg_hex32(mouse_hid.configuration_value);
+		arch64_dbg_puts("/");
+		dbg_hex32(mouse_hid.interface_number);
+		arch64_dbg_puts("/");
+		dbg_hex32(mouse_hid.endpoint_address);
+		arch64_dbg_puts("/");
+		dbg_hex32(mouse_hid.endpoint_max_packet);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(41);
+	}
+	if (xhci64_select_controller(1U) != 0) {
+		arch64_panic_blink(41);
+	}
 	status = m7a_sheet32_smoke64();
 	if (status != 0) {
 		arch64_dbg_puts("M7a: 32bpp sheet compositor failed, status=");
@@ -1066,6 +1197,14 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(29);
 	}
+	if (xhci64_select_controller(0U) != 0 ||
+			xhci64_hid_arm(rp1_base, mouse_slot.slot_id, &mouse_hid) != 0) {
+		arch64_dbg_puts("M8c: live USB mouse arm failed\n");
+		arch64_panic_blink(42);
+	}
+	if (xhci64_select_controller(1U) != 0) {
+		arch64_panic_blink(42);
+	}
 	__asm__ volatile ("mrs %0, cntfrq_el0" : "=r" (heartbeat_frequency));
 	heartbeat_half_period = heartbeat_frequency / 2U;
 	if (heartbeat_half_period == 0U) {
@@ -1078,6 +1217,7 @@ void aarch64_high_main(void)
 
 	/* Keep the M1 heartbeat as an independent liveness signal. */
 	for (;;) {
+		xhci64_select_controller(1U);
 		status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
 			&xhci_hid, hid_report);
 		if (status < 0) {
@@ -1095,13 +1235,41 @@ void aarch64_high_main(void)
 				arch64_panic_blink(29);
 			}
 			while (fifo64_get(&hid_fifo, &hid_event) == 0) {
-				if (console64_post_input_key(console64_active(),
+				focused_console = gui64_focused_console();
+				if (focused_console != NULL &&
+						console64_post_input_key(focused_console,
 						(uint16_t) hid_event.data) != 0) {
 					arch64_dbg_puts("M7j: console task FIFO failed\n");
 					arch64_panic_blink(38);
 				}
 			}
 		}
+		xhci64_select_controller(0U);
+		mouse_status = xhci64_hid_poll(rp1_base, mouse_slot.slot_id,
+			&mouse_hid, mouse_report, sizeof(mouse_report));
+		if (mouse_status < 0) {
+			arch64_dbg_puts("\nM8c: live USB mouse poll failed, status=");
+			dbg_hex32((uint32_t) mouse_status);
+			arch64_dbg_puts("\n");
+			arch64_panic_blink(42);
+		}
+		if (mouse_status > 0) {
+			status = usbhid64_decode_mouse_report(mouse_report,
+				(size_t) mouse_status, &mouse_decoded);
+			if (status != 0) {
+				arch64_dbg_puts("\nM8c: live USB mouse decode failed\n");
+				arch64_panic_blink(42);
+			}
+			gui64_mouse_event(mouse_decoded.dx, mouse_decoded.dy,
+				(int32_t) mouse_decoded.buttons);
+			if (xhci64_hid_arm(rp1_base, mouse_slot.slot_id,
+					&mouse_hid) != 0) {
+				arch64_dbg_puts("\nM8c: live USB mouse rearm failed\n");
+				arch64_panic_blink(42);
+			}
+		}
+		/* 닫기 요청을 처리하고 잠든 console task와 window를 회수한다. */
+		console64_reap_closed();
 		/* Do not stall USB polling while preserving the 500 ms heartbeat. */
 		if ((int64_t) (counter64() - heartbeat_deadline) >= 0) {
 			arch64_scheduler_main_beat();

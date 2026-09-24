@@ -942,7 +942,7 @@ static void execute_command(struct CONSOLE64 *con)
 	}
 	if (str_eq(con->input_line, "help")) {
 #ifdef __aarch64__
-		puts_con(con, "commands: help clear mem tasks ls 목록 type readme.txt APP [ARGS] xwindow 창\n");
+		puts_con(con, "commands: help clear mem tasks ls 목록 type readme.txt APP [ARGS] xwindow 창 new 새창\n");
 #else
 		puts_con(con, "commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY xwindow 창 new 새창\n");
 #endif
@@ -976,12 +976,10 @@ static void execute_command(struct CONSOLE64 *con)
 		if (addr != 0) {
 			memman64_free_4k(&memman64, addr, 4096);
 		}
-#ifndef __aarch64__
 	} else if (str_eq(con->input_line, "new") || str_eq(con->input_line, "새창")) {
 		if (console64_create() == NULL) {
 			puts_con(con, "no free console slot\n");
 		}
-#endif
 	} else if (str_eq(con->input_line, "tasks") || str_eq(con->input_line, "태스크")) {
 		uint32_t i;
 

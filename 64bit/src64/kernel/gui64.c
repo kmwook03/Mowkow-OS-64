@@ -487,10 +487,13 @@ struct CONSOLE64 *gui64_focused_console(void)
 {
 	struct GUI64_WIN *win;
 
-	if (gui_ctl == NULL || gui_win_count == 0) {
+	if (gui_ctl == NULL) {
 		/* 컴포지터가 못 떴다 -- 콘솔이 LFB에 직접 그리는 상태다.
 		   창이 없으니 포커스도 없고, 키는 부팅 콘솔로 간다. */
 		return console64_active();
+	}
+	if (gui_win_count == 0) {
+		return NULL;
 	}
 	win = find_win(gui_key_win != NULL ? gui_key_win : gui_console);
 	if (win == NULL || win->is_console == 0) {

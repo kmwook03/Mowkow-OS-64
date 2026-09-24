@@ -159,3 +159,18 @@ int usbhid64_process_report(struct FIFO64 *fifo,
 	}
 	return (int) emitted;
 }
+
+int usbhid64_decode_mouse_report(const uint8_t *report, size_t length,
+	struct USBHID64_MOUSE_REPORT *decoded)
+{
+	if (report == NULL || decoded == NULL || length < 3U) {
+		return -1;
+	}
+	decoded->buttons = report[0] & 0x07U;
+	decoded->dx = (int32_t) (int8_t) report[1];
+	/* HID boot mouse의 Y축은 화면 좌표와 같이 아래쪽이 양수다. PS/2
+	   mouse64_decode()에서 하던 부호 반전은 USB report에는 적용하지 않는다. */
+	decoded->dy = (int32_t) (int8_t) report[2];
+	decoded->wheel = length >= 4U ? (int32_t) (int8_t) report[3] : 0;
+	return 0;
+}

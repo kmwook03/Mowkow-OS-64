@@ -1446,9 +1446,119 @@ M6a-u: xHCI + USB HID + FIFO + keymap + 한글 OK
 
 ## M8 — USB HID 마우스와 GUI 상호작용
 
-상태: 미착수.
+상태: 진행 중.
 
 마우스 작업은 keyboard/console 경로와 별개인 M8로 분리한다. HID boot mouse의
 enumeration과 report decoding부터 시작해 `gui64_mouse_dec()`가 소비하는 공용 이벤트
 형식으로 연결하고, 커서 이동, 버튼, 창 focus/drag 및 닫기 버튼을 순서대로 검증한다.
 M7의 console·syscall·application parity가 끝나기 전에는 M8 구현을 섞지 않는다.
+
+### M8a — HID boot mouse report 디코더
+
+M8a는 USB 전송과 GUI 연결에 앞서 boot mouse report 형식을 독립적으로 검증한다.
+3바이트 기본 report의 버튼 및 signed X/Y를 `USBHID64_MOUSE_REPORT`로 변환하고,
+4번째 바이트가 있으면 signed wheel 값으로 보존한다. HID Y축은 화면 좌표와 같이
+아래쪽이 양수이므로 PS/2 디코더의 Y 반전은 적용하지 않는다.
+
+부팅 자체 검사는 버튼 조합, 양수·음수 이동의 경계값, wheel과 짧은 report 거부를
+확인한다. 성공 문구는 화면에 추가하지 않으며, 실패할 때만 `M8a` 오류와 panic
+code 39를 표시한다. 다음 M8b에서 root port와 두 번째 slot을 일반화한 뒤 실제
+mouse interrupt endpoint의 report를 이 디코더와 `gui64_mouse_event()`에 연결한다.
+
+- 2026-09-24: Raspberry Pi 5 실기에서 M8a 검증 완료.
+- 새 kernel로 기존 keyboard·console·앱 경로까지 정상 부팅해 mouse report 자체
+  검사와 기존 기능 회귀 검사가 통과했다.
+
+### M8b — RP1 xHCI root-port inventory
+
+M8b는 두 번째 장치를 할당하기 전에 RP1의 xHCI0/xHCI1 각각에서 root-port 수,
+`PORTSC.CCS` 연결 비트맵과 `PORTSC.PED` 활성 비트맵을 읽는다. 한 물리 장치가 어느
+컨트롤러의 몇 번째 logical port에 나타나는지 실기에서 먼저 확정해야 기존 keyboard
+slot을 보존하면서 mouse용 port reset과 두 번째 slot을 안전하게 추가할 수 있다.
+
+키보드는 검증된 포트에 그대로 두고 USB 마우스를 연결해 부팅한다. 다음 형식의 한
+줄을 기록한다.
+
+```text
+M8b: ports usb0 count/connected/enabled=.../.../... usb1=.../.../...
+```
+
+`connected`의 각 bit 0부터가 port 1부터에 대응한다. 현재 선택된 keyboard port는
+뒤의 M6 reset/configure 과정에서 `enabled`가 켜지며, 아직 reset하지 않은 mouse
+port는 `connected`만 켜져 있을 수 있다. 이 결과를 기준으로 M8c에서 controller와
+port를 명시한 두 번째 장치 열거를 구현한다.
+
+- 2026-09-24: 세로로 나란한 포트에 기존 keyboard와 mouse를 함께 연결하면 기존
+  USB0 우선 선택이 mouse(`vid/pid=0x2510093a`, configuration length `0x22`)를 먼저
+  열거해 boot-keyboard interface 탐색이 `status=-9`로 끝나는 것을 확인했다.
+- 이 결과로 두 장치가 서로 다른 RP1 xHCI에 연결된 것을 확인했다. 다중 controller
+  상태를 추가하기 전의 회귀 방지로, 두 controller에 모두 장치가 있으면 M6/M7에서
+  검증한 keyboard 쪽 USB1을 우선하도록 바꿨다. USB0 mouse는 M8c에서 별도 상태와
+  slot을 할당해 동시에 실행한다.
+
+- 2026-09-24: `usb0 count/connected/enabled=3/1/0`, `usb1=3/1/0`을 실기에서
+  확인했다. USB1 keyboard를 선택한 뒤 console 진입과 명령 실행도 정상 동작했다.
+
+### M8c — controller별 xHCI 상태 분리
+
+두 장치가 서로 다른 controller에 있으므로 DCBAA, command/event ring, scratchpad,
+input/device context, EP0/interrupt ring과 report buffer를 USB0·USB1별로 분리한다.
+기존 API는 선택된 controller의 상태만 다루며, `xhci64_select_controller()`와
+`xhci64_start_controller()`로 대상을 명시할 수 있다. 먼저 USB1 keyboard만 사용하는
+기존 부팅을 이 구조에서 회귀 검사한 뒤, USB0을 시작해 mouse slot을 추가한다.
+
+- 2026-09-24: controller별 상태 분리 후에도 실기에서 M8b inventory가 종전과 같은
+  `usb0=3/1/0`, `usb1=3/1/0`으로 출력되고, USB1 keyboard로 console 진입과 명령
+  실행이 정상임을 확인했다.
+- USB0 controller를 별도로 시작하고 port reset, Enable Slot, Address Device,
+  boot-mouse interface 탐색, Configure Endpoint와 Set Protocol을 수행한다. 성공
+  메시지는 표시하지 않고 오류가 발생할 때만 M8c 진단과 panic code를 남긴다.
+
+두 controller의 interrupt transfer를 main loop에서 번갈아 polling한다. USB mouse는
+endpoint의 최대 packet보다 짧은 3~4바이트 report가 일반적이므로 xHCI의 Short Packet
+completion code와 residual length를 실제 report 길이로 변환한다. 디코딩한 X/Y와
+button bit는 `gui64_mouse_event()`로 직접 보내 cursor 이동, focus, drag 및 close를
+기존 GUI 경로에서 처리한다.
+
+실기 검증의 성공 기준은 ready 줄의 표시 여부가 아니라 mouse cursor가 실제 움직임을
+따르는지 여부다. 이어서 왼쪽 버튼 focus/drag와 같은 상태에서 USB1 keyboard의
+console 명령 인식까지 확인한다. 초기화 실패 시
+`stage/status`에서 1=start, 2=port reset, 3=slot, 4=address, 5=device descriptor,
+6=boot-mouse descriptor, 7=endpoint configure, 8=Set Protocol을 구분한다.
+
+- 2026-09-24: 실기에서 M8c ready 줄은 화면에 남지 않았지만 mouse 움직임에 맞춰
+  cursor가 정상 이동했다. 이로써 USB0 mouse 열거, short interrupt report 처리,
+  HID boot report 디코딩과 `gui64_mouse_event()` 연결까지 확인했다.
+
+### M8d — 왼쪽 버튼 focus·drag·close
+
+USB boot report의 button bit 0은 `gui64_mouse_event()`의 이전 버튼 상태와 비교한다.
+0에서 1로 바뀌는 순간 cursor 아래 창을 올리고 keyboard focus를 옮기며, title bar를
+누른 상태로 이동하면 해당 sheet를 끌고 간다. 닫기 버튼은 기존 GUI의 지연 종료
+경로를 사용하므로 실행 중인 앱의 전역 자원을 강제로 남기지 않는다. 버튼을 놓으면
+drag 상태를 해제한다. 이 경로는 M8c의 report polling에서 이미 연결되어 있으므로
+별도의 성공 문구는 추가하지 않는다.
+
+실기 시험은 다음 순서로 진행한다.
+
+1. `xwindow`를 실행해 창 모드로 전환한다.
+2. `new`를 실행해 두 번째 terminal을 만든다.
+3. 뒤쪽 terminal의 title bar를 한 번 눌러 창과 taskbar의 활성 표시가 바뀌는지,
+   이어서 입력한 키가 선택한 terminal에 들어가는지 확인한다.
+4. title bar를 누른 채 이동해 창이 cursor를 따라가는지 확인한다.
+5. 두 번째 terminal의 닫기 버튼을 눌러 창과 taskbar 항목이 함께 사라지는지 확인한다.
+6. 남은 terminal에서 명령을 실행해 keyboard와 mouse 동시 polling의 회귀가 없는지
+   확인한다.
+
+- 첫 실기 시험에서 닫기 버튼을 누르면 `콘솔을 닫습니다.`까지 출력되지만 창은
+  남는 현상을 확인했다. console task는 정상적으로 `close_ready`를 세우고 잠들었으나,
+  AArch64 USB main loop에 x86_64 쪽의 `console64_reap_closed()` 호출이 빠져 있던 것이
+  원인이었다. main loop에서 닫힌 console을 회수하도록 추가했다.
+- 다중 창 시험에 필요한 `new`/`새창` 명령을 AArch64에서도 활성화했다. USB keyboard
+  입력도 고정된 boot console 대신 `gui64_focused_console()`이 반환한 현재 활성 창으로
+  보내며, 마지막 창을 닫은 상태에서는 desktop에 입력을 잘못 전달하지 않는다.
+- 2026-09-24: Raspberry Pi 5 실기에서 `new`로 두 번째 terminal 생성, mouse 클릭에
+  따른 focus 전환, title bar drag를 확인했다. 두 번째 terminal을 닫으면 창과 taskbar
+  항목이 정상적으로 제거됐으며, 남은 첫 번째 terminal에서 keyboard 명령 입력과 실행도
+  정상 동작했다. 이로써 M8d의 생성·focus·drag·close와 keyboard/mouse 동시 polling
+  회귀 검증을 완료했다.
