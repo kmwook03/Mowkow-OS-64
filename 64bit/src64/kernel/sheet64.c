@@ -8,6 +8,10 @@
  */
 
 #include <asmfunc64.h>
+#ifdef __aarch64__
+#include <arch/arch64.h>
+#endif
+#include <graphic64.h>
 #include <memory64.h>
 #include <sheet64.h>
 #include <stddef.h>
@@ -20,13 +24,75 @@ static void sheet64_refreshmap(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
 static void sheet64_refreshsub(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
 	int32_t vx1, int32_t vy1, int32_t h0, int32_t h1);
 
+static uint64_t sheet64_lock(void)
+{
+#ifdef __aarch64__
+	return arch64_irq_save();
+#else
+	uint64_t flags = io_load_rflags();
+	io_cli();
+	return flags;
+#endif
+}
+
+static void sheet64_unlock(uint64_t state)
+{
+#ifdef __aarch64__
+	arch64_irq_restore(state);
+#else
+	io_store_rflags(state);
+#endif
+}
+
+static void sheet64_flush_vram(struct SHTCTL64 *ctl, int32_t x0, int32_t y0,
+	int32_t x1, int32_t y1)
+{
+#ifdef __aarch64__
+	uintptr_t address;
+	uintptr_t end;
+	int32_t y;
+
+	if (ctl->bpp != 32U) {
+		return;
+	}
+	for (y = y0; y < y1; y++) {
+		address = (uintptr_t) ctl->vram + (uintptr_t) y * ctl->stride +
+			(uintptr_t) x0 * 4U;
+		end = (uintptr_t) ctl->vram + (uintptr_t) y * ctl->stride +
+			(uintptr_t) x1 * 4U;
+		address &= ~(uintptr_t) 63U;
+		while (address < end) {
+			__asm__ volatile ("dc cvac, %0" :: "r" (address) : "memory");
+			address += 64U;
+		}
+	}
+	__asm__ volatile ("dsb sy" ::: "memory");
+#else
+	(void) ctl;
+	(void) x0;
+	(void) y0;
+	(void) x1;
+	(void) y1;
+#endif
+}
+
 struct SHTCTL64 *shtctl64_init(struct MEMMAN64 *man, uint8_t *vram,
-	int32_t xsize, int32_t ysize, uint32_t stride)
+	int32_t xsize, int32_t ysize, uint32_t stride, uint8_t bpp)
 {
 	struct SHTCTL64 *ctl;
 	uintptr_t ctl_addr;
 	uintptr_t map_addr;
 	int32_t i;
+	uint32_t bytes_per_pixel;
+
+	if (man == NULL || vram == NULL || xsize <= 0 || ysize <= 0 ||
+			(bpp != 8U && bpp != 32U)) {
+		return NULL;
+	}
+	bytes_per_pixel = bpp / 8U;
+	if (stride < (uint32_t) xsize * bytes_per_pixel) {
+		return NULL;
+	}
 
 	ctl_addr = memman64_alloc_4k(man, sizeof (struct SHTCTL64));
 	if (ctl_addr == 0) {
@@ -44,6 +110,7 @@ struct SHTCTL64 *shtctl64_init(struct MEMMAN64 *man, uint8_t *vram,
 	ctl->xsize = xsize;
 	ctl->ysize = ysize;
 	ctl->stride = stride;
+	ctl->bpp = bpp;
 	ctl->top = -1;
 	for (i = 0; i < MAX_SHEETS64; i++) {
 		ctl->sheets0[i].flags = 0;
@@ -158,12 +225,19 @@ static void sheet64_refreshsub(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
 			for (bx = bx0; bx < bx1; bx++) {
 				vx = sht->vx0 + bx;
 				if (map[vy * ctl->xsize + vx] == sid) {
-					vram[(uint32_t) vy * ctl->stride + vx] =
-						buf[by * sht->bxsize + bx];
+					if (ctl->bpp == 32U) {
+						uint32_t *row = (uint32_t *) (void *)
+							(vram + (uint32_t) vy * ctl->stride);
+						row[vx] = graphic64_rgb32(buf[by * sht->bxsize + bx]);
+					} else {
+						vram[(uint32_t) vy * ctl->stride + vx] =
+							buf[by * sht->bxsize + bx];
+					}
 				}
 			}
 		}
 	}
+	sheet64_flush_vram(ctl, vx0, vy0, vx1, vy1);
 }
 
 static void sheet64_updown_nolock(struct SHEET64 *sht, int32_t height)
@@ -284,10 +358,9 @@ struct SHEET64 *sheet64_alloc(struct SHTCTL64 *ctl)
 	uint64_t flags;
 	struct SHEET64 *sht;
 
-	flags = io_load_rflags();
-	io_cli();
+	flags = sheet64_lock();
 	sht = sheet64_alloc_nolock(ctl);
-	io_store_rflags(flags);
+	sheet64_unlock(flags);
 	return sht;
 }
 
@@ -296,58 +369,52 @@ void sheet64_setbuf(struct SHEET64 *sht, uint8_t *buf, int32_t xsize, int32_t ys
 {
 	uint64_t flags;
 
-	flags = io_load_rflags();
-	io_cli();
+	flags = sheet64_lock();
 	sheet64_setbuf_nolock(sht, buf, xsize, ysize, col_inv);
-	io_store_rflags(flags);
+	sheet64_unlock(flags);
 }
 
 void sheet64_updown(struct SHEET64 *sht, int32_t height)
 {
 	uint64_t flags;
 
-	flags = io_load_rflags();
-	io_cli();
+	flags = sheet64_lock();
 	sheet64_updown_nolock(sht, height);
-	io_store_rflags(flags);
+	sheet64_unlock(flags);
 }
 
 void sheet64_refresh(struct SHEET64 *sht, int32_t bx0, int32_t by0, int32_t bx1, int32_t by1)
 {
 	uint64_t flags;
 
-	flags = io_load_rflags();
-	io_cli();
+	flags = sheet64_lock();
 	sheet64_refresh_nolock(sht, bx0, by0, bx1, by1);
-	io_store_rflags(flags);
+	sheet64_unlock(flags);
 }
 
 void sheet64_slide(struct SHEET64 *sht, int32_t vx0, int32_t vy0)
 {
 	uint64_t flags;
 
-	flags = io_load_rflags();
-	io_cli();
+	flags = sheet64_lock();
 	sheet64_slide_nolock(sht, vx0, vy0);
-	io_store_rflags(flags);
+	sheet64_unlock(flags);
 }
 
 void sheet64_refresh_all(struct SHTCTL64 *ctl)
 {
 	uint64_t flags;
 
-	flags = io_load_rflags();
-	io_cli();
+	flags = sheet64_lock();
 	sheet64_refresh_all_nolock(ctl);
-	io_store_rflags(flags);
+	sheet64_unlock(flags);
 }
 
 void sheet64_free(struct SHEET64 *sht)
 {
 	uint64_t flags;
 
-	flags = io_load_rflags();
-	io_cli();
+	flags = sheet64_lock();
 	sheet64_free_nolock(sht);
-	io_store_rflags(flags);
+	sheet64_unlock(flags);
 }

@@ -25,13 +25,14 @@ struct SHTCTL64 {
 	uint8_t *map;                   /* 픽셀별 시트 ID, xsize 간격 */
 	int32_t xsize, ysize;
 	uint32_t stride;                /* VRAM 한 행의 바이트 수 (xsize와 다를 수 있음) */
+	uint8_t bpp;                    /* 출력 VRAM: 8bpp indexed 또는 32bpp RGB */
 	int32_t top;
 	struct SHEET64 *sheets[MAX_SHEETS64];
 	struct SHEET64 sheets0[MAX_SHEETS64];
 };
 
 struct SHTCTL64 *shtctl64_init(struct MEMMAN64 *man, uint8_t *vram,
-	int32_t xsize, int32_t ysize, uint32_t stride);
+	int32_t xsize, int32_t ysize, uint32_t stride, uint8_t bpp);
 struct SHEET64 *sheet64_alloc(struct SHTCTL64 *ctl);
 void sheet64_setbuf(struct SHEET64 *sht, uint8_t *buf, int32_t xsize, int32_t ysize,
 	int32_t col_inv);

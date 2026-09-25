@@ -8,6 +8,9 @@
  * 이미지는 모두 같은 고정 창에 올라간다.
  */
 #include <asmfunc64.h>
+#ifdef __aarch64__
+#include <arch/arch64.h>
+#endif
 #include <console64.h>
 #include <dsctbl64.h>
 #include <elf64_loader.h>
@@ -174,14 +177,21 @@ static uintptr_t setup_args(struct PROCESS64 *process, const char *cmdline, uint
 
 static void process_free_memory(struct PROCESS64 *process)
 {
+#ifdef __aarch64__
+	arch64_user_unmap_all();
+#endif
 	/* 이미지는 풀 밖의 고정 창이라 memman에 돌려주는 게 아니라
 	   소유권만 놓는다. */
 	elf64_release_process(process);
 	if (process->stack.base != 0 && process->stack.size != 0) {
-		memman64_free_4k(&memman64, process->stack.base, process->stack.size);
+		memman64_free_4k(&memman64,
+			process->stack_backing != 0 ? process->stack_backing :
+			process->stack.base, process->stack.size);
 	}
 	if (process->heap.base != 0 && process->heap.size != 0) {
-		memman64_free_4k(&memman64, process->heap.base, process->heap.size);
+		memman64_free_4k(&memman64,
+			process->heap_backing != 0 ? process->heap_backing :
+			process->heap.base, process->heap.size);
 	}
 }
 
@@ -230,8 +240,28 @@ int process64_exec_file(const char *path, const char *cmdline,
 	process->stack.size = USER_STACK_SIZE;
 	process->heap.base = heap;
 	process->heap.size = USER_HEAP_SIZE;
+#ifdef __aarch64__
+	process->stack_backing = stack;
+	process->heap_backing = heap;
+	process->stack.base = arch64_virt_to_phys(stack);
+	process->heap.base = arch64_virt_to_phys(heap);
+#endif
 	process->heap_next = heap;
+#ifdef __aarch64__
+	process->heap_next = process->heap.base;
+#endif
 	process->console = console;
+#ifdef __aarch64__
+	if (arch64_user_map_range(process->image.base, process->image.size, 1) != 0 ||
+			arch64_user_map_range(process->stack.base,
+			process->stack.size, 0) != 0 ||
+			arch64_user_map_range(process->heap.base,
+			process->heap.size, 0) != 0) {
+		process_free_memory(process);
+		process->pid = 0;
+		return -5;
+	}
+#endif
 	user_rsp = setup_args(process, cmdline != NULL ? cmdline : path, &argc, &argv);
 	task = task_now64();
 	if (task == NULL) {

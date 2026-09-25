@@ -21,22 +21,28 @@
 #include "shared/runtime/pyexec.h"
 
 #include <asmfunc64.h>
+#ifdef __aarch64__
+#include <arch/arch64.h>
+#endif
 #include <console64.h>
 #include <fd64.h>
 #include <memory64.h>
 #include <stdint.h>
 
 /*
- * 2MiB 근거: library_kor.scm을 올리고 나면 gc.mem_free()가 13KiB밖에 남지 않아
- * 식을 몇 개 계산하면 그대로 멈춘다. 
- * 힙은 .bss에 있고 커널 .bss 끝(약 2.2MiB)과 memman64 시작
- * (MEMMAN64_EARLY_START = 8MiB) 사이에 자리가 넉넉하므로 2MiB로 올린다.
+ * library_kor.scm까지 장기 유지하려면 4 MiB가 필요하다. x86_64는 기존 계약대로
+ * 정적 .bss를 쓰고, AArch64는 image와 8 MiB early allocator 경계의 여유를 지키기
+ * 위해 최초 mp_init 때 memory64에서 같은 크기를 한 번 할당한다.
  */
 #define MPPORT_GC_HEAP_SIZE (4 * 1024 * 1024)
 
 extern uint8_t stack_bottom[];
 
+#ifdef __aarch64__
+static uint8_t *gc_heap;
+#else
 static uint8_t gc_heap[MPPORT_GC_HEAP_SIZE];
+#endif
 
 /*
  * MicroPython은 태생적으로 단일 인스턴스다: gc_heap도 하나, mp_state_ctx도
@@ -50,17 +56,29 @@ static int mpport_claim(void)
 {
 	uint64_t flags;
 
+#ifdef __aarch64__
+	flags = arch64_irq_save();
+#else
 	flags = io_load_rflags();
 	io_cli();
+#endif
 	if (mp_busy != 0) {
+#ifdef __aarch64__
+		arch64_irq_restore(flags);
+#else
 		io_store_rflags(flags);
+#endif
 		/* console64_puts는 도는 태스크로 콘솔을 찾으므로 거절 메시지는
 		   거절당한 콘솔에 찍힌다. */
 		console64_puts("py already running in another console\n");
 		return -1;
 	}
 	mp_busy = 1;
+#ifdef __aarch64__
+	arch64_irq_restore(flags);
+#else
 	io_store_rflags(flags);
+#endif
 	return 0;
 }
 
@@ -130,15 +148,26 @@ static void mpport_stack_limit(void)
  */
 static int mp_ready;
 
-static void mpport_init(void)
+static int mpport_init(void)
 {
 	mpport_stack_limit();
 	if (mp_ready != 0) {
-		return;
+		return 0;
 	}
+#ifdef __aarch64__
+	gc_heap = (uint8_t *) memman64_alloc_4k(&memman64,
+		MPPORT_GC_HEAP_SIZE);
+	if (gc_heap == NULL) {
+		console64_puts("MicroPython: cannot allocate GC heap\n");
+		return -1;
+	}
+	gc_init(gc_heap, gc_heap + MPPORT_GC_HEAP_SIZE);
+#else
 	gc_init(gc_heap, gc_heap + sizeof(gc_heap));
+#endif
 	mp_init();
 	mp_ready = 1;
+	return 0;
 }
 
 /*
@@ -174,7 +203,10 @@ void mpport_repl(void)
 	if (mpport_claim() != 0) {
 		return;
 	}
-	mpport_init();
+	if (mpport_init() != 0) {
+		mpport_release();
+		return;
+	}
 
 	console64_repl_set_active(1);
 	pyexec_friendly_repl();
@@ -190,7 +222,10 @@ void mpport_run_file(const char *path)
 	if (mpport_claim() != 0) {
 		return;
 	}
-	mpport_init();
+	if (mpport_init() != 0) {
+		mpport_release();
+		return;
+	}
 
 	if (nlr_push(&nlr) == 0) {
 		byte *buf;
@@ -244,7 +279,10 @@ void mpport_run_mowkow(const char *arg)
 	if (mpport_claim() != 0) {
 		return;
 	}
-	mpport_init();
+	if (mpport_init() != 0) {
+		mpport_release();
+		return;
+	}
 	mpport_set_argv(arg);
 
 	if (nlr_push(&nlr) == 0) {
@@ -343,4 +381,3 @@ void nlr_jump_fail(void *val)
 	for (;;) {
 	}
 }
-

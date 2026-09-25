@@ -5,7 +5,6 @@
  * ASCII는 hankaku 폰트로 그린다.
  */
 
-#include <console64.h>
 #include <hangul64.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -17,6 +16,12 @@
 #define HANGUL64_W 16
 
 extern const uint8_t hankaku64[4096];
+static const uint8_t *window_hangul_font;
+
+void window64_set_hangul_font(const uint8_t *font)
+{
+	window_hangul_font = font;
+}
 
 void boxfill64(uint8_t *buf, int32_t xsize, uint8_t color,
 	int32_t x0, int32_t y0, int32_t x1, int32_t y1)
@@ -54,7 +59,7 @@ static void draw_ascii64(uint8_t *buf, uint32_t stride, int32_t x, int32_t y,
 void putstr64(uint8_t *buf, uint32_t stride, int32_t x, int32_t y, uint8_t color,
 	const char *s)
 {
-	const uint8_t *hangul_font = console64_hangul_font();
+	const uint8_t *hangul_font = window_hangul_font;
 	unsigned int unicode;
 	int len;
 
@@ -94,7 +99,7 @@ void make_window64(uint8_t *buf, int32_t xsize, int32_t ysize, const char *title
 
 void make_wtitle64(uint8_t *buf, int32_t xsize, const char *title, int act)
 {
-	static const char closebtn[14][16] = {
+	static const char closebtn[14][17] = {
 		"OOOOOOOOOOOOOOO@",
 		"OQQQQQQQQQQQQQ$@",
 		"OQQQQQQQQQQQQQ$@",

@@ -1,4 +1,7 @@
 #include <asmfunc64.h>
+#ifdef __aarch64__
+#include <arch/arch64.h>
+#endif
 #include <elf64_loader.h>
 #include <fd64.h>
 #include <memory64.h>
@@ -8,6 +11,7 @@
 #define EI_NIDENT 16
 #define ET_EXEC 2
 #define EM_X86_64 62
+#define EM_AARCH64 183
 #define PT_LOAD 1
 #define USER_IMAGE_MIN 0x400000
 #define USER_IMAGE_MAX 0x800000
@@ -64,11 +68,18 @@ static void zero_bytes(void *dst, size_t size)
 
 static int valid_header(const struct ELF64_EHDR *ehdr, size_t file_size)
 {
+	uint16_t machine;
+
+#ifdef __aarch64__
+	machine = EM_AARCH64;
+#else
+	machine = EM_X86_64;
+#endif
 	return file_size >= sizeof(*ehdr) &&
 		ehdr->e_ident[0] == 0x7f && ehdr->e_ident[1] == 'E' &&
 		ehdr->e_ident[2] == 'L' && ehdr->e_ident[3] == 'F' &&
 		ehdr->e_ident[4] == 2 && ehdr->e_ident[5] == 1 &&
-		ehdr->e_type == ET_EXEC && ehdr->e_machine == EM_X86_64 &&
+		ehdr->e_type == ET_EXEC && ehdr->e_machine == machine &&
 		ehdr->e_phentsize == sizeof(struct ELF64_PHDR) &&
 		ehdr->e_phoff + (uint64_t) ehdr->e_phnum * sizeof(struct ELF64_PHDR) <= file_size;
 }
@@ -151,13 +162,26 @@ static int load_image(const char *path, struct PROCESS64 *process)
 	   페이즈 1 전까지는 상주 프로세스가 하나뿐이라 겹칠 상대도 없다. */
 	image_base = align_down64(low, MEMMAN64_PAGE_SIZE);
 	image_size = (size_t) (align_up64(high, MEMMAN64_PAGE_SIZE) - image_base);
+#ifdef __aarch64__
+	zero_bytes((void *) arch64_phys_to_virt(image_base), image_size);
+#else
 	zero_bytes((void *) image_base, image_size);
+#endif
 	for (i = 0; i < ehdr->e_phnum; i++) {
 		if (phdr[i].p_type == PT_LOAD) {
+#ifdef __aarch64__
+			copy_bytes((void *) arch64_phys_to_virt(
+				(uintptr_t) phdr[i].p_vaddr), file + phdr[i].p_offset,
+				(size_t) phdr[i].p_filesz);
+#else
 			copy_bytes((void *) (uintptr_t) phdr[i].p_vaddr, file + phdr[i].p_offset,
 				(size_t) phdr[i].p_filesz);
+#endif
 		}
 	}
+#ifdef __aarch64__
+	arch64_sync_user_code(image_base, image_size);
+#endif
 	process->entry = (uintptr_t) ehdr->e_entry;
 	process->image.base = image_base;
 	process->image.size = image_size;
@@ -170,14 +194,26 @@ int elf64_load_process(const char *path, struct PROCESS64 *process)
 	uint64_t flags;
 	int status;
 
+#ifdef __aarch64__
+	flags = arch64_irq_save();
+#else
 	flags = io_load_rflags();
 	io_cli();
+#endif
 	if (image_owner != NULL) {
+#ifdef __aarch64__
+		arch64_irq_restore(flags);
+#else
 		io_store_rflags(flags);
+#endif
 		return -8;
 	}
 	image_owner = process;
+#ifdef __aarch64__
+	arch64_irq_restore(flags);
+#else
 	io_store_rflags(flags);
+#endif
 	status = load_image(path, process);
 	if (status != 0) {
 		image_owner = NULL;

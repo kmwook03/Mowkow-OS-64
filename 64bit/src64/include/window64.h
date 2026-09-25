@@ -27,6 +27,7 @@
 
 #define WINDOW64_TITLE_H 21
 
+void window64_set_hangul_font(const uint8_t *font);
 void boxfill64(uint8_t *buf, int32_t xsize, uint8_t color,
 	int32_t x0, int32_t y0, int32_t x1, int32_t y1);
 void putstr64(uint8_t *buf, uint32_t stride, int32_t x, int32_t y, uint8_t color,

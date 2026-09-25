@@ -82,6 +82,11 @@
  * 훨씬 많은 초월함수(csqrt, cexp, ...)를 새로 만들어야 한다.
  */
 #define MICROPY_FLOAT_IMPL      (MICROPY_FLOAT_IMPL_DOUBLE)
+#if defined(__aarch64__)
+/* AArch64 long double is IEEE binary128 and would require compiler-rt's
+ * __*tf* helpers. The APPROX formatter stays entirely in hardware double. */
+#define MICROPY_FLOAT_FORMAT_IMPL (MICROPY_FLOAT_FORMAT_IMPL_APPROX)
+#endif
 #define MICROPY_PY_BUILTINS_COMPLEX (0)
 
 /*
@@ -135,14 +140,19 @@
 
 /* REPL 배너에 찍히는 이름 */
 #define MICROPY_HW_BOARD_NAME "머꼬 OS"
+#if defined(__aarch64__)
+#define MICROPY_HW_MCU_NAME   "Cortex-A76"
+#else
 #define MICROPY_HW_MCU_NAME   "x86_64"
+#endif
 
 /*
  * mp_int_t/mp_uint_t는 기본값이 intptr_t/uintptr_t(64비트)라 이 대상에
  * 이미 맞다. 따로 바꿀 것이 없다.
  *
- * MICROPY_NLR_X64도 py/nlr.h가 __x86_64__를 보고 스스로 고르므로,
- * 비지역 복귀(non-local return)에도 setjmp나 libc가 필요 없다.
+ * py/nlr.h가 compiler target을 보고 MICROPY_NLR_X64 또는
+ * MICROPY_NLR_AARCH64를 고르므로 비지역 복귀(non-local return)에도
+ * setjmp나 libc가 필요 없다.
  */
 
 typedef long mp_off_t;

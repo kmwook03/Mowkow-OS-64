@@ -28,7 +28,10 @@ int block64_write(uint64_t lba, uint32_t count, const void *src);
 
 extern const struct BLOCK64_OPS ata64_ops;
 extern const struct BLOCK64_OPS ahci64_ops;
+extern const struct BLOCK64_OPS sdhci64_ops;
 /* AHCI 컨트롤러를 찾아 포트를 열었으면 0 */
 int ahci64_probe(void);
+/* BCM2712 SDHCI에서 부팅 SD 카드를 초기화했으면 0 */
+int sdhci64_probe(void);
 
 #endif

@@ -1,0 +1,10 @@
+arm_64bit=1
+kernel=kernel_2712.img
+kernel_address=0x80000
+os_check=0
+pciex4_reset=0
+enable_uart=1
+uart_2ndstage=1
+framebuffer_depth=32
+hdmi_group=1
+hdmi_mode=16

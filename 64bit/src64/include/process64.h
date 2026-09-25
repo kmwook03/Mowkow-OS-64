@@ -26,6 +26,8 @@ struct PROCESS64 {
 	struct PROCESS64_RANGE image;
 	struct PROCESS64_RANGE stack;
 	struct PROCESS64_RANGE heap;
+	uintptr_t stack_backing;
+	uintptr_t heap_backing;
 	uintptr_t heap_next;
 	uintptr_t saved_kernel_rsp;
 	int exited;

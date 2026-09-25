@@ -10,12 +10,16 @@
  * 않는다.
  */
 #include <asmfunc64.h>
+#ifdef __aarch64__
+#include <arch/arch64.h>
+#endif
 #include <bootinfo64.h>
 #include <console64.h>
 #include <fd64.h>
 #include <fifo64.h>
 #include <hangul64.h>
 #include <keyboard64.h>
+#include <keymap64.h>
 #include <memory64.h>
 #include <mpport64.h>
 #include <mtask64.h>
@@ -25,6 +29,7 @@
 #include <syscall64.h>
 #include <timer64.h>
 #include <utf864.h>
+#include <window64.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -151,6 +156,24 @@ static struct CONSOLE64 *console_self(void)
 	return console_active;
 }
 
+static void console_irq_disable(void)
+{
+#ifdef __aarch64__
+	arch64_irq_disable();
+#else
+	io_cli();
+#endif
+}
+
+static void console_irq_enable(void)
+{
+#ifdef __aarch64__
+	arch64_irq_enable();
+#else
+	io_sti();
+#endif
+}
+
 /*
  * 이벤트 하나만 처리한다. 키였으면 *key에 담고 1. 비어 있으면 태스크를
  * 재운다 -- 자는 동안 다른 태스크가 돈다.
@@ -163,13 +186,13 @@ static int pump_event(struct CONSOLE64 *con, uint16_t *key)
 {
 	struct EVENT64 event;
 
-	io_cli();
+	console_irq_disable();
 	if (fifo64_get(&con->keys, &event) != 0) {
 		task_sleep64(con->task);
-		io_sti();
+		console_irq_enable();
 		return 0;
 	}
-	io_sti();
+	console_irq_enable();
 	if (event.type == EVENT64_KEYBOARD) {
 		*key = (uint16_t) event.data;
 		return 1;
@@ -302,68 +325,24 @@ static void raw_emit_preedit(struct CONSOLE64 *con)
 	raw_queue_push(con, TTY_KIND_PREEDIT, composing_unicode(con));
 }
 
-static const char keymap0[128] = {
-	[0x02] = '1', [0x03] = '2', [0x04] = '3', [0x05] = '4',
-	[0x06] = '5', [0x07] = '6', [0x08] = '7', [0x09] = '8',
-	[0x0a] = '9', [0x0b] = '0', [0x0c] = '-', [0x0d] = '=',
-	[0x10] = 'q', [0x11] = 'w', [0x12] = 'e', [0x13] = 'r',
-	[0x14] = 't', [0x15] = 'y', [0x16] = 'u', [0x17] = 'i',
-	[0x18] = 'o', [0x19] = 'p', [0x1a] = '[', [0x1b] = ']',
-	[0x1e] = 'a', [0x1f] = 's', [0x20] = 'd', [0x21] = 'f',
-	[0x22] = 'g', [0x23] = 'h', [0x24] = 'j', [0x25] = 'k',
-	[0x26] = 'l', [0x27] = ';', [0x28] = '\'',
-	[0x2b] = '\\', [0x2c] = 'z', [0x2d] = 'x', [0x2e] = 'c',
-	[0x2f] = 'v', [0x30] = 'b', [0x31] = 'n', [0x32] = 'm',
-	[0x33] = ',', [0x34] = '.', [0x35] = '/', [0x39] = ' ',
-};
-
-static const char keymap1[128] = {
-	[0x02] = '!', [0x03] = '@', [0x04] = '#', [0x05] = '$',
-	[0x06] = '%', [0x07] = '^', [0x08] = '&', [0x09] = '*',
-	[0x0a] = '(', [0x0b] = ')', [0x0c] = '_', [0x0d] = '+',
-	[0x10] = 'Q', [0x11] = 'W', [0x12] = 'E', [0x13] = 'R',
-	[0x14] = 'T', [0x15] = 'Y', [0x16] = 'U', [0x17] = 'I',
-	[0x18] = 'O', [0x19] = 'P', [0x1a] = '{', [0x1b] = '}',
-	[0x1e] = 'A', [0x1f] = 'S', [0x20] = 'D', [0x21] = 'F',
-	[0x22] = 'G', [0x23] = 'H', [0x24] = 'J', [0x25] = 'K',
-	[0x26] = 'L', [0x27] = ':', [0x28] = '"',
-	[0x2b] = '|', [0x2c] = 'Z', [0x2d] = 'X', [0x2e] = 'C',
-	[0x2f] = 'V', [0x30] = 'B', [0x31] = 'N', [0x32] = 'M',
-	[0x33] = '<', [0x34] = '>', [0x35] = '?', [0x39] = ' ',
-};
-
 static char translate_key(struct CONSOLE64 *con, uint8_t scancode)
 {
-	char c;
-
-	if (con->lang_hangul != 0 && keyboard64_shift() != 0) {
-		switch (scancode) {
-		case 0x10: return 'Q'; /* ㅃ */
-		case 0x11: return 'W'; /* ㅉ */
-		case 0x12: return 'E'; /* ㄸ */
-		case 0x13: return 'R'; /* ㄲ */
-		case 0x14: return 'T'; /* ㅆ */
-		case 0x18: return 'O'; /* ㅒ */
-		case 0x19: return 'P'; /* ㅖ */
-		default:
-			c = keymap0[scancode];
-			if ((c >= 'a' && c <= 'z') || c == ' ') {
-				return c;
-			}
-			return keymap1[scancode];
-		}
-	}
-	return keyboard64_shift() != 0 ? keymap1[scancode] : keymap0[scancode];
+	return keymap64_translate(scancode, keyboard64_shift(),
+		con->lang_hangul);
 }
 
 static void serial_putc(char c)
 {
+#ifdef __aarch64__
+	(void) c;
+#else
 	if (c == '\n') {
 		serial_putc('\r');
 	}
 	while ((io_in8(0x3f8 + 5) & 0x20) == 0) {
 	}
 	io_out8(0x3f8, (uint8_t) c);
+#endif
 }
 
 static void fill_rect(struct CONSOLE64 *con, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t color)
@@ -632,6 +611,10 @@ static int cho_cannot_be_jong(int cho)
 
 static void process_hangul_key(struct CONSOLE64 *con, char key)
 {
+	struct HANGUL64_FEED_RESULT feed;
+	unsigned int offset;
+	unsigned int unicode;
+	int length;
 	int cho;
 	int jung;
 	int jong;
@@ -639,6 +622,35 @@ static void process_hangul_key(struct CONSOLE64 *con, char key)
 	int next_cho;
 	int first_jong;
 	int second_jong;
+
+	/*
+	 * Raw TTY is the path used by applications such as nano.  Keep its
+	 * committed/preedit protocol, but drive it with the architecture-neutral
+	 * automaton also used by the AArch64 USB input path.
+	 */
+	if (con->raw_mode != 0) {
+		if (hangul64_feed(&con->composing, key, &feed) != 0) {
+			hangul64_init(&con->composing);
+			raw_emit_preedit(con);
+			return;
+		}
+		offset = 0;
+		while (offset < feed.committed_length) {
+			unicode = utf8_to_unicode64(feed.committed + offset, &length);
+			if (length <= 0 || offset + (unsigned int) length >
+					feed.committed_length) {
+				break;
+			}
+			raw_queue_push(con, TTY_KIND_CHAR, unicode);
+			offset += (unsigned int) length;
+		}
+		if (feed.passthrough != '\0') {
+			raw_queue_push(con, TTY_KIND_CHAR,
+				(unsigned char) feed.passthrough);
+		}
+		raw_emit_preedit(con);
+		return;
+	}
 
 	cho = hangul64_key_to_cho(key);
 	jung = hangul64_key_to_jung(key);
@@ -866,9 +878,46 @@ static void clear_screen(struct CONSOLE64 *con)
    명령어"로 넘어간다. */
 static int run_program(struct CONSOLE64 *con, const char *cmdline)
 {
+	char elf_cmdline[CONSOLE_INPUT_MAX + 1];
+	size_t command_len;
+	size_t line_len;
+	size_t i;
+	int has_extension;
 	int status;
 
 	status = process64_exec_file(cmdline, cmdline, con);
+	/* x86_64 이미지는 앱을 확장자 없는 이름으로 넣지만, Pi의 FAT 파티션에는
+	   빌드 산출물을 HELLO.ELF처럼 복사하기도 한다. 둘 다 `hello`로 실행되게
+	   첫 토큰에 점이 없을 때만 .elf를 붙여 한 번 더 찾는다. */
+	if (status == -2) {
+		command_len = 0;
+		has_extension = 0;
+		while (cmdline[command_len] != '\0' &&
+				cmdline[command_len] != ' ') {
+			if (cmdline[command_len] == '.') {
+				has_extension = 1;
+			}
+			command_len++;
+		}
+		line_len = command_len;
+		while (cmdline[line_len] != '\0') {
+			line_len++;
+		}
+		if (has_extension == 0 && command_len != 0 &&
+				line_len + 4 < sizeof(elf_cmdline)) {
+			for (i = 0; i < command_len; i++) {
+				elf_cmdline[i] = cmdline[i];
+			}
+			elf_cmdline[command_len + 0] = '.';
+			elf_cmdline[command_len + 1] = 'e';
+			elf_cmdline[command_len + 2] = 'l';
+			elf_cmdline[command_len + 3] = 'f';
+			for (i = command_len; i <= line_len; i++) {
+				elf_cmdline[i + 4] = cmdline[i];
+			}
+			status = process64_exec_file(elf_cmdline, elf_cmdline, con);
+		}
+	}
 	if (status == -2) {
 		return 0;
 	}
@@ -892,7 +941,11 @@ static void execute_command(struct CONSOLE64 *con)
 		return;
 	}
 	if (str_eq(con->input_line, "help")) {
+#ifdef __aarch64__
+		puts_con(con, "commands: help clear mem tasks ls 목록 type readme.txt APP [ARGS] py py FILE.PY 머꼬 [FILE] xwindow 창 new 새창\n");
+#else
 		puts_con(con, "commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY xwindow 창 new 새창\n");
+#endif
 	} else if (str_eq(con->input_line, "xwindow") || str_eq(con->input_line, "window") ||
 			str_eq(con->input_line, "창")) {
 		/* 전체 화면 토글은 콘솔 0 전용이다 -- 화면 크기 버퍼를 가진 건
@@ -904,10 +957,12 @@ static void execute_command(struct CONSOLE64 *con)
 		}
 	} else if (str_eq(con->input_line, "clear") || str_eq(con->input_line, "지우기")) {
 		clear_screen(con);
+#ifndef __aarch64__
 	} else if (str_eq(con->input_line, "ticks")) {
 		puts_con(con, "ticks ");
 		print_uint64(con, timerctl64.count);
 		puts_con(con, "\n");
+#endif
 	} else if (str_eq(con->input_line, "mem") || str_eq(con->input_line, "메모리")) {
 		uintptr_t addr;
 
@@ -1016,6 +1071,7 @@ struct CONSOLE64 *console64_active(void)
 void console64_set_hangul_font(const uint8_t *font)
 {
 	hangul_font = font;
+	window64_set_hangul_font(font);
 }
 
 const uint8_t *console64_hangul_font(void)
@@ -1048,9 +1104,9 @@ void console64_attach_sheet(struct CONSOLE64 *con, struct SHEET64 *sht,
 	clear_screen(con);
 }
 
-void console64_init(const struct BOOTINFO64 *boot_info)
+static void console64_init_with_sheet(const struct BOOTINFO64 *boot_info,
+	struct SHEET64 *sht)
 {
-	struct SHEET64 *sht;
 	struct CONSOLE64 *con = console_active;
 
 	con->vram = (uint8_t *) boot_info->vram;
@@ -1063,18 +1119,32 @@ void console64_init(const struct BOOTINFO64 *boot_info)
 	con->input_len = 0;
 	con->lang_hangul = 1;
 	hangul64_init(&con->composing);
-	/* 컴포지터가 뜨면 콘솔은 전체 화면 창 하나가 된다 (로드맵 decision 3b).
-	   실패하면 지금까지처럼 LFB에 직접 그린다. */
-	sht = gui64_init(boot_info);
 	if (sht != NULL) {
 		gui64_bind_console(sht, con);
 		console64_attach_sheet(con, sht, 0, 0, con->width, con->height);
 	} else {
 		clear_screen(con);
 	}
+#ifdef __aarch64__
+	console64_puts("머꼬 OS AArch64 콘솔\n");
+#else
 	console64_puts("머꼬 OS x86_64 콘솔\n");
+#endif
 	console64_puts("한글 입력이 기본입니다. Shift+Space로 영어 입력으로 전환합니다.\n");
 	prompt(con);
+}
+
+void console64_init(const struct BOOTINFO64 *boot_info)
+{
+	/* 컴포지터가 뜨면 콘솔은 전체 화면 창 하나가 된다 (로드맵 decision 3b).
+	   실패하면 지금까지처럼 LFB에 직접 그린다. */
+	console64_init_with_sheet(boot_info, gui64_init(boot_info));
+}
+
+void console64_init_on_sheet(const struct BOOTINFO64 *boot_info,
+	struct SHEET64 *sheet)
+{
+	console64_init_with_sheet(boot_info, sheet);
 }
 
 void console64_puts(const char *s)
@@ -1150,7 +1220,7 @@ uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 			}
 			continue;
 		}
-		c = keyboard64_shift() != 0 ? keymap1[key] : keymap0[key];
+		c = keymap64_translate((uint8_t) key, keyboard64_shift(), 0);
 		if (c == '\0') {
 			continue;
 		}
@@ -1226,6 +1296,53 @@ static void raw_process_key(struct CONSOLE64 *con, uint16_t key)
 		process_hangul_key(con, c);
 	} else {
 		not_korean(con, c);         /* raw에서는 큐로 밀고 에코하지 않는다 */
+	}
+}
+
+/*
+ * 명령 실행기가 아직 연결되지 않은 초기 포트에서도 실제 콘솔 줄 편집기와
+ * 한글 조합기를 검증할 수 있는 입력 경로다. Enter는 현재 줄을 화면에 확정하고
+ * 새 프롬프트만 연다. 완전한 console64_process_key()는 기존처럼 명령을 실행한다.
+ */
+void console64_process_input_key(struct CONSOLE64 *con, uint16_t key)
+{
+	char c;
+
+	if (con == NULL || keyboard64_track_modifier(key) != 0) {
+		return;
+	}
+	if (con->raw_mode != 0) {
+		raw_process_key(con, key);
+		return;
+	}
+	if (normalize_ext_key(&key) == 0 || (key & 0x80U) != 0) {
+		return;
+	}
+	if (key == 0x1cU) {
+		flush_composing(con);
+		put_utf8_char(con, "\n", 1);
+		con->input_len = 0;
+		con->line_full_warned = 0;
+		prompt(con);
+		return;
+	}
+	if (key == 0x0eU) {
+		console_backspace(con);
+		return;
+	}
+	c = translate_key(con, (uint8_t) key);
+	if (c == '\0') {
+		return;
+	}
+	if (keyboard64_shift() != 0 && c == ' ') {
+		flush_composing(con);
+		con->lang_hangul ^= 1;
+		return;
+	}
+	if (con->lang_hangul != 0 && hangul_font != NULL) {
+		process_hangul_key(con, c);
+	} else {
+		not_korean(con, c);
 	}
 }
 
@@ -1331,6 +1448,15 @@ static void console_task_main(void)
 	}
 }
 
+static void console_input_task_main(void)
+{
+	struct CONSOLE64 *con = console_self();
+
+	for (;;) {
+		console64_process_input_key(con, wait_key_event(con));
+	}
+}
+
 void console64_request_close(struct CONSOLE64 *con)
 {
 	if (con == NULL || con->task == NULL || con->close_requested != 0) {
@@ -1427,11 +1553,44 @@ void console64_destroy(struct CONSOLE64 *con)
 
 void console64_post_key(struct CONSOLE64 *con, uint16_t key)
 {
+	(void) console64_post_input_key(con, key);
+}
+
+void console64_input_queue_init(struct CONSOLE64 *con)
+{
+	if (con != NULL) {
+		fifo64_init(&con->keys, CONSOLE64_KEY_BUF, con->key_buf, NULL);
+	}
+}
+
+int console64_post_input_key(struct CONSOLE64 *con, uint16_t key)
+{
 	struct EVENT64 event;
 
+	if (con == NULL || con->keys.buf == NULL || con->keys.size == 0U) {
+		return -1;
+	}
 	event.type = EVENT64_KEYBOARD;
 	event.data = key;
-	fifo64_put(&con->keys, event);
+	return fifo64_put(&con->keys, event);
+}
+
+int console64_drain_input(struct CONSOLE64 *con)
+{
+	struct EVENT64 event;
+	int count;
+
+	if (con == NULL || con->keys.buf == NULL || con->keys.size == 0U) {
+		return -1;
+	}
+	count = 0;
+	while (fifo64_get(&con->keys, &event) == 0) {
+		if (event.type == EVENT64_KEYBOARD) {
+			console64_process_input_key(con, (uint16_t) event.data);
+			count++;
+		}
+	}
+	return count;
 }
 
 int console64_start_task(struct CONSOLE64 *con)
@@ -1448,6 +1607,30 @@ int console64_start_task(struct CONSOLE64 *con)
 	con->task = task;
 	fifo64_init(&con->keys, CONSOLE64_KEY_BUF, con->key_buf, task);
 	if (task_set_entry64(task, console_task_main, stack, CONSOLE64_STACK_SIZE) != 0) {
+		con->task = NULL;
+		return -1;
+	}
+	task_run64(task, 0, 2);
+	return 0;
+}
+
+int console64_start_input_task(struct CONSOLE64 *con)
+{
+	struct TASK64 *task;
+	uintptr_t stack;
+
+	if (con == NULL || con->task != NULL) {
+		return -1;
+	}
+	task = task_alloc64();
+	stack = memman64_alloc_4k(&memman64, CONSOLE64_STACK_SIZE);
+	if (task == NULL || stack == 0) {
+		return -1;
+	}
+	con->task = task;
+	fifo64_init(&con->keys, CONSOLE64_KEY_BUF, con->key_buf, task);
+	if (task_set_entry64(task, console_input_task_main, stack,
+			CONSOLE64_STACK_SIZE) != 0) {
 		con->task = NULL;
 		return -1;
 	}

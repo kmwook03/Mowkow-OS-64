@@ -62,7 +62,14 @@ int block64_init(void)
 	if (ops != NULL) {
 		return 0;
 	}
+#ifdef __aarch64__
+	if (sdhci64_probe() != 0) {
+		return -1;
+	}
+	ops = &sdhci64_ops;
+#else
 	ops = ahci64_probe() == 0 ? &ahci64_ops : &ata64_ops;
+#endif
 	find_partition();
 	return 0;
 }

@@ -8,9 +8,22 @@
 #include "py/mphal.h"
 
 #include <asmfunc64.h>
+#ifdef __aarch64__
+#include <arch/arch64.h>
+#endif
 #include <console64.h>
+#include <mpport64.h>
 #include <string.h>
 #include <timer64.h>
+
+uint64_t mpport_ticks_100hz(void)
+{
+#ifdef __aarch64__
+	return arch64_timer_ticks();
+#else
+	return timerctl64.count;
+#endif
+}
 
 int mp_hal_stdin_rx_chr(void)
 {
@@ -37,17 +50,25 @@ void mp_hal_stdout_tx_str(const char *str)
 
 mp_uint_t mp_hal_ticks_ms(void)
 {
-	return timerctl64.count * 10;
+	return (mp_uint_t) (mpport_ticks_100hz() * 10);
 }
 
 void mp_hal_delay_ms(mp_uint_t ms)
 {
 	uint64_t target;
 
-	target = timerctl64.count + (ms / 10 + 1);
-	while (timerctl64.count < target) {
+
+#ifdef __aarch64__
+	target = mpport_ticks_100hz() + (ms + 9) / 10;
+	while (mpport_ticks_100hz() < target) {
+		arch64_halt_with_irq();
+	}
+#else
+	target = mpport_ticks_100hz() + (ms + 9) / 10;
+	while (mpport_ticks_100hz() < target) {
 		io_hlt();
 	}
+#endif
 }
 
 /*

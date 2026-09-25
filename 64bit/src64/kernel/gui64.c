@@ -246,7 +246,7 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	screen_size = (size_t) xsize * (size_t) ysize;
 
 	gui_ctl = shtctl64_init(&memman64, (uint8_t *) boot_info->vram,
-		xsize, ysize, stride);
+		xsize, ysize, stride, boot_info->bpp);
 	if (gui_ctl == NULL) {
 		return NULL;
 	}
@@ -279,6 +279,8 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	gui_back->vy0 = 0;
 
 	sheet64_setbuf(gui_console, gui_console_buf, xsize, ysize, -1);
+	boxfill64(gui_console_buf, xsize, COL64_000000,
+		0, 0, xsize - 1, ysize - 1);
 	gui_console->vx0 = 0;
 	gui_console->vy0 = 0;
 	gui_mode = GUI64_MODE_FULL;
@@ -485,10 +487,13 @@ struct CONSOLE64 *gui64_focused_console(void)
 {
 	struct GUI64_WIN *win;
 
-	if (gui_ctl == NULL || gui_win_count == 0) {
+	if (gui_ctl == NULL) {
 		/* 컴포지터가 못 떴다 -- 콘솔이 LFB에 직접 그리는 상태다.
 		   창이 없으니 포커스도 없고, 키는 부팅 콘솔로 간다. */
 		return console64_active();
+	}
+	if (gui_win_count == 0) {
+		return NULL;
 	}
 	win = find_win(gui_key_win != NULL ? gui_key_win : gui_console);
 	if (win == NULL || win->is_console == 0) {

@@ -1,6 +1,8 @@
 #ifndef MOWKOW64_SYSCALL64_H
 #define MOWKOW64_SYSCALL64_H
 
+#include <stdint.h>
+
 #define SYS_EXIT   1
 #define SYS_WRITE  2
 #define SYS_READ   3
@@ -54,5 +56,8 @@
 #define TTY_MOD_SHIFT 0x01
 #define TTY_MOD_CTRL  0x02
 #define TTY_MOD_ALT   0x04
+
+struct INTERRUPT_FRAME64;
+uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame);
 
 #endif
