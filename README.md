@@ -41,15 +41,20 @@
 ### 목차
 * [0. 마이그레이션 요약](#0-마이그레이션-요약)
 * [1. 64bit 빌드 시스템](#1-64bit-빌드-시스템)
-* [2. 64bit 빌드 및 실행 방법](#2-64bit-빌드-및-실행-방법)
+* [2. x86 빌드 및 실행 방법](#2-x86-빌드-및-실행-방법)
 
     * [2-1. 준비물](#2-1-준비물)
     * [2-2. 빌드와 실행](#2-2-빌드와-실행)
     * [2-3. 부팅이 이상할 때](#2-3-부팅이-이상할-때)
-* [3. 64bit 명령어 목록](#3-64bit-명령어-목록)
-* [4. 64bit 시스템 구조](#4-64bit-시스템-구조)
-* [5. 진행 상황](#5-진행-상황)
-* [6. 주의할 점](#6-주의할-점)
+* [3. Raspberry Pi 5 이미지 빌드 및 부팅 방법](#3-raspberry-pi-5-이미지-빌드-및-부팅-방법)
+
+    * [3-1. 준비물](#3-1-준비물)
+    * [3-2. 빌드](#3-2-빌드)
+    * [3-3. SD 카드 준비와 부팅](#3-3-sd-카드-준비와-부팅)
+* [4. 64bit 명령어 목록](#4-64bit-명령어-목록)
+* [5. 64bit 시스템 구조](#5-64bit-시스템-구조)
+* [6. 진행 상황](#6-진행-상황)
+* [7. 주의할 점](#7-주의할-점)
 
 ---
 
@@ -88,10 +93,10 @@
 * 저장 장치: AHCI(SATA)를 먼저 찾고, 없으면 ATA PIO를 사용
 * 창 화면: `창`/`window` 명령어를 입력하면 GUI로 전환
 * 파이썬: MicroPython이 커널에 함께 링크되어 있어 `py` 명령어로 사용 가능
-* 머꼬: 원본 파이썬 소스를 그대로 이식하여 `머꼬` 명령어로 사용 가능 ([4-8](#4-8-머꼬-인터프리터))
+* 머꼬: 원본 파이썬 소스를 그대로 이식하여 `머꼬` 명령어로 사용 가능 ([5-8](#5-8-머꼬-인터프리터))
 * 앱: 나노 편집기를 비롯한 ELF64 응용 프로그램
 
-## 2. 64bit 빌드 및 실행 방법
+## 2. x86 빌드 및 실행 방법
 ### 2-1. 준비물
 64bit 트리는 교재 도구가 아니라 GNU 크로스 툴체인(GCC 13.1.0, binutils 2.40)을 사용합니다.
 
@@ -173,9 +178,80 @@ hangul font=loaded
 위 출력은 부팅마다 수행되는 자체 점검입니다.
 멈춘 위치가 깨진 위치입니다. `sectors=0`은 오류가 아니라, 이미 디스크에 쓰기가 끝나서 내보낼 것이 없다는 뜻입니다.
 
-## 3. 64bit 명령어 목록
+## 3. Raspberry Pi 5 이미지 빌드 및 부팅 방법
 
-### 3-1. 애플리케이션 실행
+Raspberry Pi 5 포트는 펌웨어가 `0x80000` 주소에 직접 적재하는 AArch64 flat image를 사용합니다. 현재 빌드는 SD 카드 전체에 쓰는
+raw 이미지가 아니라, FAT32 부트 파티션에 복사할 파일 묶음을 만들기 때문에 `img64/mowkow-pi5.img`를 찾거나 `dd`로 기록하면 안 됩니다.
+
+### 3-1. 준비물
+
+* Raspberry Pi 5, microSD 카드, HDMI 디스플레이
+* 부팅 전에 연결한 USB 키보드, 마우스
+* `aarch64-none-elf-gcc`, `aarch64-none-elf-ld`,
+  `aarch64-none-elf-objcopy`
+* `make`, `python3`
+* 초기화된 `third_party/micropython` 서브모듈
+
+처음 clone한 저장소라면 서브모듈부터 준비합니다.
+
+```bash
+git submodule update --init --recursive
+```
+
+### 3-2. 빌드
+
+저장소 루트에서 다음 명령을 실행합니다.
+
+```bash
+make aarch64
+```
+
+빌드가 끝나면 다음 두 산출물이 생깁니다.
+
+* `build64/aarch64/kernel_2712.img`: Raspberry Pi 펌웨어가 적재하는 커널 이미지
+* `build64/aarch64-boot/`: SD 카드 부트 파티션에 복사할 완성 파일 묶음
+
+`aarch64-boot/`에는 `config.txt`, `kernel_2712.img`, 한글 글꼴, AArch64 앱, MicroPython 및 머꼬 스크립트가 함께 들어갑니다. staging만 다시 동기화하려면 `make aarch64-stage`, AArch64 산출물을 지우려면 `make clean-a64`를 사용합니다.
+
+기본 경로에서 크로스 툴체인을 찾지 못하면 도구 경로를 지정할 수 있습니다.
+
+```bash
+make aarch64 \
+  A64_CC=/path/to/aarch64-none-elf-gcc \
+  A64_LD=/path/to/aarch64-none-elf-ld \
+  A64_OBJCOPY=/path/to/aarch64-none-elf-objcopy
+```
+
+### 3-3. SD 카드 준비와 부팅
+
+1. SD 카드에 MBR 파티션 테이블과 FAT32 LBA(type `0x0c`) 부트 파티션을 준비합니다. 데이터가 지워질 수 있으므로 장치 이름을 반드시 확인하고, 가능하면 비어 있는 전용 카드를 사용합니다.
+2. FAT32 부트 파티션을 마운트한 뒤 `build64/aarch64-boot/` 안의 파일을 디렉터리 자체가 아니라 파티션 루트에 모두 복사합니다.
+
+   ```bash
+   cp -R build64/aarch64-boot/. /path/to/mounted-boot-partition/
+   sync
+   ```
+
+3. 파티션을 안전하게 마운트 해제하고 SD 카드를 Raspberry Pi 5에 넣습니다.
+4. HDMI와 USB 키보드(필요하면 마우스)를 먼저 연결한 다음 전원을 넣습니다.
+
+Pi 5의 부트 펌웨어는 EEPROM에 있으므로 `bootcode.bin`, `start.elf`, UEFI 파일은 필요하지 않습니다. 저장소의 `config.txt`는 `kernel_2712.img`를 `0x80000`에 적재하고, RP1 USB를 위해 PCIe 링크를 유지하도록 설정되어 있습니다.
+
+정상 부팅 조건:
+
+* Mowkow OS 콘솔 출력
+* 녹색 ACT LED가 0.5초 간격으로 점멸
+
+화면이 나오지 않으면 먼저 다음을 확인합니다.
+
+* `config.txt`와 `kernel_2712.img`가 하위 디렉터리가 아닌 FAT32 루트에 있는지
+* staging의 `H04.FNT`와 앱·스크립트 파일을 빠짐없이 복사했는지
+* USB 키보드를 전원을 넣기 전에 연결했는지
+* ACT LED가 일정한 heartbeat 대신 반복적인 panic 점멸 패턴을 보이는지
+
+## 4. 64bit 명령어 목록
+
+### 4-1. 애플리케이션 실행
 애플리케이션 이름만 입력하면 실행됩니다.
 
 ```bash
@@ -191,7 +267,7 @@ hangul font=loaded
 
 내장 명령이 아닌 낱말이 들어오면 FAT32에서 같은 이름의 실행 파일을 찾고, 없으면 `알 수 없는 명령어`라고 알립니다.
 
-### 3-2. CLI-GUI 전환
+### 4-2. CLI-GUI 전환
 ```bash
 # 한글 명령어
 > 창
@@ -213,7 +289,7 @@ GUI 모드에서는 마우스로 제목 표시줄을 끌어 창을 옮기거나,
 콘솔마다 자기 태스크가 있어서 창을 닫아도(숨겨도) 계속 실행됩니다.
 바탕화면 아이콘으로도 새 콘솔을 띄울 수 있고, 작업 표시줄에서 숨긴 콘솔을 되살릴 수 있습니다.
 
-### 3-3. 파이썬
+### 4-3. 파이썬
 ```bash
 # REPL 시작 (Ctrl-D로 나감)
 > py
@@ -222,7 +298,7 @@ GUI 모드에서는 마우스로 제목 표시줄을 끌어 창을 옮기거나,
 > py TEST.PY
 ```
 
-### 3-4. 머꼬
+### 4-4. 머꼬
 ```bash
 # REPL 시작 (빈 줄, Ctrl-C, Ctrl-D 중 아무거나로 나감)
 > 머꼬
@@ -245,7 +321,7 @@ GUI 모드에서는 마우스로 제목 표시줄을 끌어 창을 옮기거나,
 커널 콘솔과 같은 명령줄 인터페이스를 사용하므로 동일하게 한글을 입력할 수 있습니다.
 머꼬 실행 환경을 한 번 만든 뒤로는 `library_kor.scm`을 다시 읽지 않으므로 두 번째부터는 바로 뜹니다.
 
-### 3-5. 기타 명령어
+### 4-5. 기타 명령어
 ```bash
 > help
 > 목록 / ls # 파일 목록
@@ -257,8 +333,8 @@ GUI 모드에서는 마우스로 제목 표시줄을 끌어 창을 옮기거나,
 > 실행 / run # 실행 파일 실행 (예: run HELLO)
 ```
 
-## 4. 64bit 시스템 구조
-### 4-1. 부트 시퀀스
+## 5. 64bit 시스템 구조
+### 5-1. 부트 시퀀스
 부트 섹터 512바이트 안에 FAT32 BPB와 롱 모드 진입 코드를 함께 넣을 수 없어 1단계는 BPB와 디스크 읽기만 담고 나머지를 2단계로 넘겼습니다.
 
 ```
@@ -296,7 +372,7 @@ boot64.asm (1단계, 부트 섹터 512B, LBA 0)
 11. 이벤트 루프
 ```
 
-### 4-2. 메모리 배치
+### 5-2. 메모리 배치
 32bit에서 하드코딩되어 있던 주소를 64bit는 정책선 세 개로 줄였습니다.
 
 | 구간 | 용도 | 비고 |
@@ -307,7 +383,7 @@ boot64.asm (1단계, 부트 섹터 512B, LBA 0)
 
 할당기는 32bit와 같은 free-list 방식이지만, 콘솔마다 태스크가 생기면서 타이머 인터럽트가 free-list 조작 중간에 선점할 수 있게 되었기 때문에 모든 조작이 `io_cli`/`io_store_rflags` 임계 구역 안에서 수행됩니다.
 
-### 4-3. 태스크 전환
+### 5-3. 태스크 전환
 32bit는 태스크마다 TSS와 LDT 디스크립터를 GDT에 만들고 `farjmp` 한 번으로 전환했습니다.
 
 하지만 롱 모드에는 하드웨어 태스크 전환이 없기 때문에 `mtask64.c`가 직접 전환합니다.
@@ -326,7 +402,7 @@ context_switch64:          ; rdi = 현재 문맥, rsi = 다음 문맥
 * `task_kill64` — 콘솔 창을 닫으면 태스크를 죽이고 스택을 반납합니다. 자기 자신은 죽이지 않습니다(돌아갈 스택이 사라지기 때문).
 * `struct TASK64`의 `process`/`is_user`/`kernel_rsp` — 시스템 콜이 현재 실행 중인 프로세스를 태스크에서 찾습니다.
 
-### 4-4. 유저 프로그램 ABI
+### 5-4. 유저 프로그램 ABI
 32bit 앱은 `.hrb` 형식이었고, 태스크마다 만든 LDT 세그먼트의 베이스와 리밋이 앱을 커널에서 격리했습니다.
 그러나 롱 모드에는 그 수단이 없고 페이징 격리도 아직 없기 때문에 커널이 유저 포인터를 직접 검사하여 영역 침범을 방지합니다.
 (페이징 격리는 앞으로 추가할 예정입니다.)
@@ -351,7 +427,7 @@ int process64_user_range_valid(const void *ptr, size_t size)
 
 `SYS_TTY`는 나노 같은 전체 화면 편집기를 위한 raw 모드(줄 편집과 에코 끄기)를 제공합니다. `TTY_READKEY`가 돌려주는 64비트 값에 한글 조합 중 상태가 함께 실립니다.
 
-### 4-5. 저장 장치 계층
+### 5-5. 저장 장치 계층
 ```
 fd64.c FAT32 + VFAT 긴 이름
     ↓
@@ -365,7 +441,7 @@ ahci64.c / ata64.c
 전송 계층을 추가하고 싶다면 `struct BLOCK64_OPS`만 채우면 됩니다.
 그 위 계층은 손대지 않아도 됩니다.
 
-### 4-6. 디스크 배치 (64MiB 이미지)
+### 5-6. 디스크 배치 (64MiB 이미지)
 ```
 LBA 0           부트 섹터 (FAT32 BPB)
 LBA 1           FSInfo
@@ -381,7 +457,7 @@ LBA 3026        데이터 영역, 클러스터 2 = 루트 디렉터리
 이 배치는 `64bit/tools/mkfat32_64.py` 한 곳에만 적혀 있고, Makefile과 부트 섹터가 해당 파일에서 값을 읽습니다.
 배치를 바꿔야 하면 Makefile이나 BPB를 직접 고치지 말고, `64bit/tools/mkfat32_64.py`를 고쳐야 합니다.
 
-### 4-7. GUI와 다중 콘솔
+### 5-7. GUI와 다중 콘솔
 시트 합성기(`sheet64.c`)는 32bit `sheet.c`를 그대로 이식했고, 실질적인 차이는 `stride` 필드뿐입니다. VBE 모드에서는 한 행의 바이트 수가 가로 픽셀 수와 다를 수 있어 분리했고, 부팅 자체 점검이 `stride > xsize` 경로를 일부러 만들어 검사합니다.
 
 다중 콘솔을 지원하기 위해 콘솔의 상태를 `struct CONSOLE64`에 저장하고, 콘솔마다 태스크, 256KiB 스택, 키 FIFO를 둡니다. 콘솔은 한 번에 최대 4개 띄울 수 있습니다.
@@ -394,7 +470,7 @@ LBA 3026        데이터 영역, 클러스터 2 = 루트 디렉터리
 
 동시성은 타이머 인터럽트가 유일한 선점 원인이므로 `io_cli`/`io_sti` 임계 구역으로 충분합니다. 뮤텍스가 필요하지 않다고 판단해 트리에 두지 않고 Giant Lock 하나로 처리했습니다. 대신 임계 구역 안에서 `task_sleep64`를 부르지 않도록 합니다.
 
-### 4-8. 머꼬 인터프리터
+### 5-8. 머꼬 인터프리터
 64bit 머꼬 OS는 원본 파이썬 소스를 커널에 링크된 MicroPython에서 실행합니다.
 
 ```
@@ -430,7 +506,7 @@ LBA 3026        데이터 영역, 클러스터 2 = 루트 디렉터리
 
 세션마다 그 환경 위에 새 환경을 하나 덮어쓰기 때문에 앞 세션에서 만든 정의는 다음 세션에 보이지 않지만, 라이브러리는 다시 계산하지 않고 물려받습니다.
 
-### 4-9. 빌드 구성
+### 5-9. 빌드 구성
 Makefile은 트리별로 나뉘어 있습니다.
 
 ```
@@ -441,54 +517,63 @@ common/mk/config.mk        디렉터리, 도구, 컴파일 옵션 (공통)
 64bit/mk/x86_64.mk         64bit 빌드 규칙
 ```
 
-### 4-10. 프로젝트 디렉터리
+### 5-10. 프로젝트 디렉터리
 ```
 .
-├── 📂common            # 두 트리가 함께 쓰는 것
-│   ├── 📂mk                # config.mk (디렉터리, 도구, 컴파일 옵션)
-│   └── 📂font              # 비트맵 글꼴 (H04.FNT, E2.FNT, hankaku)
-├── 📂32bit             # 32비트 트리
-│   ├── 📂src               # 32비트 커널
-│   ├── 📂app               # 32비트 응용 프로그램
-│   ├── 📂mk                # x86.mk (32비트 빌드 규칙)
-│   ├── 📂tools             # 교재 툴체인 (nask gocc1 obj2bim bim2hrb edimg)
-│   ├── 📂testfiles         # 이미지에 넣는 시험용 파일
-│   └── 📂ASM               # 어셈블리 자료
-├── 📂64bit             # 64비트 트리
-│   ├── 📂mk                # x86_64.mk, micropython.mk (64비트 빌드 규칙)
-│   ├── 📂tools             # mkfat32_64.py(이미지 생성), mowkow_parity.py(병행 검사)
-│   ├── 📂src64             # 64비트 커널
-│   │   ├── 📂boot              # boot64.asm(1단계), loader64.asm(2단계)
-│   │   ├── 📂drivers           # ahci64 ata64 block64 pci64 graphic64
-│   │   │                       # keyboard64 mouse64 timer64 int64
-│   │   ├── 📂kernel            # kernel64 console64 fd64 cache64 memory64
-│   │   │                       # mtask64 dsctbl64 sheet64 window64 gui64
-│   │   │                       # process64 syscall64 elf64_loader
-│   │   ├── 📂lib               # hangul64 utf864 fifo64 kstring64
-│   │   ├── 📂mpport            # MicroPython 포팅 계층
-│   │   └── 📂include           # 헤더 (모든 이름에 64가 붙음)
-│   ├── 📂app64             # 64비트 응용 프로그램
-│   │   ├── 📂crt               # 공용 런타임 (crt0, 시스템 콜, 문자열, malloc)
-│   │   ├── 📁cat               # 파일 내용 출력
-│   │   ├── 📁hello             # 최소 예제
-│   │   ├── 📁ktest             # 키 입력 점검
-│   │   ├── 📁mtest             # 메모리 할당 점검
-│   │   ├── 📁wtest             # FAT32 쓰기 점검
-│   │   └── 📁나노              # 나노 편집기
-│   └── 📂py64              # 머꼬 인터프리터 (파이썬 판)
-│       ├── 📄smoke.py          # 이식 부품 점검 (병행 검사가 돌림)
-│       └── 📂머꼬
-│           ├── 📄mowkow.py         # 진입점 (업스트림 main.py 대신)
-│           ├── 📄_compat.py        # MicroPython에 없는 CPython 동작
-│           ├── 📄_parse.py _eval.py _data.py _error.py  # 업스트림 사본
-│           ├── 📄library_kor.scm   # 머꼬 라이브러리
-│           ├── 📄*.mk              # 시험용 머꼬 프로그램
-│           └── 📂upstream          # 업스트림 원본 (커밋 1dae112)
+├── Makefile                    # 전체 빌드 진입점과 help/info 목표
+├── arch.md                     # Raspberry Pi 5 AArch64 포팅 설계와 검증 기록
+├── 📂common                    # 32/64비트 트리가 함께 쓰는 파일
+│   ├── 📂mk                    # config.mk (공용 경로와 도구 설정)
+│   └── 📂font                  # H04.FNT, E2.FNT, hankaku 비트맵 글꼴
+├── 📂32bit                     # 기존 32비트 보호 모드 트리
+│   ├── 📂src                   # boot, kernel, drivers, lib, include
+│   ├── 📂app                   # 32비트 HRB 응용 프로그램과 API
+│   ├── 📂mk                    # x86.mk 빌드 규칙
+│   ├── 📂tools                 # nask, gocc1, obj2bim, bim2hrb, edimg
+│   ├── 📂testfiles             # FAT12 이미지에 넣는 시험 파일
+│   └── 📂ASM                   # 교재 어셈블리 자료
+├── 📂64bit                     # x86_64와 AArch64가 공유하는 64비트 트리
+│   ├── 📂mk
+│   │   ├── x86_64.mk           # x86_64 커널·앱·FAT32 이미지 빌드
+│   │   ├── aarch64.mk          # Pi 5 커널·앱·부트 staging 빌드
+│   │   └── micropython.mk      # 아키텍처별 MicroPython 생성물과 링크 규칙
+│   ├── 📂board/pi5
+│   │   ├── config.txt          # Pi 5 펌웨어 부팅 설정
+│   │   └── README.md           # bring-up 단계, panic code, 실기 검증 기록
+│   ├── 📂tools
+│   │   ├── mkfat32_64.py       # x86_64 FAT32 디스크 이미지 생성
+│   │   ├── stage_aarch64_boot.py # Pi 5 부트 파티션 파일 묶음 생성
+│   │   └── mowkow_parity.py    # 머꼬 CPython 병행 검사
+│   ├── 📂src64                 # 공용 64비트 커널과 아키텍처 백엔드
+│   │   ├── 📂boot              # x86_64 1·2단계 부트로더
+│   │   ├── 📂arch/aarch64      # EL1 진입, MMU/GIC/타이머, SDHCI, RP1/xHCI/HID
+│   │   ├── 📂drivers           # x86_64 장치 드라이버와 공용 block/graphic 계층
+│   │   ├── 📂kernel            # console, FAT32/cache, task, GUI, process/syscall
+│   │   ├── 📂lib               # Hangul, UTF-8, FIFO, keymap, 문자열
+│   │   ├── 📂mpport            # MicroPython 포트와 아키텍처별 최소 libc/math
+│   │   └── 📂include
+│   │       └── 📂arch          # 공용 아키텍처 HAL과 exception frame 계약
+│   ├── 📂app64                 # 두 아키텍처용 정적 ELF64 응용 프로그램
+│   │   ├── 📂crt               # x86_64/AArch64 crt0, syscall, 문자열, malloc
+│   │   ├── 📂hello             # 최소 실행 예제
+│   │   ├── 📂cat               # 파일 내용 출력
+│   │   ├── 📂ktest             # raw 키 입력 점검
+│   │   ├── 📂mtest             # 사용자 heap 점검
+│   │   ├── 📂wtest             # FAT32 쓰기 점검
+│   │   └── 📂나노              # 나노 편집기 포트
+│   └── 📂py64
+│       ├── smoke.py            # MicroPython 통합 점검
+│       ├── float_smoke.py      # AArch64 double/수학 연산 점검
+│       └── 📂머꼬              # 인터프리터, 라이브러리, 예제와 upstream 원본
+├── 📂screenshots               # README 실행 화면 이미지
 └── 📂third_party
-    └── 📁micropython       # 업스트림 MicroPython
+    └── 📂micropython           # 업스트림 MicroPython 서브모듈
 ```
 
-## 5. 진행 상황
+`build/`, `build64/`, `img/`, `img64/`는 빌드 때 생기는 생성물이므로 위 트리에서
+제외했습니다.
+
+## 6. 진행 상황
 
 | 항목 | 상태 |
 |-|-|
@@ -504,16 +589,16 @@ common/mk/config.mk        디렉터리, 도구, 컴파일 옵션 (공통)
 | 프로세스별 주소 공간 (페이징 격리) | ❌ |
 | 앱 동시 실행 | ❌ |
 
-## 6. 주의할 점
+## 7. 주의할 점
 
-### 6-1. 사용할 때
+### 7-1. 사용할 때
 * 나노로 저장한 파일은 이미지 파일에 실제로 남습니다. `make clean64` 뒤 다시 빌드하면 새로 저장된 파일이 사라지니 주의하세요.
 * 모든 파일은 루트 디렉터리에 위치합니다.
 * 저장 장치 쪽을 수정했다면 `make run64`와 `make run64-ahci`를 모두 확인해야 합니다. q35에는 레거시 IDE가 없어 두 명령이 실제로 서로 다른 코드를 지나갑니다.
 * 커널 크기 상한은 `64bit/mk/x86_64.mk`의 `KERNEL64_SECTORS`(현재 960섹터)입니다. 넘으면 링크 직후 빌드가 멈춥니다. 예약 영역이 1024섹터이고 커널은 LBA 32부터라 992섹터까지는 파일 시스템을 밀지 않고 올릴 수 있습니다.
 * 머꼬 소스는 `64bit/py64/`에 두면 이미지 루트로 들어갑니다. 다만 파일을 지웠을 때는 make가 알아채지 못하니 `rm img64/mowkow64.img` 뒤에 다시 빌드하세요.
 
-### 6-2. 존재하는 한계
+### 7-2. 존재하는 한계
 
 | 한계 | 위치 | 결과 |
 |-|-|-|
