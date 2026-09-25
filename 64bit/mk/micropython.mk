@@ -64,7 +64,8 @@ MPY_SHARED_OBJS = $(MPY_OBJS_DIR)/shared/runtime/gchelper_generic.o \
 	$(MPY_OBJS_DIR)/shared/runtime/interrupt_char.o \
 	$(MPY_OBJS_DIR)/shared/readline/readline.o
 
-MPY_INCLUDES = -I$(SRC64_DIR)/mpport -I$(SRC64_DIR)/mpport/libc -I$(MPY_DIR) -I$(MPY_PY_DIR) -I$(MPY_GEN_DIR)
+MPY_BASE_INCLUDES = -I$(SRC64_DIR)/mpport -I$(SRC64_DIR)/mpport/libc -I$(MPY_DIR) -I$(MPY_PY_DIR)
+MPY_INCLUDES = $(MPY_BASE_INCLUDES) -I$(MPY_GEN_DIR)
 MPY_CFLAGS = $(X64_CFLAGS) $(MPY_INCLUDES)
 MPY_QSTR_CFLAGS = $(MPY_CFLAGS) -DNO_QSTR
 
@@ -137,3 +138,113 @@ $(MPY_OBJS_DIR)/shared/runtime/%.o : $(MPY_DIR)/shared/runtime/%.c $(SRC64_DIR)/
 $(MPY_OBJS_DIR)/shared/readline/%.o : $(MPY_DIR)/shared/readline/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
 	$(X64_CC) $(MPY_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
+
+# -- AArch64 build instance (M9a) --
+#
+# Source inventories above are shared deliberately, but generated headers and
+# objects must never be shared with x86_64.  A64_CFLAGS is defined by
+# aarch64.mk (included after this file); recursive expansion resolves it when
+# the recipes run.  Only MicroPython/mpport drops -mgeneral-regs-only so the
+# compiler may use FP/SIMD.  The ordinary AArch64 kernel keeps that flag.
+A64_MPY_GEN_DIR = $(BUILD64_DIR)/aarch64-mpgen
+A64_MPY_GENHDR_DIR = $(A64_MPY_GEN_DIR)/genhdr
+A64_MPY_OBJS_DIR = $(BUILD64_DIR)/aarch64-upy
+
+A64_MPY_OBJS = $(patsubst $(MPY_PY_DIR)/%.c, $(A64_MPY_OBJS_DIR)/%.o, $(MPY_CORE_SRCS))
+
+# libc/math.c contains the established x86 SSE2/x87 implementation.  AArch64
+# uses math_aarch64.c instead, keeping both implementations isolated.
+A64_MPY_PORT_SRCS = $(filter-out $(SRC64_DIR)/mpport/libc/math.c,$(MPY_PORT_SRCS))
+A64_MPY_PORT_OBJS = $(patsubst $(SRC64_DIR)/mpport/%.c, \
+	$(A64_MPY_OBJS_DIR)/mpport/%.o, $(A64_MPY_PORT_SRCS))
+A64_MPY_SHARED_OBJS = $(A64_MPY_OBJS_DIR)/shared/runtime/gchelper_generic.o \
+	$(A64_MPY_OBJS_DIR)/shared/runtime/pyexec.o \
+	$(A64_MPY_OBJS_DIR)/shared/runtime/interrupt_char.o \
+	$(A64_MPY_OBJS_DIR)/shared/readline/readline.o
+A64_MPY_LINK_OBJS = $(A64_MPY_OBJS) $(A64_MPY_PORT_OBJS) $(A64_MPY_SHARED_OBJS)
+A64_MPY_FOUNDATION_OBJ = $(A64_MPY_OBJS_DIR)/micropython-foundation.o
+A64_MPY_FOUNDATION_MAP = $(A64_MPY_OBJS_DIR)/micropython-foundation.map
+
+A64_MPY_INCLUDES = $(MPY_BASE_INCLUDES) -I$(A64_MPY_GEN_DIR)
+A64_MPY_CFLAGS = $(filter-out -mgeneral-regs-only -MMD -MP,$(A64_CFLAGS)) $(A64_MPY_INCLUDES)
+A64_MPY_QSTR_CFLAGS = $(A64_MPY_CFLAGS) -DNO_QSTR
+A64_MPY_GENHDRS = $(A64_MPY_GENHDR_DIR)/qstrdefs.generated.h \
+	$(A64_MPY_GENHDR_DIR)/moduledefs.h \
+	$(A64_MPY_GENHDR_DIR)/root_pointers.h
+
+$(A64_MPY_GENHDR_DIR)/mpversion.h :
+	@$(MKDIR) $(A64_MPY_GENHDR_DIR)
+	$(PYTHON) $(MPY_PY_DIR)/makeversionhdr.py $@
+
+$(A64_MPY_GEN_DIR)/qstr.i.last : $(MPY_QSTR_SRCS) $(SRC64_DIR)/mpport/mpconfigport.h | $(A64_MPY_GENHDR_DIR)/mpversion.h
+	@$(MKDIR) $(A64_MPY_GEN_DIR)
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py pp $(A64_CC) -E output $@ \
+		cflags $(A64_MPY_QSTR_CFLAGS) cxxflags \
+		sources $(MPY_QSTR_SRCS) \
+		dependencies $(SRC64_DIR)/mpport/mpconfigport.h \
+		changed_sources $(MPY_QSTR_SRCS)
+
+$(A64_MPY_GEN_DIR)/qstr.split : $(A64_MPY_GEN_DIR)/qstr.i.last
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py split qstr $< $(A64_MPY_GEN_DIR)/qstr _
+	touch $@
+
+$(A64_MPY_GEN_DIR)/qstrdefs.collected.h : $(A64_MPY_GEN_DIR)/qstr.split
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py cat qstr _ $(A64_MPY_GEN_DIR)/qstr $@
+
+$(A64_MPY_GEN_DIR)/module.split : $(A64_MPY_GEN_DIR)/qstr.i.last
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py split module $< $(A64_MPY_GEN_DIR)/module _
+	touch $@
+
+$(A64_MPY_GEN_DIR)/moduledefs.collected : $(A64_MPY_GEN_DIR)/module.split
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py cat module _ $(A64_MPY_GEN_DIR)/module $@
+
+$(A64_MPY_GEN_DIR)/root_pointer.split : $(A64_MPY_GEN_DIR)/qstr.i.last
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py split root_pointer $< $(A64_MPY_GEN_DIR)/root_pointer _
+	touch $@
+
+$(A64_MPY_GEN_DIR)/root_pointers.collected : $(A64_MPY_GEN_DIR)/root_pointer.split
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdefs.py cat root_pointer _ $(A64_MPY_GEN_DIR)/root_pointer $@
+
+$(A64_MPY_GENHDR_DIR)/qstrdefs.generated.h : $(A64_MPY_GEN_DIR)/qstrdefs.collected.h $(MPY_PY_DIR)/qstrdefs.h $(MPY_PY_DIR)/makeqstrdata.py
+	@$(MKDIR) $(A64_MPY_GENHDR_DIR)
+	cat $(MPY_PY_DIR)/qstrdefs.h $(A64_MPY_GEN_DIR)/qstrdefs.collected.h | sed 's/^Q(.*)/"&"/' | $(A64_CC) -E $(A64_MPY_CFLAGS) - | sed 's/^"\(Q(.*)\)"/\1/' > $(A64_MPY_GEN_DIR)/qstrdefs.preprocessed.h
+	$(PYTHON) $(MPY_PY_DIR)/makeqstrdata.py $(A64_MPY_GEN_DIR)/qstrdefs.preprocessed.h > $@
+
+$(A64_MPY_GENHDR_DIR)/moduledefs.h : $(A64_MPY_GEN_DIR)/moduledefs.collected $(MPY_PY_DIR)/makemoduledefs.py
+	@$(MKDIR) $(A64_MPY_GENHDR_DIR)
+	$(PYTHON) $(MPY_PY_DIR)/makemoduledefs.py $< > $@
+
+$(A64_MPY_GENHDR_DIR)/root_pointers.h : $(A64_MPY_GEN_DIR)/root_pointers.collected $(MPY_PY_DIR)/make_root_pointers.py
+	@$(MKDIR) $(A64_MPY_GENHDR_DIR)
+	$(PYTHON) $(MPY_PY_DIR)/make_root_pointers.py $< > $@
+
+$(A64_MPY_OBJS_DIR)/%.o : $(MPY_PY_DIR)/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(A64_MPY_GENHDRS)
+	@$(MKDIR) $(dir $@)
+	$(A64_CC) $(A64_MPY_CFLAGS) -MMD -MP -c $< -o $@
+
+$(A64_MPY_OBJS_DIR)/mpport/%.o : $(SRC64_DIR)/mpport/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(A64_MPY_GENHDRS)
+	@$(MKDIR) $(dir $@)
+	$(A64_CC) $(A64_MPY_CFLAGS) -MMD -MP -c $< -o $@
+
+$(A64_MPY_OBJS_DIR)/shared/runtime/%.o : $(MPY_DIR)/shared/runtime/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(A64_MPY_GENHDRS)
+	@$(MKDIR) $(dir $@)
+	$(A64_CC) $(A64_MPY_CFLAGS) -MMD -MP -c $< -o $@
+
+$(A64_MPY_OBJS_DIR)/shared/readline/%.o : $(MPY_DIR)/shared/readline/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(A64_MPY_GENHDRS)
+	@$(MKDIR) $(dir $@)
+	$(A64_CC) $(A64_MPY_CFLAGS) -MMD -MP -c $< -o $@
+
+$(A64_MPY_FOUNDATION_OBJ) : $(A64_MPY_LINK_OBJS)
+	$(A64_LD) -r -Map=$(A64_MPY_FOUNDATION_MAP) -o $@ $(A64_MPY_LINK_OBJS)
+
+$(A64_MPY_OBJS_DIR)/nlr-selection.ok : $(A64_MPY_FOUNDATION_OBJ)
+	@grep -q 'nlraarch64.o' $(A64_MPY_FOUNDATION_MAP)
+	@$(A64_NM) $(A64_MPY_FOUNDATION_OBJ) | grep -q ' T nlr_push$$'
+	@$(A64_NM) $(A64_MPY_FOUNDATION_OBJ) | grep -q ' T nlr_jump$$'
+	@if $(A64_NM) $(A64_MPY_OBJS_DIR)/nlrx64.o | grep -q ' T nlr_push$$'; then \
+		echo "error: x64 NLR selected in AArch64 MicroPython build"; exit 1; \
+	fi
+	@touch $@
+
+aarch64-mpy-foundation : $(A64_MPY_GENHDRS) $(A64_MPY_FOUNDATION_OBJ) \
+	$(A64_MPY_OBJS_DIR)/nlr-selection.ok

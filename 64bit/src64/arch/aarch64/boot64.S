@@ -64,7 +64,7 @@ _start:
 .Lat_el1:
 	msr	daifset, #0xf
 	mrs	x1, cpacr_el1
-	bic	x1, x1, #(3 << 20)	/* FPEN remains disabled in the kernel. */
+	orr	x1, x1, #(3 << 20)	/* FPEN: permit FP/SIMD at EL0 and EL1. */
 	msr	cpacr_el1, x1
 	isb
 

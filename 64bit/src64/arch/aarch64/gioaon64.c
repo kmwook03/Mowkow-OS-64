@@ -537,6 +537,7 @@ void aarch64_high_main(void)
 	uint64_t heartbeat_deadline;
 	uint64_t heartbeat_half_period;
 	int heartbeat_led_on;
+	int fp_test_reported;
 	uintptr_t rp1_base;
 	int mouse_status;
 	int status;
@@ -557,10 +558,13 @@ void aarch64_high_main(void)
 	arch64_dbg_puts("M2: MMU + mailbox framebuffer OK\n\n");
 	arch64_dbg_puts("한글 화면 출력 성공\n");
 	arch64_irqctl_init();
+	/* 태스크 스택도 memman64에서 나오므로 scheduler보다 먼저 한 번만
+	   초기화한다. scheduler 뒤에 다시 초기화하면 이미 할당한 스택이
+	   free list에 재등록되어 예외 복귀 frame이 파일 데이터에 덮어쓰인다. */
+	init_memory64();
 	arch64_scheduler_init();
 	arch64_timer_init(NULL);
 	arch64_dbg_puts("M3: exceptions + scheduler + high-half paging OK\n");
-	init_memory64();
 	if (block64_init() != 0) {
 		arch64_dbg_puts("M4a: SDHCI init failed\n");
 		arch64_panic_blink(6);
@@ -1212,6 +1216,7 @@ void aarch64_high_main(void)
 	}
 	heartbeat_deadline = counter64() + heartbeat_half_period;
 	heartbeat_led_on = 0;
+	fp_test_reported = 0;
 	act_led_set64(heartbeat_led_on);
 	arch64_irq_enable();
 
@@ -1273,6 +1278,15 @@ void aarch64_high_main(void)
 		/* Do not stall USB polling while preserving the 500 ms heartbeat. */
 		if ((int64_t) (counter64() - heartbeat_deadline) >= 0) {
 			arch64_scheduler_main_beat();
+			if (fp_test_reported == 0) {
+				status = arch64_fp_context_self_test();
+				if (status < 0) {
+					arch64_dbg_puts("\nM9b: FP/SIMD context self-test failed\n");
+					arch64_panic_blink(43);
+				} else if (status > 0) {
+					fp_test_reported = 1;
+				}
+			}
 			heartbeat_led_on = !heartbeat_led_on;
 			act_led_set64(heartbeat_led_on);
 			heartbeat_deadline += heartbeat_half_period;

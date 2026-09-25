@@ -14,6 +14,10 @@
 #define TASK64_FLAGS_RUNNING   2
 #define TASK64_FLAGS_SLEEP_PENDING 3
 
+#ifdef __aarch64__
+#include <arch/exception_frame64.h>
+#endif
+
 struct CONTEXT64 {
 #ifdef __aarch64__
 	uintptr_t frame;

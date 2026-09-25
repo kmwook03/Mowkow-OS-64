@@ -120,6 +120,20 @@ class Console:
             time.sleep(0.2)
         raise TimeoutError("%s를 기다리다 시간이 지났다" % what)
 
+    def _wait_after(self, offset, tail, timeout, what):
+        """offset 뒤에 새 출력이 생기고 tail로 끝날 때까지 기다린다.
+
+        머꼬와 OS prompt가 둘 다 `> `라서 Ctrl key를 보내기 전의 prompt를
+        완료로 잘못 보지 않으려면 출력 길이도 함께 봐야 한다.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            current = self.text()
+            if len(current) > offset and current.endswith(tail):
+                return
+            time.sleep(0.2)
+        raise TimeoutError("%s를 기다리다 시간이 지났다" % what)
+
     def _mode(self, want_hangul):
         if self.hangul != want_hangul:
             self._send(["shift", "spc"])
@@ -153,6 +167,29 @@ class Console:
             self.type(line)
             self._send(["ret"])
         self._wait(PROMPT, CMD_TIMEOUT, "'%s'" % command)
+        return self.text()[before:]
+
+    def interrupt(self, command, keys):
+        """명령의 자체 prompt가 뜨면 Ctrl key를 보내고 OS prompt 복귀를 본다."""
+        before = len(self.text())
+        self.type(command)
+        self._send(["ret"])
+        time.sleep(1.0)
+        offset = len(self.text())
+        self._send(keys)
+        self._wait_after(offset, PROMPT, CMD_TIMEOUT, "'%s' interrupt" % command)
+        return self.text()[before:]
+
+    def py_system_exit(self):
+        """friendly REPL에서 SystemExit을 내고 OS prompt로 돌아온다."""
+        before = len(self.text())
+        self.type("py")
+        self._send(["ret"])
+        self._wait(">>> ", CMD_TIMEOUT, "py REPL prompt")
+        offset = len(self.text())
+        self.type("raise SystemExit")
+        self._send(["ret"])
+        self._wait_after(offset, PROMPT, CMD_TIMEOUT, "py SystemExit")
         return self.text()[before:]
 
     def close(self):
@@ -281,10 +318,34 @@ def main():
         print("%-10s %s" % ("deep", "ok" if ok else "FAIL"))
         if not ok:
             failures.append("deep")
+
+        ctrl_c = console.interrupt("머꼬", ["ctrl", "c"])
+        ok = "Traceback" not in ctrl_c
+        print("%-10s %s" % ("ctrl-c", "ok" if ok else "FAIL"))
+        if not ok:
+            failures.append("ctrl-c")
+
+        ctrl_d = console.interrupt("머꼬", ["ctrl", "d"])
+        ok = "머꼬'를 사용해 주셔서 고맙습니다." in ctrl_d
+        print("%-10s %s" % ("ctrl-d", "ok" if ok else "FAIL"))
+        if not ok:
+            failures.append("ctrl-d")
+
+        system_exit = console.py_system_exit()
+        ok = "Traceback" not in system_exit
+        print("%-10s %s" % ("systemexit", "ok" if ok else "FAIL"))
+        if not ok:
+            failures.append("systemexit")
+
+        cleanup = console.run("py smoke.py")
+        ok = "smoke ok" in cleanup
+        print("%-10s %s" % ("cleanup", "ok" if ok else "FAIL"))
+        if not ok:
+            failures.append("cleanup")
     finally:
         console.close()
 
-    print("\n%d개 중 %d개 실패" % (len(cases) + 3, len(failures)))
+    print("\n%d개 중 %d개 실패" % (len(cases) + 7, len(failures)))
     return 1 if failures else 0
 
 

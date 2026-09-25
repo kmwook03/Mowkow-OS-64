@@ -19,4 +19,7 @@ uint8_t *mpport_load_file(const char *path, size_t *out_size);
 void mpport_set_argv(const char *arg);
 const char *mpport_argv(void);
 
+/* Architecture-neutral 100 Hz clock used by the Python HAL and mowio. */
+uint64_t mpport_ticks_100hz(void);
+
 #endif

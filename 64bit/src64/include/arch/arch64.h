@@ -216,6 +216,7 @@ void arch64_scheduler_init(void);
 uintptr_t arch64_scheduler_tick(uintptr_t frame);
 void arch64_scheduler_main_beat(void);
 int arch64_scheduler_healthy(void);
+int arch64_fp_context_self_test(void);
 uintptr_t arch64_task_frame_init(void (*entry)(void), uintptr_t stack_base,
 	size_t stack_size);
 uint64_t arch64_irq_save(void);

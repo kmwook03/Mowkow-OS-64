@@ -942,7 +942,7 @@ static void execute_command(struct CONSOLE64 *con)
 	}
 	if (str_eq(con->input_line, "help")) {
 #ifdef __aarch64__
-		puts_con(con, "commands: help clear mem tasks ls 목록 type readme.txt APP [ARGS] xwindow 창 new 새창\n");
+		puts_con(con, "commands: help clear mem tasks ls 목록 type readme.txt APP [ARGS] py py FILE.PY 머꼬 [FILE] xwindow 창 new 새창\n");
 #else
 		puts_con(con, "commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY xwindow 창 new 새창\n");
 #endif
@@ -1045,7 +1045,6 @@ static void execute_command(struct CONSOLE64 *con)
 		if (run_program(con, args) == 0) {
 			puts_con(con, "파일 없음\n");
 		}
-#ifndef __aarch64__
 	} else if (str_eq(con->input_line, "py") || str_eq(con->input_line, "파이썬")) {
 		mpport_repl();
 	} else if (str_starts_with(con->input_line, "py ")) {
@@ -1055,7 +1054,6 @@ static void execute_command(struct CONSOLE64 *con)
 	} else if (str_starts_with(con->input_line, "머꼬 ")) {
 		/* "머꼬 "는 UTF-8로 7바이트다 */
 		mpport_run_mowkow(con->input_line + 7);
-#endif
 	} else if (run_program(con, con->input_line) == 0) {
 		/* 내장 명령도 아니고 그런 실행 파일도 없다 */
 		puts_con(con, "알 수 없는 명령어\n");

@@ -28,8 +28,8 @@ include 64bit/mk/aarch64.mk
 
 .PHONY : default help info \
 	run iso clean $(APPS) \
-	x86_64 run64 run64-ahci parity64 clean64 mpy-qstr \
-	aarch64 clean-a64
+	x86_64 run64 run64-ahci parity64 parity64-ahci clean64 mpy-qstr \
+	aarch64 aarch64-stage aarch64-mpy-foundation clean-a64
 
 default : $(IMG_FILE)
 
@@ -47,10 +47,12 @@ help :
 	@echo "    make run64      QEMU로 실행 (IDE, ATA PIO 경로)"
 	@echo "    make run64-ahci QEMU로 실행 (q35 + AHCI 경로)"
 	@echo "    make parity64   머꼬 병행 검사 (호스트 CPython과 견주기)"
+	@echo "    make parity64-ahci  같은 검사를 q35 + AHCI로 실행"
 	@echo "    make clean64    build64/ img64/ 지우기"
 	@echo ""
-	@echo "  Raspberry Pi 5 (AArch64, M4)"
-	@echo "    make aarch64    Pi 5 flat kernel_2712.img 빌드"
+	@echo "  Raspberry Pi 5 (AArch64, M9)"
+	@echo "    make aarch64    Pi 5 kernel과 boot partition staging 빌드"
+	@echo "    make aarch64-stage  build64/aarch64-boot/ 동기화"
 	@echo "    make clean-a64  AArch64 빌드 산출물 지우기"
 	@echo ""
 	@echo "  그 밖에"

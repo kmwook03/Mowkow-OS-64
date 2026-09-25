@@ -1,5 +1,6 @@
 /* EL1 exception setup and early fault reporting. */
 #include <arch/arch64.h>
+#include <arch/exception_frame64.h>
 #include <interrupt64.h>
 #include <syscall64.h>
 #include <stdint.h>
@@ -43,13 +44,6 @@ void arch64_exception_handler(uint64_t vector, uint64_t esr, uint64_t elr,
 	arch64_dbg_puts("\n");
 	arch64_panic_blink(4);
 }
-
-struct ARCH64_EXCEPTION_FRAME {
-	uint64_t x[31];
-	uint64_t elr;
-	uint64_t spsr;
-	uint64_t reserved;
-};
 
 uint64_t arch64_sync_dispatch(struct ARCH64_EXCEPTION_FRAME *frame,
 	uint64_t esr)

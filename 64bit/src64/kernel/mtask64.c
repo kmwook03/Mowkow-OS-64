@@ -128,7 +128,8 @@ struct TASK64 *task_alloc64(void)
 int task_set_entry64(struct TASK64 *task, void (*entry)(void), uintptr_t stack_base, size_t stack_size)
 {
 #ifdef __aarch64__
-	if (task == NULL || entry == NULL || stack_base == 0 || stack_size < 512) {
+	if (task == NULL || entry == NULL || stack_base == 0 ||
+			stack_size < ARCH64_EXCEPTION_FRAME_SIZE) {
 		return -1;
 	}
 	task->stack_base = stack_base;

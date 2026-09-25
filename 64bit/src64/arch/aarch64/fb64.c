@@ -191,13 +191,7 @@ int arch64_fb_probe(struct BOOTINFO64 *bootinfo)
 	framebuffer_info.reserved2 = m[29];
 	framebuffer_info.vram = arch64_phys_to_virt((uintptr_t) framebuffer_address);
 	framebuffer_pixel_order = m[24];
-	/* The image is linked low and executes through its TTBR1 alias. Avoid
-	   retaining the low value produced by a static pointer initializer. */
-	active_hangul_font = (const uint8_t *) (uintptr_t) hangul_font64;
-	if ((uintptr_t) active_hangul_font < (uintptr_t) ARCH64_KERNEL_VA_BASE) {
-		active_hangul_font = (const uint8_t *) arch64_phys_to_virt(
-			(uintptr_t) active_hangul_font);
-	}
+	active_hangul_font = hangul_font64;
 	*bootinfo = framebuffer_info;
 	cursor_x = FB_MARGIN_X;
 	cursor_y = FB_MARGIN_Y;

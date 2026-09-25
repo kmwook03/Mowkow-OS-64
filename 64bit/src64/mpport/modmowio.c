@@ -9,7 +9,7 @@
 
 #include <console64.h>
 #include <mpport64.h>
-#include <timer64.h>
+#include <math.h>
 #include <string.h>
 
 /*
@@ -88,9 +88,22 @@ static MP_DEFINE_CONST_FUN_OBJ_0(mowio_argv_obj, mowio_argv);
  */
 static mp_obj_t mowio_ticks(void)
 {
-	return mp_obj_new_int((mp_int_t) timerctl64.count);
+	return mp_obj_new_int((mp_int_t) mpport_ticks_100hz());
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mowio_ticks_obj, mowio_ticks);
+
+/* math 모듈 전체는 libc 초월함수가 없어서 꺼져 있다. M9d가 양쪽 arch의
+   실제 sqrt 명령 경로를 검증할 수 있도록 최소 공용 진입점만 제공한다. */
+static mp_obj_t mowio_sqrt(mp_obj_t value_in)
+{
+	double value = mp_obj_get_float(value_in);
+
+	if (value < 0.0) {
+		mp_raise_ValueError(MP_ERROR_TEXT("math domain error"));
+	}
+	return mp_obj_new_float(sqrt(value));
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(mowio_sqrt_obj, mowio_sqrt);
 
 static const mp_rom_map_elem_t mowio_module_globals_table[] = {
 	{ MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_mowio) },
@@ -98,6 +111,7 @@ static const mp_rom_map_elem_t mowio_module_globals_table[] = {
 	{ MP_ROM_QSTR(MP_QSTR_readfile), MP_ROM_PTR(&mowio_readfile_obj) },
 	{ MP_ROM_QSTR(MP_QSTR_argv), MP_ROM_PTR(&mowio_argv_obj) },
 	{ MP_ROM_QSTR(MP_QSTR_ticks), MP_ROM_PTR(&mowio_ticks_obj) },
+	{ MP_ROM_QSTR(MP_QSTR_sqrt), MP_ROM_PTR(&mowio_sqrt_obj) },
 };
 static MP_DEFINE_CONST_DICT(mowio_module_globals, mowio_module_globals_table);
 

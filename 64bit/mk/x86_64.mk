@@ -132,6 +132,9 @@ run64 : $(IMG64_FILE)
 parity64 : $(IMG64_FILE)
 	$(PYTHON) $(TOOL64PATH)/mowkow_parity.py
 
+parity64-ahci : $(IMG64_FILE)
+	$(PYTHON) $(TOOL64PATH)/mowkow_parity.py --ahci
+
 run64-ahci : $(IMG64_FILE)
 	$(QEMU) -machine q35 -drive file=$(IMG64_FILE),format=raw,if=none,id=disk0 \
 		-device ich9-ahci,id=ahci -device ide-hd,drive=disk0,bus=ahci.0 \

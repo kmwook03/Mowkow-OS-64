@@ -6,44 +6,11 @@
  * BLOCK64_OPS만 채우면 되고 위쪽은 그대로 둔다.
  */
 #include <block64.h>
-#ifdef __aarch64__
-#include <arch/arch64.h>
-#endif
 #include <stddef.h>
 #include <stdint.h>
 
 static const struct BLOCK64_OPS *ops;
 static uint64_t part_base;
-
-#ifdef __aarch64__
-static struct BLOCK64_OPS aarch64_ops;
-
-/* The AArch64 image is linked at its physical load address, then executes
-   through a TTBR1 high-half alias. Pointers stored by static initializers keep
-   the low link-time value, so rebase every pointer in an ops table before the
-   first indirect call. */
-static uintptr_t kernel_pointer64(uintptr_t address)
-{
-	if (address < (uintptr_t) ARCH64_KERNEL_VA_BASE) {
-		return arch64_phys_to_virt(address);
-	}
-	return address;
-}
-
-static void select_sdhci64(void)
-{
-	aarch64_ops.name = (const char *) kernel_pointer64(
-		(uintptr_t) sdhci64_ops.name);
-	aarch64_ops.read = (int (*)(uint64_t, uint32_t, void *)) kernel_pointer64(
-		(uintptr_t) sdhci64_ops.read);
-	aarch64_ops.write = (int (*)(uint64_t, uint32_t, const void *))
-		kernel_pointer64((uintptr_t) sdhci64_ops.write);
-	aarch64_ops.sector_count = (uint64_t (*)(void)) kernel_pointer64(
-		(uintptr_t) sdhci64_ops.sector_count);
-	ops = (const struct BLOCK64_OPS *) kernel_pointer64(
-		(uintptr_t) &aarch64_ops);
-}
-#endif
 
 static uint32_t read32(const uint8_t *p)
 {
@@ -99,7 +66,7 @@ int block64_init(void)
 	if (sdhci64_probe() != 0) {
 		return -1;
 	}
-	select_sdhci64();
+	ops = &sdhci64_ops;
 #else
 	ops = ahci64_probe() == 0 ? &ahci64_ops : &ata64_ops;
 #endif
