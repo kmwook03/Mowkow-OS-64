@@ -22,6 +22,7 @@ $(foreach v,$(shell $(PYTHON) $(MKFAT32) --make-vars),$(eval $(v)))
 # 800섹터일 때 커널이 389,540바이트(95.1%)라 남은 자리가 20KiB뿐이었다.
 # 992섹터 천장 아래로 여유를 두고 960으로 올린다.
 KERNEL64_SECTORS = 960
+KERNEL64_MAX_BYTES := $(shell expr $(KERNEL64_SECTORS) \* 512)
 
 # -- 소스 찾기 --
 X64_PLATFORM_C_SRCS = \
@@ -68,11 +69,14 @@ $(BOOT64_BIN) : $(SRC64_DIR)/boot/boot64.asm Makefile 64bit/mk/x86_64.mk $(MKFAT
 		-DRESERVED_SECTORS=$(FAT32_64_RESERVED_SECTORS) -DFAT_COUNT=$(FAT32_64_FAT_COUNT) \
 		-DSECTORS_PER_FAT=$(FAT32_64_SECTORS_PER_FAT) -DROOT_CLUSTER=$(FAT32_64_ROOT_CLUSTER) \
 		-DFSINFO_LBA=$(FAT32_64_FSINFO_LBA) -DBACKUP_BOOT_LBA=$(FAT32_64_BACKUP_BOOT_LBA) \
+		-DBACKUP_FSINFO_LBA=$(FAT32_64_BACKUP_FSINFO_LBA) -DKERNEL_LBA=$(KERNEL64_LBA) \
 		-DVOLUME_ID=$(FAT32_64_VOLUME_ID) $< -o $@
 
 $(LOADER64_BIN) : $(SRC64_DIR)/boot/loader64.asm Makefile 64bit/mk/x86_64.mk
 	@$(MKDIR) $(dir $@)
-	$(X64_ASM) $(X64_BOOT_ASMFLAGS) -DKERNEL_LBA=$(KERNEL64_LBA) -DKERNEL_SECTORS=$(KERNEL64_SECTORS) $< -o $@
+	$(X64_ASM) $(X64_BOOT_ASMFLAGS) -DKERNEL_LBA=$(KERNEL64_LBA) \
+		-DKERNEL_SECTORS=$(KERNEL64_SECTORS) -DRESERVED_SECTORS=$(FAT32_64_RESERVED_SECTORS) \
+		-DSTAGE2_LBA=$(STAGE2_64_LBA) -DSTAGE2_SECTORS=$(STAGE2_64_SECTORS) $< -o $@
 
 # -- 커널 (C와 어셈블리 -> ELF -> flat binary) --
 $(BUILD64_DIR)/%.o : $(SRC64_DIR)/%.c
@@ -85,7 +89,8 @@ $(BUILD64_DIR)/kernel/%.o : $(SRC64_DIR)/kernel/%.asm
 
 $(KERNEL64_ELF) : $(KERNEL64_OBJS) $(SRC64_DIR)/kernel/kernel64.ld
 	@$(MKDIR) $(dir $@)
-	$(X64_LD) $(X64_LDFLAGS) -o $@ $(KERNEL64_OBJS)
+	$(X64_LD) $(X64_LDFLAGS) --defsym=KERNEL_MAX_BYTES=$(KERNEL64_MAX_BYTES) \
+		-o $@ $(KERNEL64_OBJS)
 
 # 로더는 KERNEL64_SECTORS만큼만 읽는다. 커널이 그보다 커지면 뒷부분이 없는 채로
 # 실행되므로, 링크 직후에 크기를 확인하고 넘으면 빌드를 멈춘다.

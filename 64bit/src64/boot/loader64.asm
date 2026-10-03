@@ -1,5 +1,6 @@
 bits 16
-org 0x8000
+stage2_addr equ 0x8000
+org stage2_addr
 
 %ifndef KERNEL_LBA
 %define KERNEL_LBA 17
@@ -7,6 +8,15 @@ org 0x8000
 
 %ifndef KERNEL_SECTORS
 %define KERNEL_SECTORS 64
+%endif
+%ifndef RESERVED_SECTORS
+%define RESERVED_SECTORS 1024
+%endif
+%ifndef STAGE2_LBA
+%define STAGE2_LBA 8
+%endif
+%ifndef STAGE2_SECTORS
+%define STAGE2_SECTORS 16
 %endif
 
 kernel_load_real equ 0x10000
@@ -18,6 +28,34 @@ pd1_addr equ 0x73000
 pd2_addr equ 0x74000
 pd3_addr equ 0x75000
 stack64_top equ 0x90000
+
+%if KERNEL_SECTORS <= 0
+%error "KERNEL_SECTORS must be positive"
+%endif
+%if STAGE2_LBA + STAGE2_SECTORS > KERNEL_LBA
+%error "stage 2 overlaps the kernel on disk"
+%endif
+%if KERNEL_LBA + KERNEL_SECTORS > RESERVED_SECTORS
+%error "kernel extends beyond the FAT32 reserved area"
+%endif
+%if stage2_addr + STAGE2_SECTORS * 512 > kernel_load_real
+%error "stage 2 overlaps the temporary kernel buffer"
+%endif
+%if kernel_load_real + KERNEL_SECTORS * 512 > stack64_top
+%error "temporary kernel buffer overlaps the long-mode stack"
+%endif
+%if pml4_addr & 0xfff || pdpt_addr != pml4_addr + 0x1000
+%error "invalid PML4/PDPT layout"
+%endif
+%if pd0_addr != pdpt_addr + 0x1000 || pd1_addr != pd0_addr + 0x1000
+%error "page-directory tables must be contiguous"
+%endif
+%if pd2_addr != pd1_addr + 0x1000 || pd3_addr != pd2_addr + 0x1000
+%error "page-directory tables must be contiguous"
+%endif
+%if pd3_addr + 0x1000 > stack64_top
+%error "page tables must be contiguous and below the long-mode stack"
+%endif
 
 ; 화면 크기. VBE 표준 모드에는 16:9가 없어서 Bochs DISPI 레지스터로 직접
 ; 잡는다(QEMU stdvga 전용). 비율을 바꾸려면 이 두 값만 고치면 된다.
@@ -278,6 +316,20 @@ boot_info:
 	dd 0
 .vram:
 	dq 0xb8000
+boot_info_end:
+
+%if boot_info.scrnx - boot_info != 4
+%error "BOOTINFO64.scrnx offset mismatch"
+%endif
+%if boot_info.bytes_per_scanline - boot_info != 8
+%error "BOOTINFO64 stride offset mismatch"
+%endif
+%if boot_info.reserved2 - boot_info != 12 || boot_info.vram - boot_info != 16
+%error "BOOTINFO64 reserved2/vram offset mismatch"
+%endif
+%if boot_info_end - boot_info != 24
+%error "BOOTINFO64 size mismatch"
+%endif
 
 stage2_msg:
 	db "Entering long mode...", 13, 10, 0

@@ -39,7 +39,9 @@ class Style64Test(unittest.TestCase):
         self.assertIn("C indentation uses spaces instead of a tab", messages)
 
     def test_rejects_unbounded_string_api(self) -> None:
-        violations = self.check_text(".c", "void f(void) { strcpy(a, b); }\n")
+        violations = self.check_text(
+            ".c", "void f(void) { str" "cpy(a, b); }\n"
+        )
         self.assertIn(
             "unbounded string API is forbidden",
             [message for _, message in violations],

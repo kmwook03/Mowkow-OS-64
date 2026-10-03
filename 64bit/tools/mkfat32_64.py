@@ -40,17 +40,72 @@ KERNEL_LBA = 32
 VOLUME_ID = 0x646B776D
 VOLUME_LABEL = b"MOWKOW64   "
 
-DATA_LBA = RESERVED_SECTORS + FAT_COUNT * SECTORS_PER_FAT
-CLUSTER_COUNT = (TOTAL_SECTORS - DATA_LBA) // SECTORS_PER_CLUSTER
-KERNEL_MAX_SECTORS = RESERVED_SECTORS - KERNEL_LBA
 FAT32_EOC = 0x0FFFFFFF
 # no RTC in the image builder or the kernel: same fixed stamp both sides
 FIXED_DATE = ((2026 - 1980) << 9) | (1 << 5) | 1
 FIXED_TIME = 0
 
-# FAT32 needs at least 65525 clusters or host tools read the volume as FAT16.
-assert CLUSTER_COUNT >= 65525, CLUSTER_COUNT
-assert (CLUSTER_COUNT + 2) * 4 <= SECTORS_PER_FAT * SECTOR_SIZE
+
+def validate_layout(
+    *,
+    sector_size: int = SECTOR_SIZE,
+    total_sectors: int = TOTAL_SECTORS,
+    reserved_sectors: int = RESERVED_SECTORS,
+    fat_count: int = FAT_COUNT,
+    sectors_per_fat: int = SECTORS_PER_FAT,
+    sectors_per_cluster: int = SECTORS_PER_CLUSTER,
+    root_cluster: int = ROOT_CLUSTER,
+    fsinfo_lba: int = FSINFO_LBA,
+    backup_boot_lba: int = BACKUP_BOOT_LBA,
+    backup_fsinfo_lba: int = BACKUP_FSINFO_LBA,
+    stage2_lba: int = STAGE2_LBA,
+    stage2_sectors: int = STAGE2_SECTORS,
+    kernel_lba: int = KERNEL_LBA,
+) -> None:
+    """Reject a layout that the BPB, boot stages, or FAT cannot represent."""
+    if sector_size != 512:
+        raise ValueError("the boot stages require 512-byte sectors")
+    if total_sectors <= 0 or total_sectors > 0xFFFFFFFF:
+        raise ValueError("total sector count does not fit the FAT32 BPB")
+    if reserved_sectors <= 0 or reserved_sectors > 0xFFFF:
+        raise ValueError("reserved sector count does not fit the FAT32 BPB")
+    if fat_count <= 0 or fat_count > 0xFF or sectors_per_fat <= 0:
+        raise ValueError("invalid FAT geometry")
+    if (sectors_per_cluster <= 0 or
+            sectors_per_cluster & (sectors_per_cluster - 1)):
+        raise ValueError("sectors per cluster must be a power of two")
+    metadata_lbas = {0, fsinfo_lba, backup_boot_lba, backup_fsinfo_lba}
+    if len(metadata_lbas) != 4 or min(metadata_lbas) < 0:
+        raise ValueError("FAT32 boot metadata sectors overlap")
+    if backup_fsinfo_lba != backup_boot_lba + fsinfo_lba:
+        raise ValueError("backup FSInfo offset does not match the primary")
+    if max(metadata_lbas) >= reserved_sectors:
+        raise ValueError("FAT32 boot metadata lies outside the reserved area")
+    if stage2_sectors <= 0 or stage2_lba <= max(metadata_lbas):
+        raise ValueError("stage 2 overlaps FAT32 boot metadata")
+    if stage2_lba + stage2_sectors > kernel_lba:
+        raise ValueError("stage 2 overlaps the kernel reserved area")
+    if kernel_lba < 0 or kernel_lba >= reserved_sectors:
+        raise ValueError("kernel lies outside the reserved area")
+
+    data_lba = reserved_sectors + fat_count * sectors_per_fat
+    if data_lba >= total_sectors:
+        raise ValueError("FAT copies leave no data area")
+    cluster_count = (total_sectors - data_lba) // sectors_per_cluster
+    # FAT32 needs at least 65525 clusters or host tools treat it as FAT16.
+    if cluster_count < 65525:
+        raise ValueError("data area is too small for FAT32")
+    if root_cluster < 2 or root_cluster >= cluster_count + 2:
+        raise ValueError("root cluster lies outside the data area")
+    if (cluster_count + 2) * 4 > sectors_per_fat * sector_size:
+        raise ValueError("FAT is too small for the data area")
+
+
+validate_layout()
+
+DATA_LBA = RESERVED_SECTORS + FAT_COUNT * SECTORS_PER_FAT
+CLUSTER_COUNT = (TOTAL_SECTORS - DATA_LBA) // SECTORS_PER_CLUSTER
+KERNEL_MAX_SECTORS = RESERVED_SECTORS - KERNEL_LBA
 
 MAKE_VARS = {
     "FAT32_64_TOTAL_SECTORS": TOTAL_SECTORS,
@@ -60,6 +115,7 @@ MAKE_VARS = {
     "FAT32_64_ROOT_CLUSTER": ROOT_CLUSTER,
     "FAT32_64_FSINFO_LBA": FSINFO_LBA,
     "FAT32_64_BACKUP_BOOT_LBA": BACKUP_BOOT_LBA,
+    "FAT32_64_BACKUP_FSINFO_LBA": BACKUP_FSINFO_LBA,
     "FAT32_64_VOLUME_ID": VOLUME_ID,
     "STAGE2_64_LBA": STAGE2_LBA,
     "STAGE2_64_SECTORS": STAGE2_SECTORS,

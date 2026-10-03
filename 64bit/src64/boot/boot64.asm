@@ -29,11 +29,42 @@ org 0x7c00
 %ifndef BACKUP_BOOT_LBA
 %define BACKUP_BOOT_LBA 6
 %endif
+%ifndef BACKUP_FSINFO_LBA
+%define BACKUP_FSINFO_LBA 7
+%endif
+%ifndef KERNEL_LBA
+%define KERNEL_LBA 32
+%endif
 %ifndef VOLUME_ID
 %define VOLUME_ID 0x646b776d
 %endif
 
 stage2_addr equ 0x8000
+
+%if STAGE2_SECTORS <= 0
+%error "STAGE2_SECTORS must be positive"
+%endif
+%if FSINFO_LBA <= 0 || BACKUP_BOOT_LBA <= 0 || BACKUP_FSINFO_LBA <= 0
+%error "FAT32 metadata must not overwrite the primary boot sector"
+%endif
+%if BACKUP_FSINFO_LBA != BACKUP_BOOT_LBA + FSINFO_LBA
+%error "backup FSInfo must have the same offset from the backup boot sector"
+%endif
+%if STAGE2_LBA <= BACKUP_FSINFO_LBA
+%error "stage 2 overlaps FAT32 boot metadata"
+%endif
+%if STAGE2_LBA + STAGE2_SECTORS > KERNEL_LBA
+%error "stage 2 overlaps the kernel reserved area"
+%endif
+%if KERNEL_LBA >= RESERVED_SECTORS
+%error "kernel must start inside the FAT32 reserved area"
+%endif
+%if RESERVED_SECTORS >= TOTAL_SECTORS
+%error "FAT32 reserved area must be smaller than the volume"
+%endif
+%if FAT_COUNT <= 0 || SECTORS_PER_FAT <= 0 || ROOT_CLUSTER < 2
+%error "invalid FAT32 geometry"
+%endif
 
 start:
 	jmp short after_bpb

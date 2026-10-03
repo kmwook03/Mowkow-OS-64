@@ -1,6 +1,7 @@
 #ifndef MOWKOW64_DSCTBL64_H
 #define MOWKOW64_DSCTBL64_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define GDT64_KERNEL_CODE 0x08
@@ -68,6 +69,21 @@ struct TSS64 {
 	uint16_t reserved3;
 	uint16_t io_map_base;
 } __attribute__((packed));
+
+_Static_assert(sizeof(struct GDTR64) == 10, "invalid x86_64 GDTR size");
+_Static_assert(sizeof(struct GDT64_DESCRIPTOR) == 8,
+	"invalid x86_64 GDT descriptor size");
+_Static_assert(sizeof(struct TSS64_DESCRIPTOR) == 16,
+	"invalid x86_64 TSS descriptor size");
+_Static_assert(sizeof(struct IDT64_GATE) == 16,
+	"invalid x86_64 IDT gate size");
+_Static_assert(offsetof(struct TSS64, rsp0) == 4,
+	"invalid x86_64 TSS RSP0 offset");
+_Static_assert(offsetof(struct TSS64, ist1) == 36,
+	"invalid x86_64 TSS IST1 offset");
+_Static_assert(offsetof(struct TSS64, io_map_base) == 102,
+	"invalid x86_64 TSS I/O map offset");
+_Static_assert(sizeof(struct TSS64) == 104, "invalid x86_64 TSS size");
 
 void init_gdtidt64(void);
 void init_fpu64(void);

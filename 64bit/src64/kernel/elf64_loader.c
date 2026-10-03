@@ -44,6 +44,23 @@ struct ELF64_PHDR {
 	uint64_t p_align;
 } __attribute__((packed));
 
+_Static_assert(sizeof(struct ELF64_EHDR) == 64,
+	"ELF64 file header size mismatch");
+_Static_assert(offsetof(struct ELF64_EHDR, e_entry) == 24,
+	"ELF64 entry offset mismatch");
+_Static_assert(offsetof(struct ELF64_EHDR, e_phoff) == 32,
+	"ELF64 program-header offset field mismatch");
+_Static_assert(sizeof(struct ELF64_PHDR) == 56,
+	"ELF64 program header size mismatch");
+_Static_assert(offsetof(struct ELF64_PHDR, p_offset) == 8,
+	"ELF64 segment offset field mismatch");
+_Static_assert(offsetof(struct ELF64_PHDR, p_vaddr) == 16,
+	"ELF64 segment address field mismatch");
+_Static_assert(offsetof(struct ELF64_PHDR, p_filesz) == 32,
+	"ELF64 file-size field mismatch");
+_Static_assert(offsetof(struct ELF64_PHDR, p_memsz) == 40,
+	"ELF64 memory-size field mismatch");
+
 static void copy_bytes(void *dst, const void *src, size_t size)
 {
 	uint8_t *d;

@@ -23,6 +23,17 @@ struct FDINFO64 {
 	uint32_t size;
 } __attribute__((packed));
 
+_Static_assert(offsetof(struct FDINFO64, type) == 11,
+	"FAT directory attribute offset mismatch");
+_Static_assert(offsetof(struct FDINFO64, clustno_hi) == 20,
+	"FAT32 high cluster offset mismatch");
+_Static_assert(offsetof(struct FDINFO64, clustno) == 26,
+	"FAT32 low cluster offset mismatch");
+_Static_assert(offsetof(struct FDINFO64, size) == 28,
+	"FAT directory size offset mismatch");
+_Static_assert(sizeof(struct FDINFO64) == 32,
+	"FAT directory entry must be 32 bytes");
+
 /* 디렉터리 항목이 어디 있는지. FAT32의 루트는 클러스터 사슬이라 고정 배열
    번호로는 자리를 짚을 수 없다. cluster == 0은 "항목 없음", 즉 닫힌
    핸들이라는 뜻이다. */

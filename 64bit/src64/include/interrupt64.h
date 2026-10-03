@@ -1,7 +1,14 @@
 #ifndef MOWKOW64_INTERRUPT64_H
 #define MOWKOW64_INTERRUPT64_H
 
+#include <stddef.h>
 #include <stdint.h>
+
+#define INTERRUPT64_FRAME_VECTOR_OFFSET 120
+#define INTERRUPT64_FRAME_ERROR_OFFSET  128
+#define INTERRUPT64_FRAME_RIP_OFFSET    136
+#define INTERRUPT64_FRAME_RSP_OFFSET    160
+#define INTERRUPT64_FRAME_SIZE          176
 
 struct INTERRUPT_FRAME64 {
 	uint64_t r15;
@@ -27,6 +34,17 @@ struct INTERRUPT_FRAME64 {
 	uint64_t rsp;
 	uint64_t ss;
 };
+
+_Static_assert(offsetof(struct INTERRUPT_FRAME64, vector) ==
+	INTERRUPT64_FRAME_VECTOR_OFFSET, "x86_64 vector frame offset mismatch");
+_Static_assert(offsetof(struct INTERRUPT_FRAME64, error) ==
+	INTERRUPT64_FRAME_ERROR_OFFSET, "x86_64 error frame offset mismatch");
+_Static_assert(offsetof(struct INTERRUPT_FRAME64, rip) ==
+	INTERRUPT64_FRAME_RIP_OFFSET, "x86_64 RIP frame offset mismatch");
+_Static_assert(offsetof(struct INTERRUPT_FRAME64, rsp) ==
+	INTERRUPT64_FRAME_RSP_OFFSET, "x86_64 RSP frame offset mismatch");
+_Static_assert(sizeof(struct INTERRUPT_FRAME64) == INTERRUPT64_FRAME_SIZE,
+	"x86_64 interrupt frame size mismatch");
 
 void exception_handler64(const struct INTERRUPT_FRAME64 *frame);
 void irq_handler64(const struct INTERRUPT_FRAME64 *frame);
