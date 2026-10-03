@@ -25,7 +25,6 @@
 
 extern const uint8_t hankaku64[4096];
 extern const uint8_t hangul_font64[11520];
-int aarch64_mailbox_call(uint8_t channel, volatile uint32_t *message, size_t bytes);
 
 static volatile uint32_t framebuffer_request[36] __attribute__((aligned(64)));
 static struct BOOTINFO64 framebuffer_info;

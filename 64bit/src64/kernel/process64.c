@@ -132,7 +132,8 @@ int process64_current_exit_status(void)
 
 /* 유저 스택의 첫 rsp를 돌려준다. argv 묶음보다 아래라 앱이 쌓는 스택
    프레임이 자기 인수를 덮어쓰지 않는다. */
-static uintptr_t setup_args(struct PROCESS64 *process, const char *cmdline, uint64_t *argc_out, uintptr_t *argv_out)
+static uintptr_t setup_args(struct PROCESS64 *process, const char *cmdline,
+	uint64_t *argc_out, uintptr_t *argv_out)
 {
 	uintptr_t sp;
 	uintptr_t argv[PROCESS64_MAX_ARGS];

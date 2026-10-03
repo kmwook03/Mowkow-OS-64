@@ -89,7 +89,7 @@ static void mpport_release(void)
 
 /*
  * 콘솔 명령이 스크립트에 넘기는 인자 하나. sys.argv를 켜지 않는다 --
- * 문자열 하나 때문에 그럴 값어치가 없다. 
+ * 문자열 하나 때문에 그럴 값어치가 없다.
  * 콘솔의 입력 줄은 다음 명령에 덮어씌워지므로 가리키지 않고 베껴 둔다.
  */
 static char mp_argv[FD64_NAME_MAX];
@@ -117,7 +117,7 @@ const char *mpport_argv(void)
 
 /*
  * C 스택 한계는 부를 때마다 다시 잰다. 콘솔마다 태스크가 따로고 스택도 따로라
- * (console64.c), 다른 콘솔에서 측정한 값을 물려받으면 넘침 검사가 엉뚱한 자리를 본다. 
+ * (console64.c), 다른 콘솔에서 측정한 값을 물려받으면 넘침 검사가 엉뚱한 자리를 본다.
  * mp_init과 달리 이건 되풀이해도 되는 일이다.
  */
 static void mpport_stack_limit(void)
@@ -127,8 +127,8 @@ static void mpport_stack_limit(void)
 	struct TASK64 *task;
 
 	/*
-	 * 콘솔이 자기 태스크에서 돌면 그 스택은 memman64가 준 64KiB지 커널 메인 스택이 아니다. 
-	 * stack_bottom으로 측정하면 몇 MiB가 남은 줄 알고 넘침 검사가 걸리지 않아, 
+	 * 콘솔이 자기 태스크에서 돌면 그 스택은 memman64가 준 64KiB지 커널 메인 스택이 아니다.
+	 * stack_bottom으로 측정하면 몇 MiB가 남은 줄 알고 넘침 검사가 걸리지 않아,
 	 * 깊은 재귀가 조용히 태스크 스택을 침범한다.
 	 */
 	task = task_now64();
@@ -141,9 +141,9 @@ static void mpport_stack_limit(void)
 }
 
 /*
- * 해석기는 부팅 뒤 한 번만 세운다. 머꼬의 바탕 환경을 만드는 데 약 1.7초가 드는데, 
- * 그것을 부를 때마다 해석기를 실행시킬 이유가 없다. 
- * 그래서 mp_deinit()도 없애고 GC 힙과 qstr 풀이 부팅 내내 살아 있으므로, 
+ * 해석기는 부팅 뒤 한 번만 세운다. 머꼬의 바탕 환경을 만드는 데 약 1.7초가 드는데,
+ * 그것을 부를 때마다 해석기를 실행시킬 이유가 없다.
+ * 그래서 mp_deinit()도 없애고 GC 힙과 qstr 풀이 부팅 내내 살아 있으므로,
  * 메모리 누수가 발생하면 세션을 넘겨 쌓인다.
  */
 static int mp_ready;
@@ -173,9 +173,9 @@ static int mpport_init(void)
 /*
  * 파일 하나를 GC 힙으로 읽어 온다. 없으면 NULL, 있으면 크기를 *out_size에.
  *
- * 스크립트 실행과 import가 같은 것을 필요로 해서 한 곳에 둔다. 
+ * 스크립트 실행과 import가 같은 것을 필요로 해서 한 곳에 둔다.
  * memman64가 아니라 GC 힙에 담는 이유는 수명이다.
- * mp_reader_new_mem에 free_len을 함께 주면 lexer가 닫힐 때 리더가 알아서 m_del한다. 
+ * mp_reader_new_mem에 free_len을 함께 주면 lexer가 닫힐 때 리더가 알아서 m_del한다.
  * import는 자기가 연 버퍼를 언제 놓아야 하는지 부르는 쪽에서 알 방법이 없다.
  *
  * m_new는 자리가 없으면 MemoryError를 던지고 NLR 문맥 안에서만 부른다.

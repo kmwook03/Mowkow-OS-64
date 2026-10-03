@@ -57,12 +57,23 @@ X64_OBJCOPY ?= x86_64-elf-objcopy
 # 고쳤을 때 예전 구조체 배치로 컴파일된 오브젝트가 그대로 링크된다.
 X64_DEPFLAGS = -MMD -MP
 
+# First-party code is warning-clean by contract.  Vendor code deliberately uses
+# a smaller warning set so an upstream update cannot weaken our own gate.
+WARN64_CFLAGS = -Wall -Wextra -Wformat=2 -Wshadow -Wundef \
+	-Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Werror
+VENDOR64_WARNINGS = -Wall -Wextra
+
 # -O2: 최적화를 끄면(gcc 기본값 -O0) sheet64.c의 픽셀 루프가 픽셀마다 곱셈을
 # 다시 하고 레지스터 할당도 없어 창 드래그가 눈에 띄게 느리다.
-X64_CFLAGS = -O2 -ffreestanding -mno-red-zone -fno-pic -fno-stack-protector -Wall -Wextra -Wa,--noexecstack -I$(SRC64_DIR)/include
+X64_BASE_CFLAGS = -O2 -ffreestanding -mno-red-zone -fno-pic \
+	-fno-stack-protector -Wa,--noexecstack -I$(SRC64_DIR)/include
+X64_CFLAGS = $(X64_BASE_CFLAGS) $(WARN64_CFLAGS)
 X64_ASMFLAGS = -f elf64
 X64_BOOT_ASMFLAGS = -f bin
 X64_LDFLAGS = -nostdlib -T $(SRC64_DIR)/kernel/kernel64.ld
 
-APP64_CFLAGS = -ffreestanding -fno-pic -fno-pie -mno-red-zone -fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables -nostdlib -Wall -Wextra -I$(APP64_DIR)/crt/include
+APP64_BASE_CFLAGS = -ffreestanding -fno-pic -fno-pie -mno-red-zone \
+	-fno-stack-protector -fno-asynchronous-unwind-tables -fno-unwind-tables \
+	-nostdlib -I$(APP64_DIR)/crt/include
+APP64_CFLAGS = $(APP64_BASE_CFLAGS) $(WARN64_CFLAGS)
 APP64_LDFLAGS = -nostdlib -static -T $(APP64_DIR)/app64.ld

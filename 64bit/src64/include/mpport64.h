@@ -14,7 +14,7 @@ void mpport_run_mowkow(const char *arg);
    (modmowio.c의 readfile과 mp_lexer_new_from_file이 함께 쓴다) */
 uint8_t *mpport_load_file(const char *path, size_t *out_size);
 
-/* 콘솔 명령이 넘긴 인자를 넣고 뺀다. mowio.argv()가 이것을 읽는다. 
+/* 콘솔 명령이 넘긴 인자를 넣고 뺀다. mowio.argv()가 이것을 읽는다.
    NULL이면 인자가 없다는 뜻이다. */
 void mpport_set_argv(const char *arg);
 const char *mpport_argv(void);

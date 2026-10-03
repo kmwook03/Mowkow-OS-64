@@ -15,20 +15,22 @@ A64_BUILD_DIR = $(BUILD64_DIR)/aarch64
 A64_ELF = $(A64_BUILD_DIR)/kernel64.elf
 A64_IMAGE = $(A64_BUILD_DIR)/kernel_2712.img
 A64_APP_BUILD_DIR = $(BUILD64_DIR)/aarch64-app
-A64_HELLO_ELF = $(A64_APP_BUILD_DIR)/hello.elf
-A64_CAT_ELF = $(A64_APP_BUILD_DIR)/cat.elf
-A64_KTEST_ELF = $(A64_APP_BUILD_DIR)/ktest.elf
-A64_MTEST_ELF = $(A64_APP_BUILD_DIR)/mtest.elf
-A64_WTEST_ELF = $(A64_APP_BUILD_DIR)/wtest.elf
-A64_NANO_ELF = $(A64_APP_BUILD_DIR)/나노.elf
+A64_APP_TARGETS = $(foreach app,$(APP64_NAMES),$(A64_APP_BUILD_DIR)/$(app).elf)
+A64_APP_CRT_OBJS = $(A64_APP_BUILD_DIR)/crt0.o \
+	$(A64_APP_BUILD_DIR)/syscall.o $(A64_APP_BUILD_DIR)/string.o
+A64_APP_EXTRA_OBJS_mtest = $(A64_APP_BUILD_DIR)/malloc.o
+A64_APP_EXTRA_OBJS_나노 = $(A64_APP_BUILD_DIR)/malloc.o
 A64_BOOT_DIR = $(BUILD64_DIR)/aarch64-boot
 A64_BOOT_STAGER = $(TOOL64PATH)/stage_aarch64_boot.py
 A64_PI5_CONFIG = 64bit/board/pi5/config.txt
 A64_BOOT_STAGE_SPECS = config.txt=$(A64_PI5_CONFIG) \
 	kernel_2712.img=$(A64_IMAGE) H04.FNT=$(FONT_DIR)/H04.FNT \
-	HELLO.ELF=$(A64_HELLO_ELF) CAT.ELF=$(A64_CAT_ELF) \
-	KTEST.ELF=$(A64_KTEST_ELF) MTEST.ELF=$(A64_MTEST_ELF) \
-	WTEST.ELF=$(A64_WTEST_ELF) 나노.ELF=$(A64_NANO_ELF) \
+	HELLO.ELF=$(A64_APP_BUILD_DIR)/hello.elf \
+	CAT.ELF=$(A64_APP_BUILD_DIR)/cat.elf \
+	KTEST.ELF=$(A64_APP_BUILD_DIR)/ktest.elf \
+	MTEST.ELF=$(A64_APP_BUILD_DIR)/mtest.elf \
+	WTEST.ELF=$(A64_APP_BUILD_DIR)/wtest.elf \
+	나노.ELF=$(A64_APP_BUILD_DIR)/나노.elf \
 	smoke.py=$(PY64_DIR)/smoke.py float_smoke.py=$(PY64_DIR)/float_smoke.py \
 	mowkow.py=$(PY64_DIR)/머꼬/mowkow.py _compat.py=$(PY64_DIR)/머꼬/_compat.py \
 	_data.py=$(PY64_DIR)/머꼬/_data.py _error.py=$(PY64_DIR)/머꼬/_error.py \
@@ -40,10 +42,11 @@ A64_BOOT_STAGE_SPECS = config.txt=$(A64_PI5_CONFIG) \
 A64_BOOT_STAGE_INPUTS = $(foreach spec,$(A64_BOOT_STAGE_SPECS),\
 	$(word 2,$(subst =, ,$(spec))))
 
-A64_CFLAGS = -O2 -ffreestanding -nostdlib -mgeneral-regs-only \
+A64_BASE_CFLAGS = -O2 -ffreestanding -nostdlib -mgeneral-regs-only \
 	-mcpu=cortex-a76 -mstrict-align -fno-stack-protector -fno-pic \
-	-fno-asynchronous-unwind-tables -fno-unwind-tables -Wall -Wextra \
+	-fno-asynchronous-unwind-tables -fno-unwind-tables \
 	-ffunction-sections -fdata-sections -MMD -MP -I$(SRC64_DIR)/include
+A64_CFLAGS = $(A64_BASE_CFLAGS) $(WARN64_CFLAGS)
 A64_LDFLAGS = -nostdlib --gc-sections -T $(A64_ARCH_DIR)/kernel64.ld
 
 A64_SRCS = $(A64_ARCH_DIR)/boot64.S $(A64_ARCH_DIR)/vectors64.S \
@@ -56,17 +59,7 @@ A64_SRCS = $(A64_ARCH_DIR)/boot64.S $(A64_ARCH_DIR)/vectors64.S \
 	$(A64_ARCH_DIR)/sdhci64.c $(A64_ARCH_DIR)/pcie64.c \
 	$(A64_ARCH_DIR)/rp164.c $(A64_ARCH_DIR)/xhci64.c \
 	$(A64_ARCH_DIR)/usbhid64.c $(A64_ARCH_DIR)/keyboard64.c \
-	$(SRC64_DIR)/drivers/block64.c $(SRC64_DIR)/drivers/graphic64.c \
-	$(SRC64_DIR)/kernel/cache64.c $(SRC64_DIR)/kernel/fd64.c \
-	$(SRC64_DIR)/kernel/sheet64.c $(SRC64_DIR)/kernel/window64.c \
-	$(SRC64_DIR)/kernel/gui64.c $(SRC64_DIR)/kernel/console64.c \
-	$(SRC64_DIR)/kernel/elf64_loader.c $(SRC64_DIR)/kernel/process64.c \
-	$(SRC64_DIR)/kernel/syscall64.c \
-	$(SRC64_DIR)/kernel/memory64.c $(SRC64_DIR)/kernel/mtask64.c \
-	$(SRC64_DIR)/lib/fifo64.c $(SRC64_DIR)/lib/hangul64.c \
-	$(SRC64_DIR)/lib/keymap64.c \
-	$(SRC64_DIR)/lib/utf864.c \
-	$(SRC64_DIR)/lib/kstring64.c
+	$(COMMON64_C_SRCS)
 A64_OBJS = $(patsubst $(A64_ARCH_DIR)/%.S,$(A64_BUILD_DIR)/%.o,\
 	$(filter %.S,$(A64_SRCS))) \
 	$(patsubst $(A64_ARCH_DIR)/%.c,$(A64_BUILD_DIR)/%.o,\
@@ -106,33 +99,10 @@ $(A64_ELF) : $(A64_OBJS) $(A64_ARCH_DIR)/kernel64.ld
 $(A64_IMAGE) : $(A64_ELF)
 	$(A64_OBJCOPY) -O binary $< $@
 
-A64_APP_CFLAGS = -O2 -ffreestanding -nostdlib -mgeneral-regs-only \
+A64_APP_BASE_CFLAGS = -O2 -ffreestanding -nostdlib -mgeneral-regs-only \
 	-fno-stack-protector -fno-pic -fno-pie -fno-asynchronous-unwind-tables \
-	-fno-unwind-tables -Wall -Wextra -I$(APP64_DIR)/crt/include
-
-$(A64_APP_BUILD_DIR)/hello.o : $(APP64_DIR)/hello/hello.c
-	@$(MKDIR) $(dir $@)
-	$(A64_CC) $(A64_APP_CFLAGS) -c $< -o $@
-
-$(A64_APP_BUILD_DIR)/cat.o : $(APP64_DIR)/cat/cat.c
-	@$(MKDIR) $(dir $@)
-	$(A64_CC) $(A64_APP_CFLAGS) -c $< -o $@
-
-$(A64_APP_BUILD_DIR)/ktest.o : $(APP64_DIR)/ktest/ktest.c
-	@$(MKDIR) $(dir $@)
-	$(A64_CC) $(A64_APP_CFLAGS) -c $< -o $@
-
-$(A64_APP_BUILD_DIR)/mtest.o : $(APP64_DIR)/mtest/mtest.c
-	@$(MKDIR) $(dir $@)
-	$(A64_CC) $(A64_APP_CFLAGS) -c $< -o $@
-
-$(A64_APP_BUILD_DIR)/wtest.o : $(APP64_DIR)/wtest/wtest.c
-	@$(MKDIR) $(dir $@)
-	$(A64_CC) $(A64_APP_CFLAGS) -c $< -o $@
-
-$(A64_APP_BUILD_DIR)/나노.o : $(APP64_DIR)/나노/나노.c
-	@$(MKDIR) $(dir $@)
-	$(A64_CC) $(A64_APP_CFLAGS) -c $< -o $@
+	-fno-unwind-tables -I$(APP64_DIR)/crt/include
+A64_APP_CFLAGS = $(A64_APP_BASE_CFLAGS) $(WARN64_CFLAGS)
 
 $(A64_APP_BUILD_DIR)/crt0.o : $(APP64_DIR)/crt/crt0_aarch64.S
 	@$(MKDIR) $(dir $@)
@@ -150,57 +120,21 @@ $(A64_APP_BUILD_DIR)/malloc.o : $(APP64_DIR)/crt/malloc.c
 	@$(MKDIR) $(dir $@)
 	$(A64_CC) $(A64_APP_CFLAGS) -c $< -o $@
 
-$(A64_HELLO_ELF) : $(A64_APP_BUILD_DIR)/hello.o \
-	$(A64_APP_BUILD_DIR)/crt0.o $(A64_APP_BUILD_DIR)/syscall.o \
-	$(A64_APP_BUILD_DIR)/string.o $(APP64_DIR)/app64.ld
-	$(A64_CC) -nostdlib -static -T $(APP64_DIR)/app64.ld \
-		-Wl,-Map=$(A64_APP_BUILD_DIR)/hello.map -o $@ \
-		$(A64_APP_BUILD_DIR)/hello.o $(A64_APP_BUILD_DIR)/crt0.o \
-		$(A64_APP_BUILD_DIR)/syscall.o $(A64_APP_BUILD_DIR)/string.o
+define A64_APP_RULES
+$(A64_APP_BUILD_DIR)/$(1).o : $(APP64_DIR)/$(1)/$(1).c
+	@$$(MKDIR) $$(dir $$@)
+	$$(A64_CC) $$(A64_APP_CFLAGS) -c $$< -o $$@
 
-$(A64_CAT_ELF) : $(A64_APP_BUILD_DIR)/cat.o \
-	$(A64_APP_BUILD_DIR)/crt0.o $(A64_APP_BUILD_DIR)/syscall.o \
-	$(A64_APP_BUILD_DIR)/string.o $(APP64_DIR)/app64.ld
-	$(A64_CC) -nostdlib -static -T $(APP64_DIR)/app64.ld \
-		-Wl,-Map=$(A64_APP_BUILD_DIR)/cat.map -o $@ \
-		$(A64_APP_BUILD_DIR)/cat.o $(A64_APP_BUILD_DIR)/crt0.o \
-		$(A64_APP_BUILD_DIR)/syscall.o $(A64_APP_BUILD_DIR)/string.o
-
-$(A64_KTEST_ELF) : $(A64_APP_BUILD_DIR)/ktest.o \
-	$(A64_APP_BUILD_DIR)/crt0.o $(A64_APP_BUILD_DIR)/syscall.o \
-	$(A64_APP_BUILD_DIR)/string.o $(APP64_DIR)/app64.ld
-	$(A64_CC) -nostdlib -static -T $(APP64_DIR)/app64.ld \
-		-Wl,-Map=$(A64_APP_BUILD_DIR)/ktest.map -o $@ \
-		$(A64_APP_BUILD_DIR)/ktest.o $(A64_APP_BUILD_DIR)/crt0.o \
-		$(A64_APP_BUILD_DIR)/syscall.o $(A64_APP_BUILD_DIR)/string.o
-
-$(A64_MTEST_ELF) : $(A64_APP_BUILD_DIR)/mtest.o \
-	$(A64_APP_BUILD_DIR)/crt0.o $(A64_APP_BUILD_DIR)/syscall.o \
-	$(A64_APP_BUILD_DIR)/string.o $(A64_APP_BUILD_DIR)/malloc.o \
+$(A64_APP_BUILD_DIR)/$(1).elf : $(A64_APP_BUILD_DIR)/$(1).o \
+	$$(A64_APP_CRT_OBJS) $$(A64_APP_EXTRA_OBJS_$(1)) \
 	$(APP64_DIR)/app64.ld
-	$(A64_CC) -nostdlib -static -T $(APP64_DIR)/app64.ld \
-		-Wl,-Map=$(A64_APP_BUILD_DIR)/mtest.map -o $@ \
-		$(A64_APP_BUILD_DIR)/mtest.o $(A64_APP_BUILD_DIR)/crt0.o \
-		$(A64_APP_BUILD_DIR)/syscall.o $(A64_APP_BUILD_DIR)/string.o \
-		$(A64_APP_BUILD_DIR)/malloc.o
+	$$(A64_CC) -nostdlib -static -T $(APP64_DIR)/app64.ld \
+		-Wl,-Map=$(A64_APP_BUILD_DIR)/$(1).map -o $$@ \
+		$(A64_APP_BUILD_DIR)/$(1).o $$(A64_APP_CRT_OBJS) \
+		$$(A64_APP_EXTRA_OBJS_$(1))
+endef
 
-$(A64_WTEST_ELF) : $(A64_APP_BUILD_DIR)/wtest.o \
-	$(A64_APP_BUILD_DIR)/crt0.o $(A64_APP_BUILD_DIR)/syscall.o \
-	$(A64_APP_BUILD_DIR)/string.o $(APP64_DIR)/app64.ld
-	$(A64_CC) -nostdlib -static -T $(APP64_DIR)/app64.ld \
-		-Wl,-Map=$(A64_APP_BUILD_DIR)/wtest.map -o $@ \
-		$(A64_APP_BUILD_DIR)/wtest.o $(A64_APP_BUILD_DIR)/crt0.o \
-		$(A64_APP_BUILD_DIR)/syscall.o $(A64_APP_BUILD_DIR)/string.o
-
-$(A64_NANO_ELF) : $(A64_APP_BUILD_DIR)/나노.o \
-	$(A64_APP_BUILD_DIR)/crt0.o $(A64_APP_BUILD_DIR)/syscall.o \
-	$(A64_APP_BUILD_DIR)/string.o $(A64_APP_BUILD_DIR)/malloc.o \
-	$(APP64_DIR)/app64.ld
-	$(A64_CC) -nostdlib -static -T $(APP64_DIR)/app64.ld \
-		-Wl,-Map=$(A64_APP_BUILD_DIR)/나노.map -o $@ \
-		$(A64_APP_BUILD_DIR)/나노.o $(A64_APP_BUILD_DIR)/crt0.o \
-		$(A64_APP_BUILD_DIR)/syscall.o $(A64_APP_BUILD_DIR)/string.o \
-		$(A64_APP_BUILD_DIR)/malloc.o
+$(foreach app,$(APP64_NAMES),$(eval $(call A64_APP_RULES,$(app))))
 
 aarch64-stage : aarch64-mpy-foundation $(A64_BOOT_STAGE_INPUTS) $(A64_BOOT_STAGER)
 	$(PYTHON) $(A64_BOOT_STAGER) $(A64_BOOT_DIR) $(A64_BOOT_STAGE_SPECS)

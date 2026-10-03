@@ -18,6 +18,7 @@
 #include <graphic64.h>
 #include <int64.h>
 #include <keyboard64.h>
+#include <kernel64.h>
 #include <kstring64.h>
 #include <memory64.h>
 #include <gui64.h>

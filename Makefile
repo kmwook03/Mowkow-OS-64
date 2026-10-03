@@ -18,6 +18,7 @@
 
 include common/mk/config.mk
 include 32bit/mk/x86.mk
+include 64bit/mk/common64.mk
 include 64bit/mk/micropython.mk
 include 64bit/mk/x86_64.mk
 include 64bit/mk/aarch64.mk
@@ -29,7 +30,8 @@ include 64bit/mk/aarch64.mk
 .PHONY : default help info \
 	run iso clean $(APPS) \
 	x86_64 run64 run64-ahci parity64 parity64-ahci clean64 mpy-qstr \
-	aarch64 aarch64-stage aarch64-mpy-foundation clean-a64
+	aarch64 aarch64-stage aarch64-mpy-foundation clean-a64 \
+	style64 check64 test64-host test64-qemu test64-qemu-ahci
 
 default : $(IMG_FILE)
 
@@ -55,6 +57,12 @@ help :
 	@echo "    make aarch64-stage  build64/aarch64-boot/ 동기화"
 	@echo "    make clean-a64  AArch64 빌드 산출물 지우기"
 	@echo ""
+	@echo "  64비트 검사"
+	@echo "    make style64    자체 소스 스타일 검사"
+	@echo "    make check64    스타일·호스트 테스트·양 아키텍처 빌드"
+	@echo "    make test64-qemu       QEMU IDE 회귀 검사"
+	@echo "    make test64-qemu-ahci  QEMU AHCI 회귀 검사"
+	@echo ""
 	@echo "  그 밖에"
 	@echo "    make info       찾아낸 소스와 앱 목록 보기"
 	@echo "    make mpy-qstr   MicroPython 생성 헤더만 만들기"
@@ -67,3 +75,15 @@ info :
 	@echo "[64비트 커널]     $(KERNEL64_C_SRCS)"
 	@echo "[64비트 앱]       $(APP64_NAMES)"
 	@echo "[커널 크기 상한]  $(KERNEL64_SECTORS) 섹터"
+
+style64 :
+	$(PYTHON) $(TOOL64PATH)/check_style64.py
+
+test64-host :
+	$(PYTHON) -m unittest discover -s 64bit/tests -p 'test_*.py'
+
+check64 : style64 test64-host x86_64 aarch64
+
+test64-qemu : parity64
+
+test64-qemu-ahci : parity64-ahci

@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 /*
- * 머꼬 이식이 CORE 등급 기능을 여럿 쓴다: 왈러스(:=), 슬라이스, enumerate. 
+ * 머꼬 이식이 CORE 등급 기능을 여럿 쓴다: 왈러스(:=), 슬라이스, enumerate.
  * 하나씩 켜는 대신 등급을 CORE_FEATURES로 올린다.
  */
 #define MICROPY_CONFIG_ROM_LEVEL (MICROPY_CONFIG_ROM_LEVEL_CORE_FEATURES)
@@ -15,9 +15,9 @@
 #define MICROPY_STACK_CHECK     (1)
 /*
  * 기본값은 0이다. 그러면 C 스택을 다 쓴 뒤에야 검사가 걸리므로, 검사와
- * 검사 사이에 쌓인 프레임이 이미 스택 아래를 넘어 쓴 뒤다. 
- * 커널 메인 스택에서 돌 때는 넘친 자리가 .bss라 티가 안 났지만, 
- * 콘솔이 자기 태스크에서 돌면 그 아래는 memman64가 내준 남의 메모리라 곧바로 죽는다. 
+ * 검사 사이에 쌓인 프레임이 이미 스택 아래를 넘어 쓴 뒤다.
+ * 커널 메인 스택에서 돌 때는 넘친 자리가 .bss라 티가 안 났지만,
+ * 콘솔이 자기 태스크에서 돌면 그 아래는 memman64가 내준 남의 메모리라 곧바로 죽는다.
  * 여유를 두어 검사가 스택 안에서 걸리게 한다.
  */
 #define MICROPY_STACK_CHECK_MARGIN (8192)
@@ -39,8 +39,8 @@
 #define MICROPY_KBD_EXCEPTION   (1)
 
 /*
- * 콘솔은 프레임버퍼에 글자를 그릴 뿐 VT100 escape를 해석하지 않는다. 
- * readline.c의 기본 커서 이동 경로는 "\x1b[<N>D" 바이트를 그대로 보내는데, 그걸 이상한 글자로 찍게 된다. 
+ * 콘솔은 프레임버퍼에 글자를 그릴 뿐 VT100 escape를 해석하지 않는다.
+ * readline.c의 기본 커서 이동 경로는 "\x1b[<N>D" 바이트를 그대로 보내는데, 그걸 이상한 글자로 찍게 된다.
  * 대신 백스페이스로만 움직이는 판을 mphalport.c에서 준다.
  */
 #define MICROPY_HAL_HAS_VT100 (0)
@@ -54,16 +54,16 @@
 
 /*
  * 이 툴체인에는 <errno.h>가 없다(qstr 코드 생성 붙이면서 확인).
- * py/mperrno.h는 이 설정을 켜지 않으면 시스템 errno.h를 찾는다. 
+ * py/mperrno.h는 이 설정을 켜지 않으면 시스템 errno.h를 찾는다.
  * 켜면 MicroPython 자체 MP_Exxx 상수를 쓴다.
  */
 #define MICROPY_USE_INTERNAL_ERRNO (1)
 
 /*
- * OS를 전제하는 sys 기능은 쓰지 않는다. 
+ * OS를 전제하는 sys 기능은 쓰지 않는다.
  * sys 모듈 자체는 코어 여기저기서 참조하므로 남기고, OS/파일 시스템 관련 하위 기능만 끈다.
  *
- * 다만 머꼬는 네 모듈로 나뉜 채로 올라가기 때문에 import는 켠다. 
+ * 다만 머꼬는 네 모듈로 나뉜 채로 올라가기 때문에 import는 켠다.
  * MICROPY_PY_SYS_PATH가 꺼져 있으면 py/builtinimport.c:147이 받은
  * 이름을 그대로 stat하므로, import _data가 곧 루트의 _data.py다.
  */
@@ -78,7 +78,7 @@
  * 실제 부동소수점 작업으로 FPU/SSE가 확인되어 MICROPY_PY_BUILTINS_FLOAT을 배정밀도로 켠다.
  * x86_64는 double을 하드웨어로 처리하므로 float으로 낮출 이유가 없다.
  * MICROPY_PY_BUILTINS_COMPLEX는 기본값이 FLOAT을 따라가지만 일부러 끈다.
- * 복소수를 켜면 FLOAT이 필요로 한 두 함수(pow, nan) 보다 
+ * 복소수를 켜면 FLOAT이 필요로 한 두 함수(pow, nan) 보다
  * 훨씬 많은 초월함수(csqrt, cexp, ...)를 새로 만들어야 한다.
  */
 #define MICROPY_FLOAT_IMPL      (MICROPY_FLOAT_IMPL_DOUBLE)
@@ -99,7 +99,7 @@
 
 /*
  * io도 같은 이유로 끈다. modio.c의 open은 포트가 mp_builtin_open_obj를
- * 내놓아야 링크되는데(modio.c:208) 우리에게는 POSIX 파일이 없다. 
+ * 내놓아야 링크되는데(modio.c:208) 우리에게는 POSIX 파일이 없다.
  * 머꼬의 파일 읽기는 io.open이 아니라 mowio.readfile(fd64)로 우회한다.
  */
 #define MICROPY_PY_IO (0)
@@ -111,7 +111,7 @@
 
 /*
  * 이 툴체인에는 libc가 없어서 alloca를 선언해 줄 <alloca.h>도 없다
- * (#include <alloca.h>가 컴파일되지 않는 것을 확인). 
+ * (#include <alloca.h>가 컴파일되지 않는 것을 확인).
  * 코어에 몇 군데 있는 alloca() 자리를 GC 힙으로 돌린다.
  */
 #define MICROPY_NO_ALLOCA (1)

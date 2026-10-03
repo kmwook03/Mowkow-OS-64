@@ -71,8 +71,10 @@ struct TSS64 {
 
 void init_gdtidt64(void);
 void init_fpu64(void);
-void set_gdt64_desc(struct GDT64_DESCRIPTOR *sd, uint32_t limit, uint32_t base, uint8_t access, uint8_t flags);
+void set_gdt64_desc(struct GDT64_DESCRIPTOR *sd, uint32_t limit,
+	uint32_t base, uint8_t access, uint8_t flags);
 void set_tss64_desc(struct TSS64_DESCRIPTOR *sd, uintptr_t base, uint32_t limit);
-void set_idt64_gate(struct IDT64_GATE *gd, uintptr_t offset, uint16_t selector, uint8_t ist, uint8_t access);
+void set_idt64_gate(struct IDT64_GATE *gd, uintptr_t offset,
+	uint16_t selector, uint8_t ist, uint8_t access);
 
 #endif

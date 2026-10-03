@@ -1,7 +1,7 @@
 /*
  * syscall64.c -- 시스템 콜 처리 (int 0x80)
  *
- * 번호는 rax, 인수는 rdi/rsi/rdx/r10/r8/r9, 반환값은 rax에 담는다. 
+ * 번호는 rax, 인수는 rdi/rsi/rdx/r10/r8/r9, 반환값은 rax에 담는다.
  * 음수는 오류다.
  *
  * 유저가 준 포인터는 반드시 process64_user_range_valid로 확인한 뒤에 쓴다.

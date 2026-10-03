@@ -136,7 +136,8 @@ void irq_handler64(const struct INTERRUPT_FRAME64 *frame)
 	}
 }
 
-void set_gdt64_desc(struct GDT64_DESCRIPTOR *sd, uint32_t limit, uint32_t base, uint8_t access, uint8_t flags)
+void set_gdt64_desc(struct GDT64_DESCRIPTOR *sd, uint32_t limit,
+	uint32_t base, uint8_t access, uint8_t flags)
 {
 	sd->limit_low = (uint16_t) (limit & 0xffff);
 	sd->base_low = (uint16_t) (base & 0xffff);
@@ -158,7 +159,8 @@ void set_tss64_desc(struct TSS64_DESCRIPTOR *sd, uintptr_t base, uint32_t limit)
 	sd->reserved = 0;
 }
 
-void set_idt64_gate(struct IDT64_GATE *gd, uintptr_t offset, uint16_t selector, uint8_t ist, uint8_t access)
+void set_idt64_gate(struct IDT64_GATE *gd, uintptr_t offset,
+	uint16_t selector, uint8_t ist, uint8_t access)
 {
 	gd->offset_low = (uint16_t) (offset & 0xffff);
 	gd->selector = selector;

@@ -147,7 +147,7 @@ static void sheet64_setbuf_nolock(struct SHEET64 *sht, uint8_t *buf, int32_t xsi
 }
 
 /*
- * 원본의 4픽셀(32비트 워드) 묶음 최적화를 빼고 픽셀 단위로만 처리. 
+ * 원본의 4픽셀(32비트 워드) 묶음 최적화를 빼고 픽셀 단위로만 처리.
  * 스트라이드가 화면 폭과 다를 수 있어 워드 경계 가정이 깨지고,
  * 겹침 처리에서 가장 미묘한 부분이라 먼저 정확하게 옮기는 쪽을 택했다.
  * 800x600 전체 갱신이 눈에 띄게 느려지면 그때 되살린다.
@@ -299,7 +299,8 @@ static void sheet64_updown_nolock(struct SHEET64 *sht, int32_t height)
 	}
 }
 
-static void sheet64_refresh_nolock(struct SHEET64 *sht, int32_t bx0, int32_t by0, int32_t bx1, int32_t by1)
+static void sheet64_refresh_nolock(struct SHEET64 *sht, int32_t bx0,
+	int32_t by0, int32_t bx1, int32_t by1)
 {
 	if (sht->height >= 0) {
 		sheet64_refreshsub(sht->ctl, sht->vx0 + bx0, sht->vy0 + by0,

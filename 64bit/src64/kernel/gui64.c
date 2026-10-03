@@ -422,7 +422,7 @@ static void taskbar_press(int32_t bx, int32_t by)
 	}
 }
 
-/* 새 창은 콘솔 0 자리에서 조금씩 어긋나게 놓는다. 
+/* 새 창은 콘솔 0 자리에서 조금씩 어긋나게 놓는다.
    완전히 겹치면 눈으로 확인할 수 없다. */
 #define GUI64_CASCADE 24
 

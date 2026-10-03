@@ -143,15 +143,15 @@ int xhci64_select_controller(uint32_t controller_id)
 	return 0;
 }
 
-static volatile uint8_t *xhci_capability64(uintptr_t rp1_base)
+static uintptr_t xhci_capability64(uintptr_t rp1_base)
 {
-	return (volatile uint8_t *) (rp1_base + xhci_controller_offset);
+	return rp1_base + xhci_controller_offset;
 }
 
 static int controller_has_connection64(uintptr_t base)
 {
-	volatile uint8_t *capability = (volatile uint8_t *) base;
-	volatile uint8_t *operational;
+	uintptr_t capability = base;
+	uintptr_t operational;
 	uint32_t caplength;
 	uint32_t hcsparams1;
 	uint32_t port_count;
@@ -275,7 +275,7 @@ static void delay_xhci64(uint32_t milliseconds)
 	}
 }
 
-static uint32_t port_protocol_major64(volatile uint8_t *capability,
+static uint32_t port_protocol_major64(uintptr_t capability,
 	uint32_t port_id)
 {
 	uint32_t hccparams1;
@@ -310,7 +310,7 @@ static uint32_t port_protocol_major64(volatile uint8_t *capability,
 static int probe_controller64(uintptr_t base, uint32_t *capability,
 	uint32_t *hcsparams1)
 {
-	volatile uint8_t *registers = (volatile uint8_t *) base;
+	uintptr_t registers = base;
 	uint32_t cap;
 	uint32_t params;
 	uint32_t caplength;
@@ -334,7 +334,7 @@ static int probe_controller64(uintptr_t base, uint32_t *capability,
 	return 0;
 }
 
-static void advance_event_ring64(volatile uint8_t *interrupter)
+static void advance_event_ring64(uintptr_t interrupter)
 {
 	xhci0_event_dequeue++;
 	if (xhci0_event_dequeue == XHCI_RING_TRBS) {
@@ -347,8 +347,8 @@ static void advance_event_ring64(volatile uint8_t *interrupter)
 	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
-static int wait_command_completion64(volatile uint8_t *operational,
-	volatile uint8_t *interrupter, uint64_t expected_pointer,
+static int wait_command_completion64(uintptr_t operational,
+	uintptr_t interrupter, uint64_t expected_pointer,
 	struct XHCI64_COMMAND_RESULT *result, uint32_t *slot_id)
 {
 	uint64_t deadline;
@@ -395,7 +395,7 @@ static int wait_command_completion64(volatile uint8_t *operational,
 	return -2;
 }
 
-static int wait_transfer_completion64(volatile uint8_t *interrupter,
+static int wait_transfer_completion64(uintptr_t interrupter,
 	uint64_t expected_pointer, uint32_t slot_id, uint32_t endpoint_id,
 	uint32_t timeout_ms, struct XHCI64_DESCRIPTOR_RESULT *result)
 {
@@ -467,8 +467,8 @@ int xhci64_probe_rp1(uintptr_t rp1_base, uint32_t capability[2],
 static int reset_controller64(uintptr_t base,
 	struct XHCI64_RESET_RESULT *result)
 {
-	volatile uint8_t *capability = (volatile uint8_t *) base;
-	volatile uint8_t *operational;
+	uintptr_t capability = base;
+	uintptr_t operational;
 	volatile uint32_t *command;
 	volatile uint32_t *status;
 	uint32_t caplength;
@@ -527,10 +527,10 @@ int xhci64_reset_rp1(uintptr_t rp1_base,
 static int start_selected_controller64(uintptr_t rp1_base,
 	struct XHCI64_START_RESULT *result)
 {
-	volatile uint8_t *capability;
-	volatile uint8_t *operational;
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability;
+	uintptr_t operational;
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	uint32_t caplength;
 	uint32_t hcsparams1;
 	uint32_t scratchpads;
@@ -663,9 +663,8 @@ int xhci64_port_inventory(uintptr_t rp1_base,
 		return -1;
 	}
 	for (controller = 0; controller < 2U; controller++) {
-		volatile uint8_t *capability = (volatile uint8_t *)
-			(rp1_base + offsets[controller]);
-		volatile uint8_t *operational;
+		uintptr_t capability = rp1_base + offsets[controller];
+		uintptr_t operational;
 		uint32_t caplength;
 		uint32_t count;
 		uint32_t port;
@@ -699,10 +698,10 @@ int xhci64_port_inventory(uintptr_t rp1_base,
 int xhci64_noop_command(uintptr_t rp1_base,
 	struct XHCI64_COMMAND_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *operational;
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t operational;
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbell;
 	uint64_t command_pointer;
 	uint32_t caplength;
@@ -736,10 +735,10 @@ int xhci64_noop_command(uintptr_t rp1_base,
 int xhci64_enable_slot(uintptr_t rp1_base,
 	struct XHCI64_SLOT_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *operational;
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t operational;
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbell;
 	struct XHCI64_COMMAND_RESULT command_result;
 	uint64_t command_pointer;
@@ -794,10 +793,10 @@ int xhci64_address_device(uintptr_t rp1_base, uint32_t port_id,
 	uint32_t port_speed, uint32_t slot_id,
 	struct XHCI64_ADDRESS_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *operational;
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t operational;
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbell;
 	struct XHCI64_COMMAND_RESULT command_result;
 	uint64_t command_pointer;
@@ -902,9 +901,9 @@ static int read_descriptor64(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t descriptor_type, uint32_t descriptor_index, uint32_t length,
 	struct XHCI64_DESCRIPTOR_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbells;
 	uint64_t buffer_dma;
 	uint64_t status_pointer;
@@ -1111,9 +1110,9 @@ static int control_no_data64(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t request_type, uint32_t request, uint32_t value,
 	uint32_t request_index)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbells;
 	struct XHCI64_DESCRIPTOR_RESULT transfer;
 	uint64_t status_pointer;
@@ -1173,10 +1172,10 @@ int xhci64_configure_boot_hid(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t port_speed, const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_CONFIGURE_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *operational;
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t operational;
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbell;
 	struct XHCI64_COMMAND_RESULT command_result;
 	uint64_t command_pointer;
@@ -1298,9 +1297,9 @@ int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_KEY_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbells;
 	struct XHCI64_DESCRIPTOR_RESULT transfer;
 	uint64_t report_dma;
@@ -1401,9 +1400,9 @@ int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_KEY_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbells;
 	struct XHCI64_DESCRIPTOR_RESULT transfer;
 	uint64_t trb_pointer;
@@ -1484,7 +1483,7 @@ int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
 int xhci64_hid_arm(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
+	uintptr_t capability = xhci_capability64(rp1_base);
 	volatile uint32_t *doorbells;
 	uint32_t endpoint_id;
 	uint32_t index;
@@ -1520,9 +1519,9 @@ int xhci64_hid_poll(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid, uint8_t *report,
 	size_t report_length)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	struct XHCI64_TRB *event;
 	uint64_t event_pointer;
 	uint32_t actual_length;
@@ -1602,8 +1601,8 @@ int xhci64_keyboard_poll(uintptr_t rp1_base, uint32_t slot_id,
 int xhci64_reset_connected_port(uintptr_t rp1_base,
 	struct XHCI64_PORT_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *operational;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t operational;
 	volatile uint32_t *portsc;
 	uint64_t deadline;
 	uint64_t frequency;

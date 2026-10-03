@@ -73,8 +73,8 @@
 
 #define SDHCI_TIMEOUT 10000000U
 
-static volatile uint8_t *sdhci;
-static volatile uint8_t *sdhci_cfg;
+static uintptr_t sdhci;
+static uintptr_t sdhci_cfg;
 static uint32_t card_rca;
 static uint64_t card_sectors;
 static int card_high_capacity;
@@ -347,8 +347,8 @@ static int controller_init(void)
 	uint32_t response;
 	uint32_t retry;
 
-	sdhci = (volatile uint8_t *) arch64_phys_to_virt(SDHCI_BASE);
-	sdhci_cfg = (volatile uint8_t *) arch64_phys_to_virt(SDHCI_CFG_BASE);
+	sdhci = arch64_phys_to_virt(SDHCI_BASE);
+	sdhci_cfg = arch64_phys_to_virt(SDHCI_CFG_BASE);
 	if (read16(SDHCI_HOST_VERSION) == 0xffffU) {
 		return -1;
 	}

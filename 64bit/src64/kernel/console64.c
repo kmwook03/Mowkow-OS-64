@@ -345,7 +345,8 @@ static void serial_putc(char c)
 #endif
 }
 
-static void fill_rect(struct CONSOLE64 *con, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t color)
+static void fill_rect(struct CONSOLE64 *con, uint16_t x, uint16_t y,
+	uint16_t w, uint16_t h, uint8_t color)
 {
 	uint16_t px;
 	uint16_t py;
@@ -1019,7 +1020,8 @@ static void execute_command(struct CONSOLE64 *con)
 		if (count == 0) {
 			puts_con(con, "no files\n");
 		}
-	} else if (str_eq(con->input_line, "type readme.txt") || str_eq(con->input_line, "읽기 readme.txt")) {
+	} else if (str_eq(con->input_line, "type readme.txt") ||
+		str_eq(con->input_line, "읽기 readme.txt")) {
 		struct FDHANDLE64 fh;
 		char buf[65];
 		size_t n;

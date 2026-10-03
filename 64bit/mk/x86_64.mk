@@ -19,12 +19,22 @@ $(foreach v,$(shell $(PYTHON) $(MKFAT32) --make-vars),$(eval $(v)))
 
 # 로더가 읽어 들이는 커널 섹터 수이자 커널 크기 상한. 예약 영역은 992섹터
 # (507,904바이트)까지 있으므로 그 안에서는 올려도 파일 시스템이 밀리지 않는다.
-# 800섹터일 때 커널이 389,540바이트(95.1%)라 남은 자리가 20KiB뿐이었다. 
+# 800섹터일 때 커널이 389,540바이트(95.1%)라 남은 자리가 20KiB뿐이었다.
 # 992섹터 천장 아래로 여유를 두고 960으로 올린다.
 KERNEL64_SECTORS = 960
 
 # -- 소스 찾기 --
-KERNEL64_C_SRCS = $(wildcard $(SRC64_DIR)/kernel/*.c) $(wildcard $(SRC64_DIR)/drivers/*.c) $(wildcard $(SRC64_DIR)/lib/*.c)
+X64_PLATFORM_C_SRCS = \
+	$(SRC64_DIR)/drivers/ahci64.c \
+	$(SRC64_DIR)/drivers/ata64.c \
+	$(SRC64_DIR)/drivers/int64.c \
+	$(SRC64_DIR)/drivers/keyboard64.c \
+	$(SRC64_DIR)/drivers/mouse64.c \
+	$(SRC64_DIR)/drivers/pci64.c \
+	$(SRC64_DIR)/drivers/timer64.c \
+	$(SRC64_DIR)/kernel/dsctbl64.c \
+	$(SRC64_DIR)/kernel/kernel64.c
+KERNEL64_C_SRCS = $(COMMON64_C_SRCS) $(X64_PLATFORM_C_SRCS)
 KERNEL64_ASM_SRCS = $(wildcard $(SRC64_DIR)/kernel/*.asm)
 KERNEL64_C_OBJS = $(patsubst $(SRC64_DIR)/%.c, $(BUILD64_DIR)/%.o, $(KERNEL64_C_SRCS))
 KERNEL64_ASM_OBJS = $(patsubst $(SRC64_DIR)/kernel/%.asm, $(BUILD64_DIR)/kernel/%.o, $(KERNEL64_ASM_SRCS))
@@ -45,8 +55,6 @@ PY64_FILES = $(wildcard $(PY64_DIR)/*.PY) $(wildcard $(PY64_DIR)/*.SCM) \
 	$(wildcard $(PY64_DIR)/머꼬/*.py) $(wildcard $(PY64_DIR)/머꼬/*.scm) \
 	$(wildcard $(PY64_DIR)/머꼬/*.mk)
 
-APP64_DIRS = $(wildcard $(APP64_DIR)/*/)
-APP64_NAMES = $(filter-out crt,$(notdir $(patsubst %/,%,$(APP64_DIRS))))
 APP64_TARGETS = $(foreach app, $(APP64_NAMES), $(BUILD64_DIR)/app/$(app)/$(app).elf)
 APP64_CRT_OBJS = $(BUILD64_DIR)/app/crt/crt0.o $(BUILD64_DIR)/app/crt/syscall.o \
 	$(BUILD64_DIR)/app/crt/string.o $(BUILD64_DIR)/app/crt/malloc.o

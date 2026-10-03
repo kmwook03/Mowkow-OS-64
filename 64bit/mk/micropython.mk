@@ -64,10 +64,20 @@ MPY_SHARED_OBJS = $(MPY_OBJS_DIR)/shared/runtime/gchelper_generic.o \
 	$(MPY_OBJS_DIR)/shared/runtime/interrupt_char.o \
 	$(MPY_OBJS_DIR)/shared/readline/readline.o
 
-MPY_BASE_INCLUDES = -I$(SRC64_DIR)/mpport -I$(SRC64_DIR)/mpport/libc -I$(MPY_DIR) -I$(MPY_PY_DIR)
+# Mark upstream headers as system headers.  Port sources still use the strict
+# first-party warning policy, while diagnostics originating in vendor headers
+# stay in the vendor lane.
+MPY_BASE_INCLUDES = -I$(SRC64_DIR)/mpport -I$(SRC64_DIR)/mpport/libc \
+	-isystem $(MPY_DIR) -isystem $(MPY_PY_DIR)
 MPY_INCLUDES = $(MPY_BASE_INCLUDES) -I$(MPY_GEN_DIR)
-MPY_CFLAGS = $(X64_CFLAGS) $(MPY_INCLUDES)
-MPY_QSTR_CFLAGS = $(MPY_CFLAGS) -DNO_QSTR
+MPY_QSTR_INCLUDES = -I$(SRC64_DIR)/mpport -I$(SRC64_DIR)/mpport/libc \
+	-I$(MPY_DIR) -I$(MPY_PY_DIR) -I$(MPY_GEN_DIR)
+MPY_VENDOR_CFLAGS = $(X64_BASE_CFLAGS) $(VENDOR64_WARNINGS) $(MPY_INCLUDES)
+MPY_PORT_CFLAGS = $(X64_CFLAGS) $(MPY_INCLUDES)
+# qstr preprocessing consumes vendor and port sources in one invocation.  It
+# does not compile objects, so use the vendor warning policy here.
+MPY_QSTR_CFLAGS = $(X64_BASE_CFLAGS) $(VENDOR64_WARNINGS) \
+	$(MPY_QSTR_INCLUDES) -DNO_QSTR
 
 MPY_GENHDRS = $(MPY_GENHDR_DIR)/qstrdefs.generated.h \
 	$(MPY_GENHDR_DIR)/moduledefs.h \
@@ -109,7 +119,7 @@ $(MPY_GEN_DIR)/root_pointers.collected : $(MPY_GEN_DIR)/root_pointer.split
 
 $(MPY_GENHDR_DIR)/qstrdefs.generated.h : $(MPY_GEN_DIR)/qstrdefs.collected.h $(MPY_PY_DIR)/qstrdefs.h $(MPY_PY_DIR)/makeqstrdata.py
 	@$(MKDIR) $(MPY_GENHDR_DIR)
-	cat $(MPY_PY_DIR)/qstrdefs.h $(MPY_GEN_DIR)/qstrdefs.collected.h | sed 's/^Q(.*)/"&"/' | $(X64_CC) -E $(MPY_CFLAGS) - | sed 's/^"\(Q(.*)\)"/\1/' > $(MPY_GEN_DIR)/qstrdefs.preprocessed.h
+	cat $(MPY_PY_DIR)/qstrdefs.h $(MPY_GEN_DIR)/qstrdefs.collected.h | sed 's/^Q(.*)/"&"/' | $(X64_CC) -E $(MPY_QSTR_CFLAGS) - | sed 's/^"\(Q(.*)\)"/\1/' > $(MPY_GEN_DIR)/qstrdefs.preprocessed.h
 	$(PYTHON) $(MPY_PY_DIR)/makeqstrdata.py $(MPY_GEN_DIR)/qstrdefs.preprocessed.h > $@
 
 $(MPY_GENHDR_DIR)/moduledefs.h : $(MPY_GEN_DIR)/moduledefs.collected $(MPY_PY_DIR)/makemoduledefs.py
@@ -125,19 +135,19 @@ mpy-qstr : $(MPY_GENHDRS)
 # -- 컴파일 (코어 / 포팅 계층 / 공용 런타임) --
 $(MPY_OBJS_DIR)/%.o : $(MPY_PY_DIR)/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(X64_CC) $(MPY_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
+	$(X64_CC) $(MPY_VENDOR_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
 $(MPY_OBJS_DIR)/mpport/%.o : $(SRC64_DIR)/mpport/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(X64_CC) $(MPY_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
+	$(X64_CC) $(MPY_PORT_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
 $(MPY_OBJS_DIR)/shared/runtime/%.o : $(MPY_DIR)/shared/runtime/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(X64_CC) $(MPY_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
+	$(X64_CC) $(MPY_VENDOR_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
 $(MPY_OBJS_DIR)/shared/readline/%.o : $(MPY_DIR)/shared/readline/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(X64_CC) $(MPY_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
+	$(X64_CC) $(MPY_VENDOR_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
 # -- AArch64 build instance (M9a) --
 #
@@ -166,8 +176,16 @@ A64_MPY_FOUNDATION_OBJ = $(A64_MPY_OBJS_DIR)/micropython-foundation.o
 A64_MPY_FOUNDATION_MAP = $(A64_MPY_OBJS_DIR)/micropython-foundation.map
 
 A64_MPY_INCLUDES = $(MPY_BASE_INCLUDES) -I$(A64_MPY_GEN_DIR)
-A64_MPY_CFLAGS = $(filter-out -mgeneral-regs-only -MMD -MP,$(A64_CFLAGS)) $(A64_MPY_INCLUDES)
-A64_MPY_QSTR_CFLAGS = $(A64_MPY_CFLAGS) -DNO_QSTR
+A64_MPY_QSTR_INCLUDES = -I$(SRC64_DIR)/mpport \
+	-I$(SRC64_DIR)/mpport/libc -I$(MPY_DIR) -I$(MPY_PY_DIR) \
+	-I$(A64_MPY_GEN_DIR)
+A64_MPY_BASE_CFLAGS = $(filter-out -mgeneral-regs-only -MMD -MP,\
+	$(A64_BASE_CFLAGS)) $(A64_MPY_INCLUDES)
+A64_MPY_VENDOR_CFLAGS = $(A64_MPY_BASE_CFLAGS) $(VENDOR64_WARNINGS)
+A64_MPY_PORT_CFLAGS = $(A64_MPY_BASE_CFLAGS) $(WARN64_CFLAGS)
+A64_MPY_QSTR_CFLAGS = $(filter-out -mgeneral-regs-only -MMD -MP,\
+	$(A64_BASE_CFLAGS)) $(A64_MPY_QSTR_INCLUDES) $(VENDOR64_WARNINGS) \
+	-DNO_QSTR
 A64_MPY_GENHDRS = $(A64_MPY_GENHDR_DIR)/qstrdefs.generated.h \
 	$(A64_MPY_GENHDR_DIR)/moduledefs.h \
 	$(A64_MPY_GENHDR_DIR)/root_pointers.h
@@ -207,7 +225,7 @@ $(A64_MPY_GEN_DIR)/root_pointers.collected : $(A64_MPY_GEN_DIR)/root_pointer.spl
 
 $(A64_MPY_GENHDR_DIR)/qstrdefs.generated.h : $(A64_MPY_GEN_DIR)/qstrdefs.collected.h $(MPY_PY_DIR)/qstrdefs.h $(MPY_PY_DIR)/makeqstrdata.py
 	@$(MKDIR) $(A64_MPY_GENHDR_DIR)
-	cat $(MPY_PY_DIR)/qstrdefs.h $(A64_MPY_GEN_DIR)/qstrdefs.collected.h | sed 's/^Q(.*)/"&"/' | $(A64_CC) -E $(A64_MPY_CFLAGS) - | sed 's/^"\(Q(.*)\)"/\1/' > $(A64_MPY_GEN_DIR)/qstrdefs.preprocessed.h
+	cat $(MPY_PY_DIR)/qstrdefs.h $(A64_MPY_GEN_DIR)/qstrdefs.collected.h | sed 's/^Q(.*)/"&"/' | $(A64_CC) -E $(A64_MPY_QSTR_CFLAGS) - | sed 's/^"\(Q(.*)\)"/\1/' > $(A64_MPY_GEN_DIR)/qstrdefs.preprocessed.h
 	$(PYTHON) $(MPY_PY_DIR)/makeqstrdata.py $(A64_MPY_GEN_DIR)/qstrdefs.preprocessed.h > $@
 
 $(A64_MPY_GENHDR_DIR)/moduledefs.h : $(A64_MPY_GEN_DIR)/moduledefs.collected $(MPY_PY_DIR)/makemoduledefs.py
@@ -220,19 +238,19 @@ $(A64_MPY_GENHDR_DIR)/root_pointers.h : $(A64_MPY_GEN_DIR)/root_pointers.collect
 
 $(A64_MPY_OBJS_DIR)/%.o : $(MPY_PY_DIR)/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(A64_MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(A64_CC) $(A64_MPY_CFLAGS) -MMD -MP -c $< -o $@
+	$(A64_CC) $(A64_MPY_VENDOR_CFLAGS) -MMD -MP -c $< -o $@
 
 $(A64_MPY_OBJS_DIR)/mpport/%.o : $(SRC64_DIR)/mpport/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(A64_MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(A64_CC) $(A64_MPY_CFLAGS) -MMD -MP -c $< -o $@
+	$(A64_CC) $(A64_MPY_PORT_CFLAGS) -MMD -MP -c $< -o $@
 
 $(A64_MPY_OBJS_DIR)/shared/runtime/%.o : $(MPY_DIR)/shared/runtime/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(A64_MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(A64_CC) $(A64_MPY_CFLAGS) -MMD -MP -c $< -o $@
+	$(A64_CC) $(A64_MPY_VENDOR_CFLAGS) -MMD -MP -c $< -o $@
 
 $(A64_MPY_OBJS_DIR)/shared/readline/%.o : $(MPY_DIR)/shared/readline/%.c $(SRC64_DIR)/mpport/mpconfigport.h | $(A64_MPY_GENHDRS)
 	@$(MKDIR) $(dir $@)
-	$(A64_CC) $(A64_MPY_CFLAGS) -MMD -MP -c $< -o $@
+	$(A64_CC) $(A64_MPY_VENDOR_CFLAGS) -MMD -MP -c $< -o $@
 
 $(A64_MPY_FOUNDATION_OBJ) : $(A64_MPY_LINK_OBJS)
 	$(A64_LD) -r -Map=$(A64_MPY_FOUNDATION_MAP) -o $@ $(A64_MPY_LINK_OBJS)
