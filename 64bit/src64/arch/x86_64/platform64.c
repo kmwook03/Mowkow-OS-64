@@ -49,7 +49,9 @@ int platform_task_context_init64(struct CONTEXT64 *context,
 	uint64_t *stack_pointer;
 
 	if (context == NULL || entry == NULL || stack_base == 0 ||
-			stack_size < 128) {
+			stack_size < 128 || (stack_base & 0x0fU) != 0 ||
+			(stack_size & 0x0fU) != 0 ||
+			stack_size > UINTPTR_MAX - stack_base) {
 		return -1;
 	}
 	stack_pointer = (uint64_t *) align_down64(stack_base + stack_size, 16);

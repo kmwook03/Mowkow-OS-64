@@ -116,8 +116,9 @@ static void mpport_stack_limit(void)
 	 * 깊은 재귀가 조용히 태스크 스택을 침범한다.
 	 */
 	task = task_now64();
-	if (task != NULL && task->stack_base != 0) {
-		available = (size_t) ((uintptr_t) &here - task->stack_base);
+	if (task != NULL && task->stack_usable_base != 0) {
+		available = (size_t) ((uintptr_t) &here -
+			task->stack_usable_base);
 	} else {
 		available = (size_t) ((uintptr_t) &here - (uintptr_t) stack_bottom);
 	}

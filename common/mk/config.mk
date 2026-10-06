@@ -71,11 +71,31 @@ $(error BOOT_TEST64 must be 0 or 1)
 endif
 BOOT_TEST64_CFLAGS = -DMOWKOW64_BOOT_TESTS=$(BOOT_TEST64)
 
+# Optional scheduler stack canaries and high-water accounting.  The normal
+# image keeps the byte-fill scan out of context switches; debug builds opt in.
+TASK_STACK_DEBUG64 ?= 0
+ifneq ($(TASK_STACK_DEBUG64),$(filter $(TASK_STACK_DEBUG64),0 1))
+$(error TASK_STACK_DEBUG64 must be 0 or 1)
+endif
+TASK_STACK_DEBUG64_CFLAGS = \
+	-DMOWKOW64_TASK_STACK_DEBUG=$(TASK_STACK_DEBUG64)
+TASK_STACK_DEBUG64_STAMP = $(BUILD64_DIR)/config/task-stack-debug
+
+.PHONY : task-stack-debug64-force
+task-stack-debug64-force :
+
+$(TASK_STACK_DEBUG64_STAMP) : task-stack-debug64-force
+	@$(MKDIR) $(dir $@)
+	@if test ! -f $@ || test "$$(cat $@)" != "$(TASK_STACK_DEBUG64)"; then \
+		echo "$(TASK_STACK_DEBUG64)" > $@; \
+	fi
+
 # -O2: 최적화를 끄면(gcc 기본값 -O0) sheet64.c의 픽셀 루프가 픽셀마다 곱셈을
 # 다시 하고 레지스터 할당도 없어 창 드래그가 눈에 띄게 느리다.
 X64_BASE_CFLAGS = -O2 -ffreestanding -mno-red-zone -fno-pic \
 	-fno-stack-protector -Wa,--noexecstack -I$(SRC64_DIR)/include
-X64_CFLAGS = $(X64_BASE_CFLAGS) $(WARN64_CFLAGS) $(BOOT_TEST64_CFLAGS)
+X64_CFLAGS = $(X64_BASE_CFLAGS) $(WARN64_CFLAGS) $(BOOT_TEST64_CFLAGS) \
+	$(TASK_STACK_DEBUG64_CFLAGS)
 X64_ASMFLAGS = -f elf64
 X64_BOOT_ASMFLAGS = -f bin
 X64_LDFLAGS = -nostdlib -T $(SRC64_DIR)/kernel/kernel64.ld

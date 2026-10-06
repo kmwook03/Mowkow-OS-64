@@ -19,42 +19,95 @@ static void memory_unlock64(uint64_t state)
 	platform_irq_restore64(state);
 }
 
-uintptr_t align_up64(uintptr_t value, size_t alignment)
+static int is_power_of_two64(size_t value)
+{
+	return value != 0 && (value & (value - 1)) == 0;
+}
+
+static int range_end64(uintptr_t addr, size_t size, uintptr_t *end)
+{
+	if (end == NULL || size > UINTPTR_MAX - addr) {
+		return MEMMAN64_ERR_OVERFLOW;
+	}
+	*end = addr + size;
+	return 0;
+}
+
+int align_up_checked64(uintptr_t value, size_t alignment,
+	uintptr_t *result)
 {
 	uintptr_t mask;
 
-	if (alignment == 0) {
-		return value;
+	if (result == NULL || !is_power_of_two64(alignment)) {
+		return MEMMAN64_ERR_INVALID;
 	}
 	mask = (uintptr_t) alignment - 1;
-	return (value + mask) & ~mask;
+	if (value > UINTPTR_MAX - mask) {
+		return MEMMAN64_ERR_OVERFLOW;
+	}
+	*result = (value + mask) & ~mask;
+	return 0;
+}
+
+int align_down_checked64(uintptr_t value, size_t alignment,
+	uintptr_t *result)
+{
+	uintptr_t mask;
+
+	if (result == NULL || !is_power_of_two64(alignment)) {
+		return MEMMAN64_ERR_INVALID;
+	}
+	mask = (uintptr_t) alignment - 1;
+	*result = value & ~mask;
+	return 0;
+}
+
+uintptr_t align_up64(uintptr_t value, size_t alignment)
+{
+	uintptr_t result;
+
+	if (align_up_checked64(value, alignment, &result) != 0) {
+		return 0;
+	}
+	return result;
 }
 
 uintptr_t align_down64(uintptr_t value, size_t alignment)
 {
-	uintptr_t mask;
+	uintptr_t result;
 
-	if (alignment == 0) {
-		return value;
+	if (align_down_checked64(value, alignment, &result) != 0) {
+		return 0;
 	}
-	mask = (uintptr_t) alignment - 1;
-	return value & ~mask;
+	return result;
 }
 
 void early_alloc64_init(uintptr_t start, uintptr_t end)
 {
-	early_next = align_up64(start, MEMMAN64_PAGE_SIZE);
-	early_limit = align_down64(end, MEMMAN64_PAGE_SIZE);
+	if (align_up_checked64(start, MEMMAN64_PAGE_SIZE, &early_next) != 0 ||
+		align_down_checked64(end, MEMMAN64_PAGE_SIZE, &early_limit) != 0 ||
+		early_next >= early_limit) {
+		early_next = 0;
+		early_limit = 0;
+	}
 }
 
 uintptr_t early_alloc64(size_t size, size_t alignment)
 {
 	uintptr_t addr;
+	uintptr_t end;
 	uintptr_t next;
 
-	addr = align_up64(early_next, alignment != 0 ? alignment : MEMMAN64_PAGE_SIZE);
-	next = align_up64(addr + size, MEMMAN64_PAGE_SIZE);
-	if (next < addr || next > early_limit) {
+	if (size == 0 || early_next == 0) {
+		return 0;
+	}
+	if (alignment == 0) {
+		alignment = MEMMAN64_PAGE_SIZE;
+	}
+	if (align_up_checked64(early_next, alignment, &addr) != 0 ||
+		range_end64(addr, size, &end) != 0 ||
+		align_up_checked64(end, MEMMAN64_PAGE_SIZE, &next) != 0 ||
+		next > early_limit) {
 		return 0;
 	}
 	early_next = next;
@@ -63,10 +116,15 @@ uintptr_t early_alloc64(size_t size, size_t alignment)
 
 void memman64_init(struct MEMMAN64 *man)
 {
+	if (man == NULL) {
+		return;
+	}
 	man->frees = 0;
 	man->maxfrees = 0;
 	man->lostsize = 0;
 	man->losts = 0;
+	man->pool_start = 0;
+	man->pool_end = 0;
 }
 
 static uintptr_t memman64_alloc_at_4k_nolock(struct MEMMAN64 *man, uintptr_t addr,
@@ -77,25 +135,105 @@ static size_t memman64_total_nolock(const struct MEMMAN64 *man)
 	uint32_t i;
 	size_t total;
 
+	if (man == NULL) {
+		return 0;
+	}
 	total = 0;
 	for (i = 0; i < man->frees; i++) {
+		if (man->free[i].size > SIZE_MAX - total) {
+			return SIZE_MAX;
+		}
 		total += man->free[i].size;
 	}
 	return total;
+}
+
+static int memman64_validate_nolock(const struct MEMMAN64 *man)
+{
+	uint32_t i;
+	uintptr_t end;
+	uintptr_t previous_end;
+
+	if (man == NULL || man->frees > MEMMAN64_FREES ||
+		man->maxfrees < man->frees) {
+		return MEMMAN64_ERR_INVALID;
+	}
+	if (man->pool_start == 0 || man->pool_end <= man->pool_start ||
+		(man->pool_start & (MEMMAN64_PAGE_SIZE - 1)) != 0 ||
+		(man->pool_end & (MEMMAN64_PAGE_SIZE - 1)) != 0) {
+		return MEMMAN64_ERR_INVALID;
+	}
+	previous_end = man->pool_start;
+	for (i = 0; i < man->frees; i++) {
+		if (man->free[i].size == 0 ||
+			(man->free[i].addr & (MEMMAN64_PAGE_SIZE - 1)) != 0 ||
+			(man->free[i].size & (MEMMAN64_PAGE_SIZE - 1)) != 0 ||
+			range_end64(man->free[i].addr, man->free[i].size,
+				&end) != 0 ||
+			man->free[i].addr < previous_end || end > man->pool_end) {
+			return MEMMAN64_ERR_INVALID;
+		}
+		if (i > 0 && man->free[i].addr == previous_end) {
+			return MEMMAN64_ERR_INVALID;
+		}
+		previous_end = end;
+	}
+	return 0;
+}
+
+int memman64_add_pool(struct MEMMAN64 *man, uintptr_t addr, size_t size)
+{
+	uintptr_t end;
+
+	if (man == NULL || addr == 0 || size == 0 ||
+		(addr & (MEMMAN64_PAGE_SIZE - 1)) != 0 ||
+		(size & (MEMMAN64_PAGE_SIZE - 1)) != 0) {
+		return MEMMAN64_ERR_INVALID;
+	}
+	if (range_end64(addr, size, &end) != 0) {
+		return MEMMAN64_ERR_OVERFLOW;
+	}
+	if (man->pool_start != 0 || man->pool_end != 0 || man->frees != 0) {
+		return MEMMAN64_ERR_INVALID;
+	}
+	man->pool_start = addr;
+	man->pool_end = end;
+	man->free[0].addr = addr;
+	man->free[0].size = size;
+	man->frees = 1;
+	man->maxfrees = 1;
+	return 0;
+}
+
+int memman64_validate(const struct MEMMAN64 *man)
+{
+	uint64_t flags;
+	int status;
+
+	flags = memory_lock64();
+	status = memman64_validate_nolock(man);
+	memory_unlock64(flags);
+	return status;
 }
 
 static uintptr_t memman64_alloc_nolock(struct MEMMAN64 *man, size_t size)
 {
 	uint32_t i;
 	uintptr_t addr;
+	uintptr_t end;
 
-	if (size == 0) {
+	if (man == NULL || size == 0 ||
+		(size & (MEMMAN64_PAGE_SIZE - 1)) != 0) {
 		return 0;
 	}
 	for (i = 0; i < man->frees; i++) {
+		if (range_end64(man->free[i].addr, man->free[i].size,
+				&end) != 0 || end > man->pool_end) {
+			return 0;
+		}
 		if (man->free[i].size >= size) {
 			addr = man->free[i].addr;
-			man->free[i].addr += size;
+			man->free[i].addr = addr + size;
 			man->free[i].size -= size;
 			if (man->free[i].size == 0) {
 				man->frees--;
@@ -113,18 +251,40 @@ static int memman64_free_nolock(struct MEMMAN64 *man, uintptr_t addr, size_t siz
 {
 	uint32_t i;
 	uint32_t j;
+	uintptr_t end;
+	uintptr_t previous_end;
 
-	if (size == 0) {
-		return 0;
+	if (man == NULL || addr == 0 || size == 0 ||
+		(addr & (MEMMAN64_PAGE_SIZE - 1)) != 0 ||
+		(size & (MEMMAN64_PAGE_SIZE - 1)) != 0) {
+		return MEMMAN64_ERR_INVALID;
+	}
+	if (range_end64(addr, size, &end) != 0) {
+		return MEMMAN64_ERR_OVERFLOW;
+	}
+	if (addr < man->pool_start || end > man->pool_end) {
+		return MEMMAN64_ERR_RANGE;
 	}
 	for (i = 0; i < man->frees; i++) {
 		if (man->free[i].addr > addr) {
 			break;
 		}
 	}
-	if (i > 0 && man->free[i - 1].addr + man->free[i - 1].size == addr) {
+	if (i > 0) {
+		if (range_end64(man->free[i - 1].addr,
+				man->free[i - 1].size, &previous_end) != 0 ||
+			previous_end > addr) {
+			return MEMMAN64_ERR_INVALID;
+		}
+	} else {
+		previous_end = 0;
+	}
+	if (i < man->frees && end > man->free[i].addr) {
+		return MEMMAN64_ERR_INVALID;
+	}
+	if (i > 0 && previous_end == addr) {
 		man->free[i - 1].size += size;
-		if (i < man->frees && addr + size == man->free[i].addr) {
+		if (i < man->frees && end == man->free[i].addr) {
 			man->free[i - 1].size += man->free[i].size;
 			man->frees--;
 			for (; i < man->frees; i++) {
@@ -133,7 +293,7 @@ static int memman64_free_nolock(struct MEMMAN64 *man, uintptr_t addr, size_t siz
 		}
 		return 0;
 	}
-	if (i < man->frees && addr + size == man->free[i].addr) {
+	if (i < man->frees && end == man->free[i].addr) {
 		man->free[i].addr = addr;
 		man->free[i].size += size;
 		return 0;
@@ -150,9 +310,15 @@ static int memman64_free_nolock(struct MEMMAN64 *man, uintptr_t addr, size_t siz
 		man->free[i].size = size;
 		return 0;
 	}
-	man->losts++;
-	man->lostsize += size;
-	return -1;
+	if (man->losts < UINT32_MAX) {
+		man->losts++;
+	}
+	if (size > SIZE_MAX - man->lostsize) {
+		man->lostsize = SIZE_MAX;
+	} else {
+		man->lostsize += size;
+	}
+	return MEMMAN64_ERR_NOMEM;
 }
 
 /*
@@ -209,26 +375,39 @@ uintptr_t memman64_alloc_at_4k(struct MEMMAN64 *man, uintptr_t addr, size_t size
 
 uintptr_t memman64_alloc_4k(struct MEMMAN64 *man, size_t size)
 {
-	size = (size_t) align_up64((uintptr_t) size, MEMMAN64_PAGE_SIZE);
-	return memman64_alloc(man, size);
+	uintptr_t aligned_size;
+
+	if (size == 0 ||
+		align_up_checked64((uintptr_t) size, MEMMAN64_PAGE_SIZE,
+			&aligned_size) != 0) {
+		return 0;
+	}
+	return memman64_alloc(man, (size_t) aligned_size);
 }
 
-static uintptr_t memman64_alloc_at_4k_nolock(struct MEMMAN64 *man, uintptr_t addr, size_t size)
+static uintptr_t memman64_alloc_at_4k_nolock(struct MEMMAN64 *man,
+	uintptr_t addr, size_t size)
 {
 	uint32_t i;
+	uintptr_t aligned_size;
 	uintptr_t end;
 	uintptr_t free_start;
 	uintptr_t free_end;
 
-	addr = align_down64(addr, MEMMAN64_PAGE_SIZE);
-	size = (size_t) align_up64((uintptr_t) size, MEMMAN64_PAGE_SIZE);
-	end = addr + size;
-	if (size == 0 || end <= addr) {
+	if (man == NULL || addr == 0 || size == 0 ||
+		(addr & (MEMMAN64_PAGE_SIZE - 1)) != 0 ||
+		align_up_checked64((uintptr_t) size, MEMMAN64_PAGE_SIZE,
+			&aligned_size) != 0 ||
+		range_end64(addr, (size_t) aligned_size, &end) != 0 ||
+		addr < man->pool_start || end > man->pool_end) {
 		return 0;
 	}
+	size = (size_t) aligned_size;
 	for (i = 0; i < man->frees; i++) {
 		free_start = man->free[i].addr;
-		free_end = free_start + man->free[i].size;
+		if (range_end64(free_start, man->free[i].size, &free_end) != 0) {
+			return 0;
+		}
 		if (free_start <= addr && end <= free_end) {
 			if (free_start == addr && free_end == end) {
 				man->frees--;
@@ -245,6 +424,9 @@ static uintptr_t memman64_alloc_at_4k_nolock(struct MEMMAN64 *man, uintptr_t add
 					man->free[j] = man->free[j - 1];
 				}
 				man->frees++;
+				if (man->maxfrees < man->frees) {
+					man->maxfrees = man->frees;
+				}
 				man->free[i + 1].addr = end;
 				man->free[i + 1].size = free_end - end;
 				man->free[i].size = addr - free_start;
@@ -259,8 +441,16 @@ static uintptr_t memman64_alloc_at_4k_nolock(struct MEMMAN64 *man, uintptr_t add
 
 int memman64_free_4k(struct MEMMAN64 *man, uintptr_t addr, size_t size)
 {
-	size = (size_t) align_up64((uintptr_t) size, MEMMAN64_PAGE_SIZE);
-	return memman64_free(man, addr, size);
+	uintptr_t aligned_size;
+
+	if (size == 0 || (addr & (MEMMAN64_PAGE_SIZE - 1)) != 0) {
+		return MEMMAN64_ERR_INVALID;
+	}
+	if (align_up_checked64((uintptr_t) size, MEMMAN64_PAGE_SIZE,
+			&aligned_size) != 0) {
+		return MEMMAN64_ERR_OVERFLOW;
+	}
+	return memman64_free(man, addr, (size_t) aligned_size);
 }
 
 void init_memory64(void)
@@ -279,6 +469,6 @@ void init_memory64(void)
 	heap_start = early_alloc64(MEMMAN64_PAGE_SIZE, MEMMAN64_PAGE_SIZE);
 	memman64_init(&memman64);
 	if (heap_start != 0 && heap_start < heap_end) {
-		memman64_free(&memman64, heap_start, heap_end - heap_start);
+		memman64_add_pool(&memman64, heap_start, heap_end - heap_start);
 	}
 }

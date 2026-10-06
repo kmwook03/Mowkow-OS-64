@@ -1554,7 +1554,8 @@ void console64_post_key(struct CONSOLE64 *con, uint16_t key)
 void console64_input_queue_init(struct CONSOLE64 *con)
 {
 	if (con != NULL) {
-		fifo64_init(&con->keys, CONSOLE64_KEY_BUF, con->key_buf, NULL);
+		(void) fifo64_init(&con->keys, CONSOLE64_KEY_BUF, con->key_buf,
+			NULL);
 	}
 }
 
@@ -1592,20 +1593,39 @@ int console64_start_task(struct CONSOLE64 *con)
 {
 	struct TASK64 *task;
 	uintptr_t stack;
+	int status;
 
+	if (con == NULL || con->task != NULL) {
+		return -1;
+	}
 	task = task_alloc64();
 	stack = memman64_alloc_4k(&memman64, CONSOLE64_STACK_SIZE);
-	if (task == NULL || stack == 0) {
+	if (task == NULL) {
+		if (stack != 0) {
+			(void) memman64_free_4k(&memman64, stack,
+				CONSOLE64_STACK_SIZE);
+		}
+		return -1;
+	}
+	if (stack == 0) {
+		(void) task_kill64(task);
 		return -1;
 	}
 	/* console_self()가 태스크로 콘솔을 찾으므로 돌리기 전에 이어 둔다. */
 	con->task = task;
-	fifo64_init(&con->keys, CONSOLE64_KEY_BUF, con->key_buf, task);
-	if (task_set_entry64(task, console_task_main, stack, CONSOLE64_STACK_SIZE) != 0) {
+	status = fifo64_init(&con->keys, CONSOLE64_KEY_BUF, con->key_buf, task);
+	if (status != 0 || task_set_entry64(task, console_task_main, stack,
+			CONSOLE64_STACK_SIZE) != 0) {
 		con->task = NULL;
+		(void) memman64_free_4k(&memman64, stack, CONSOLE64_STACK_SIZE);
+		(void) task_kill64(task);
 		return -1;
 	}
-	task_run64(task, 0, 2);
+	if (task_run64(task, 0, 2) != 0) {
+		con->task = NULL;
+		(void) task_kill64(task);
+		return -1;
+	}
 	return 0;
 }
 
@@ -1613,23 +1633,38 @@ int console64_start_input_task(struct CONSOLE64 *con)
 {
 	struct TASK64 *task;
 	uintptr_t stack;
+	int status;
 
 	if (con == NULL || con->task != NULL) {
 		return -1;
 	}
 	task = task_alloc64();
 	stack = memman64_alloc_4k(&memman64, CONSOLE64_STACK_SIZE);
-	if (task == NULL || stack == 0) {
+	if (task == NULL) {
+		if (stack != 0) {
+			(void) memman64_free_4k(&memman64, stack,
+				CONSOLE64_STACK_SIZE);
+		}
+		return -1;
+	}
+	if (stack == 0) {
+		(void) task_kill64(task);
 		return -1;
 	}
 	con->task = task;
-	fifo64_init(&con->keys, CONSOLE64_KEY_BUF, con->key_buf, task);
-	if (task_set_entry64(task, console_input_task_main, stack,
+	status = fifo64_init(&con->keys, CONSOLE64_KEY_BUF, con->key_buf, task);
+	if (status != 0 || task_set_entry64(task, console_input_task_main, stack,
 			CONSOLE64_STACK_SIZE) != 0) {
 		con->task = NULL;
+		(void) memman64_free_4k(&memman64, stack, CONSOLE64_STACK_SIZE);
+		(void) task_kill64(task);
 		return -1;
 	}
-	task_run64(task, 0, 2);
+	if (task_run64(task, 0, 2) != 0) {
+		con->task = NULL;
+		(void) task_kill64(task);
+		return -1;
+	}
 	return 0;
 }
 

@@ -44,7 +44,9 @@ uintptr_t arch64_task_frame_init(void (*entry)(void), uintptr_t stack_base,
 	uintptr_t stack_top;
 	unsigned int i;
 
-	if (entry == NULL || stack_base == 0 || stack_size < sizeof *frame) {
+	if (entry == NULL || stack_base == 0 || stack_size < sizeof *frame ||
+			(stack_base & 0x0fU) != 0 || (stack_size & 0x0fU) != 0 ||
+			stack_size > UINTPTR_MAX - stack_base) {
 		return 0;
 	}
 	stack_top = (stack_base + stack_size) & ~(uintptr_t) 0x0f;
@@ -57,14 +59,33 @@ uintptr_t arch64_task_frame_init(void (*entry)(void), uintptr_t stack_base,
 	return (uintptr_t) frame;
 }
 
+static void scheduler_release_task64(struct TASK64 *task, uintptr_t stack)
+{
+	if (task == NULL) {
+		if (stack != 0) {
+			(void) memman64_free_4k(&memman64, stack,
+				TASK64_STACK_SIZE);
+		}
+		return;
+	}
+	/* task_kill64() owns an attached stack.  Before task_set_entry64()
+	   succeeds, the caller still owns the raw allocation. */
+	if (task->stack_base == 0 && stack != 0) {
+		(void) memman64_free_4k(&memman64, stack,
+			TASK64_STACK_SIZE);
+	}
+	(void) task_kill64(task);
+}
+
 int arch64_scheduler_init(void)
 {
-	struct TASK64 *worker;
-	struct TASK64 *fp_task_a;
-	struct TASK64 *fp_task_b;
-	uintptr_t worker_stack;
-	uintptr_t fp_stack_a;
-	uintptr_t fp_stack_b;
+	struct TASK64 *worker = NULL;
+	struct TASK64 *fp_task_a = NULL;
+	struct TASK64 *fp_task_b = NULL;
+	uintptr_t worker_stack = 0;
+	uintptr_t fp_stack_a = 0;
+	uintptr_t fp_stack_b = 0;
+	int status;
 
 	if (task_init64() != 0) {
 		return -1;
@@ -82,34 +103,55 @@ int arch64_scheduler_init(void)
 	fp_context_errors = 0;
 
 	worker = task_alloc64();
-	worker_stack = memman64_alloc_4k(&memman64, TASK64_STACK_SIZE);
-	if (worker != NULL && worker_stack != 0 &&
-			task_set_entry64(worker, worker_task64, worker_stack,
-			TASK64_STACK_SIZE) == 0) {
-		worker_task = worker;
-		task_run64(worker, 0, 1);
-	} else {
+	if (worker == NULL) {
 		return -2;
 	}
+	worker_stack = memman64_alloc_4k(&memman64, TASK64_STACK_SIZE);
+	if (worker_stack == 0 || task_set_entry64(worker, worker_task64,
+			worker_stack, TASK64_STACK_SIZE) != 0 ||
+			task_run64(worker, 0, 1) != 0) {
+		scheduler_release_task64(worker, worker_stack);
+		return -2;
+	}
+	worker_task = worker;
 
 	fp_task_a = task_alloc64();
-	fp_task_b = task_alloc64();
-	fp_stack_a = memman64_alloc_4k(&memman64, TASK64_STACK_SIZE);
-	fp_stack_b = memman64_alloc_4k(&memman64, TASK64_STACK_SIZE);
-	if (fp_task_a != NULL && fp_task_b != NULL && fp_stack_a != 0 &&
-			fp_stack_b != 0 && task_set_entry64(fp_task_a,
-			fp_context_task_a64, fp_stack_a, TASK64_STACK_SIZE) == 0 &&
-			task_set_entry64(fp_task_b, fp_context_task_b64, fp_stack_b,
-			TASK64_STACK_SIZE) == 0) {
-		task_run64(fp_task_a, 0, 1);
-		task_run64(fp_task_b, 0, 1);
-		fp_task_a_task = fp_task_a;
-		fp_task_b_task = fp_task_b;
-	} else {
-		fp_context_errors = 1;
-		return -3;
+	if (fp_task_a == NULL) {
+		status = -3;
+		goto fail;
 	}
+	fp_stack_a = memman64_alloc_4k(&memman64, TASK64_STACK_SIZE);
+	if (fp_stack_a == 0 || task_set_entry64(fp_task_a,
+			fp_context_task_a64, fp_stack_a, TASK64_STACK_SIZE) != 0 ||
+			task_run64(fp_task_a, 0, 1) != 0) {
+		status = -3;
+		goto fail;
+	}
+	fp_task_b = task_alloc64();
+	if (fp_task_b == NULL) {
+		status = -3;
+		goto fail;
+	}
+	fp_stack_b = memman64_alloc_4k(&memman64, TASK64_STACK_SIZE);
+	if (fp_stack_b == 0 || task_set_entry64(fp_task_b,
+			fp_context_task_b64, fp_stack_b, TASK64_STACK_SIZE) != 0 ||
+			task_run64(fp_task_b, 0, 1) != 0) {
+		status = -3;
+		goto fail;
+	}
+	fp_task_a_task = fp_task_a;
+	fp_task_b_task = fp_task_b;
 	return 0;
+
+fail:
+	fp_context_errors = 1;
+	scheduler_release_task64(fp_task_b, fp_stack_b);
+	scheduler_release_task64(fp_task_a, fp_stack_a);
+	scheduler_release_task64(worker, worker_stack);
+	worker_task = NULL;
+	fp_task_a_task = NULL;
+	fp_task_b_task = NULL;
+	return status;
 }
 
 uintptr_t arch64_scheduler_tick(uintptr_t frame)

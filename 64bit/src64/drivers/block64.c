@@ -12,6 +12,32 @@
 static const struct BLOCK64_OPS *ops;
 static uint64_t part_base;
 
+static int range_valid(uint64_t lba, uint32_t count, uint64_t limit)
+{
+	if (lba > UINT64_MAX - (uint64_t) count) {
+		return 0;
+	}
+	if (limit != 0 && (lba >= limit || (uint64_t) count > limit - lba)) {
+		return 0;
+	}
+	return 1;
+}
+
+static int translate_request(uint64_t lba, uint32_t count, uint64_t *physical)
+{
+	uint64_t total;
+
+	if (range_valid(lba, count, 0) == 0 || part_base > UINT64_MAX - lba) {
+		return -1;
+	}
+	*physical = part_base + lba;
+	total = ops->sector_count();
+	if (range_valid(*physical, count, total) == 0) {
+		return -1;
+	}
+	return 0;
+}
+
 static uint32_t read32(const uint8_t *p)
 {
 	return (uint32_t) p[0] | ((uint32_t) p[1] << 8) |
@@ -31,10 +57,15 @@ static void find_partition(void)
 {
 	uint8_t sector[BLOCK64_SECTOR_SIZE];
 	const uint8_t *entry;
+	uint64_t total;
 	uint32_t start;
 	uint32_t i;
 
 	part_base = 0;
+	total = ops->sector_count();
+	if (range_valid(0, 1, total) == 0) {
+		return;
+	}
 	if (ops->read(0, 1, sector) != 0) {
 		return;
 	}
@@ -44,7 +75,8 @@ static void find_partition(void)
 	for (i = 0; i < 4; i++) {
 		entry = sector + 446 + i * 16;
 		start = read32(entry + 8);
-		if (entry[4] == 0x00 || start == 0) {
+		if (entry[4] == 0x00 || start == 0 ||
+				range_valid(start, 1, total) == 0) {
 			continue;
 		}
 		/* 주의: 그 자리에 진짜 파일 시스템이 있을 때만 믿는다.
@@ -100,16 +132,32 @@ uint64_t block64_sector_count(void)
 
 int block64_read(uint64_t lba, uint32_t count, void *dst)
 {
-	if (ops == NULL || dst == NULL) {
+	uint64_t physical;
+
+	if (ops == NULL) {
 		return -1;
 	}
-	return ops->read(part_base + lba, count, dst);
+	if (count == 0) {
+		return 0;
+	}
+	if (dst == NULL || translate_request(lba, count, &physical) != 0) {
+		return -1;
+	}
+	return ops->read(physical, count, dst);
 }
 
 int block64_write(uint64_t lba, uint32_t count, const void *src)
 {
-	if (ops == NULL || src == NULL) {
+	uint64_t physical;
+
+	if (ops == NULL) {
 		return -1;
 	}
-	return ops->write(part_base + lba, count, src);
+	if (count == 0) {
+		return 0;
+	}
+	if (src == NULL || translate_request(lba, count, &physical) != 0) {
+		return -1;
+	}
+	return ops->write(physical, count, src);
 }

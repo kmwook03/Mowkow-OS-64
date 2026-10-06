@@ -342,6 +342,101 @@ GUI 모드에서는 마우스로 제목 표시줄을 끌어 창을 옮기거나,
 ```
 
 ## 5. 64bit 시스템 구조
+
+### 아키텍처 개요
+
+64bit 트리는 사용자 영역, 시스템 콜 인터페이스, 공용 커널, HAL로 계층을
+나눕니다. ELF64 앱은 사용자 모드에서 시스템 콜로 커널에 진입하지만,
+MicroPython은 커널에 링크되어 Python과 머꼬 스크립트를 커널 모드에서
+실행합니다.
+
+```mermaid
+flowchart TB
+    subgraph userSpace ["사용자 영역"]
+        direction LR
+        elfApps["정적 ELF64 앱: Ring 3 또는 EL0"]
+        userCrt["CRT · libc shim · syscall 스텁"]
+        scriptFiles["Python · 머꼬 스크립트 파일: 인터프리터 입력"]
+    end
+
+    subgraph syscallInterface ["인터페이스: syscall ABI"]
+        direction LR
+        syscallAbi["호출 번호 · 레지스터 인자 · 음수 오류 반환"]
+        trapEntry["x86_64 int 0x80 · AArch64 svc #0"]
+    end
+
+    subgraph kernelSpace ["커널 영역: Ring 0 또는 EL1"]
+        direction TB
+
+        subgraph executionCore ["실행 관리"]
+            direction LR
+            syscallHandler["공용 syscall_handler64"]
+            process["프로세스 관리"]
+            elfLoader["ELF64 로더"]
+            mpRuntime["커널 내장 MicroPython · mpport · mowio"]
+        end
+
+        subgraph kernelServices ["공용 커널 서비스"]
+            direction LR
+            console["콘솔 · 명령 처리 · 한글/UTF-8"]
+            gui["GUI · window · sheet"]
+            memory["메모리 관리자"]
+            scheduler["태스크 · 스케줄러"]
+            eventQueue["FIFO · 이벤트 큐"]
+        end
+
+        subgraph storageStack ["저장 장치 계층"]
+            direction LR
+            filesystem["FAT32 · VFAT"]
+            cache["Write-Back 섹터 캐시"]
+            block["block64 전송 계층"]
+        end
+    end
+
+    subgraph hal ["HAL과 아키텍처별 백엔드"]
+        direction LR
+        platformHal["플랫폼 인터페이스: IRQ · 타이머 · 문맥 · 화면 · 입력"]
+        blockOps["BLOCK64_OPS: 블록 장치 I/O"]
+        x86["x86_64: BIOS 부팅 · 롱 모드 · VBE · PIC/PIT · PS/2 · AHCI/ATA"]
+        arm["Raspberry Pi 5: 펌웨어 부팅 · EL1/MMU · Mailbox · GIC/Generic Timer · SDHCI · RP1/xHCI/HID"]
+    end
+
+    elfApps -->|"런타임 호출"| userCrt
+    userCrt -->|"ABI 준수"| syscallAbi
+    syscallAbi -->|"특권 전환"| trapEntry
+    trapEntry -->|"프레임 변환과 전달"| syscallHandler
+    scriptFiles -->|"커널 인터프리터의 입력"| mpRuntime
+    syscallHandler -->|"현재 프로세스"| process
+    syscallHandler -->|"TTY"| console
+    syscallHandler -->|"파일 I/O"| filesystem
+    process -->|"이미지 적재"| elfLoader
+    process -->|"주소 공간 할당"| memory
+    process -->|"현재 태스크 연결"| scheduler
+    elfLoader -->|"실행 파일 읽기"| filesystem
+    mpRuntime -->|"콘솔 입출력"| console
+    mpRuntime -->|"파일 접근"| filesystem
+    console -->|"화면 출력"| gui
+    console -->|"키 이벤트 수신"| eventQueue
+    eventQueue -->|"대기 태스크 깨우기"| scheduler
+    filesystem --> cache
+    cache --> block
+    scheduler -->|"타이머와 문맥 전환"| platformHal
+    gui -->|"화면과 입력 장치"| platformHal
+    block -->|"블록 전송"| blockOps
+    platformHal -->|"x86_64 구현"| x86
+    platformHal -->|"AArch64 구현"| arm
+    blockOps -->|"AHCI 또는 ATA PIO"| x86
+    blockOps -->|"SDHCI"| arm
+```
+
+화살표는 상위 계층이 하위 계층을 호출하거나 의존하는 방향을 나타냅니다.
+스크립트 파일은 사용자 영역에서 제공되지만 독립 프로세스가 아닙니다. 커널에
+내장된 MicroPython이 직접 해석하므로 ELF64 앱과 달리 syscall ABI를 거치지
+않습니다. 커널 안에서도 메모리 관리, 태스크 스케줄링, 이벤트 큐와
+FAT32·캐시·블록 전송은 각각 독립된 책임과 인터페이스를 가집니다. HAL에서는
+플랫폼 인터페이스와 `BLOCK64_OPS`가 x86_64와 AArch64의 인터럽트, 문맥 전환,
+화면·입력 및 저장 장치 구현 차이를 감춥니다.
+
 ### 5-1. 부트 시퀀스
 부트 섹터 512바이트 안에 FAT32 BPB와 롱 모드 진입 코드를 함께 넣을 수 없어 1단계는 BPB와 디스크 읽기만 담고 나머지를 2단계로 넘겼습니다.
 

@@ -53,7 +53,6 @@ int platform_task_sleep_current64(struct TASK64 *task)
 	if (task == NULL) {
 		return 0;
 	}
-	task->flags = TASK64_FLAGS_SLEEP_PENDING;
 	while (task->flags == TASK64_FLAGS_SLEEP_PENDING) {
 		platform_halt_with_irq64();
 	}

@@ -84,6 +84,8 @@ $(BUILD64_DIR)/%.o : $(SRC64_DIR)/%.c
 	@$(MKDIR) $(dir $@)
 	$(X64_CC) $(X64_CFLAGS) $(X64_DEPFLAGS) -c $< -o $@
 
+$(BUILD64_DIR)/kernel/mtask64.o : $(TASK_STACK_DEBUG64_STAMP)
+
 $(BUILD64_DIR)/kernel/%.o : $(SRC64_DIR)/kernel/%.asm
 	@$(MKDIR) $(dir $@)
 	$(X64_ASM) $(X64_ASMFLAGS) $< -o $@

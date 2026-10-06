@@ -247,12 +247,18 @@ static int identify(void)
 
 int ahci64_probe(void)
 {
-	uintptr_t page;
+	uintptr_t page = 0;
 	uint32_t bdf;
 	uint32_t command;
+	uint32_t ghc;
 	uint32_t ports;
 	uint32_t status;
 	uint32_t i;
+	uint32_t old_clb;
+	uint32_t old_clbu;
+	uint32_t old_fb;
+	uint32_t old_fbu;
+	uint32_t old_port_cmd;
 
 	if (ready != 0) {
 		return 0;
@@ -273,7 +279,7 @@ int ahci64_probe(void)
 
 	page = memman64_alloc_4k(&memman64, MEMMAN64_PAGE_SIZE);
 	if (page == 0 || (page & 0x3ff) != 0) {
-		return -1;		/* 구조체들이 1KiB 경계에 맞아야 한다 */
+		goto fail_pci;		/* 구조체들이 1KiB 경계에 맞아야 한다 */
 	}
 	/* 한 페이지에 셋을 다 넣는다. 명령 목록(1KiB, 1KiB 정렬), 받은 FIS
 	   (256B, 256 정렬), 명령 테이블과 임시 버퍼(128 정렬). */
@@ -282,7 +288,8 @@ int ahci64_probe(void)
 	command_table = command_list + 1280;
 	zero(command_list, MEMMAN64_PAGE_SIZE);
 
-	reg_write(HBA_GHC, reg_read(HBA_GHC) | GHC_AE);
+	ghc = reg_read(HBA_GHC);
+	reg_write(HBA_GHC, ghc | GHC_AE);
 	reg_write(HBA_GHC, reg_read(HBA_GHC) & ~GHC_IE);
 	ports = reg_read(HBA_PI);
 	for (i = 0; i < 32; i++) {
@@ -297,9 +304,17 @@ int ahci64_probe(void)
 		if (port_read(PORT_SIG) != SIG_SATA) {
 			continue;
 		}
+		old_port_cmd = port_read(PORT_CMD);
 		if (port_stop() != 0) {
+			port_write(PORT_CMD, (port_read(PORT_CMD) &
+				~(CMD_ST | CMD_FRE)) |
+				(old_port_cmd & (CMD_ST | CMD_FRE)));
 			continue;
 		}
+		old_clb = port_read(PORT_CLB);
+		old_clbu = port_read(PORT_CLBU);
+		old_fb = port_read(PORT_FB);
+		old_fbu = port_read(PORT_FBU);
 		port_write(PORT_CLB, (uint32_t) (uintptr_t) command_list);
 		port_write(PORT_CLBU, (uint32_t) ((uint64_t) (uintptr_t) command_list >> 32));
 		port_write(PORT_FB, (uint32_t) (uintptr_t) received_fis);
@@ -307,12 +322,37 @@ int ahci64_probe(void)
 		port_write(PORT_SERR, port_read(PORT_SERR));
 		port_start();
 		if (identify() != 0) {
-			port_stop();
+			(void) port_stop();
+			port_write(PORT_CLB, old_clb);
+			port_write(PORT_CLBU, old_clbu);
+			port_write(PORT_FB, old_fb);
+			port_write(PORT_FBU, old_fbu);
+			port_write(PORT_CMD, (port_read(PORT_CMD) &
+				~(CMD_ST | CMD_FRE)) |
+				(old_port_cmd & (CMD_ST | CMD_FRE)));
 			continue;
 		}
 		ready = 1;
 		return 0;
 	}
+	reg_write(HBA_GHC, ghc);
+	(void) memman64_free_4k(&memman64, page, MEMMAN64_PAGE_SIZE);
+	command_list = NULL;
+	received_fis = NULL;
+	command_table = NULL;
+	abar = NULL;
+	port_base = 0;
+	sector_total = 0;
+	pci64_write32(bdf, PCI64_REG_COMMAND, command);
+	return -1;
+
+fail_pci:
+	if (page != 0) {
+		(void) memman64_free_4k(&memman64, page,
+			MEMMAN64_PAGE_SIZE);
+	}
+	abar = NULL;
+	pci64_write32(bdf, PCI64_REG_COMMAND, command);
 	return -1;
 }
 

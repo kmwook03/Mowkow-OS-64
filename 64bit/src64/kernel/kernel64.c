@@ -478,7 +478,10 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 	if (status != 0) {
 		boot_panic64("scheduler", status);
 	}
-	fifo64_init(&event_fifo, EVENT_BUF_SIZE, event_buf, task_now64());
+	status = fifo64_init(&event_fifo, EVENT_BUF_SIZE, event_buf, task_now64());
+	if (status != 0) {
+		boot_panic64("event-fifo", status);
+	}
 	status = console64_start_task(console64_active());
 	if (status != 0) {
 		boot_panic64("console-task", status);

@@ -46,7 +46,8 @@ A64_BASE_CFLAGS = -O2 -ffreestanding -nostdlib -mgeneral-regs-only \
 	-mcpu=cortex-a76 -mstrict-align -fno-stack-protector -fno-pic \
 	-fno-asynchronous-unwind-tables -fno-unwind-tables \
 	-ffunction-sections -fdata-sections -MMD -MP -I$(SRC64_DIR)/include
-A64_CFLAGS = $(A64_BASE_CFLAGS) $(WARN64_CFLAGS) $(BOOT_TEST64_CFLAGS)
+A64_CFLAGS = $(A64_BASE_CFLAGS) $(WARN64_CFLAGS) $(BOOT_TEST64_CFLAGS) \
+	$(TASK_STACK_DEBUG64_CFLAGS)
 A64_LDFLAGS = -nostdlib --gc-sections -T $(A64_ARCH_DIR)/kernel64.ld
 
 A64_SRCS = $(A64_ARCH_DIR)/boot64.S $(A64_ARCH_DIR)/vectors64.S \
@@ -88,6 +89,8 @@ $(A64_BUILD_DIR)/lib/%.o : $(SRC64_DIR)/lib/%.c
 $(A64_BUILD_DIR)/kernel/%.o : $(SRC64_DIR)/kernel/%.c
 	@$(MKDIR) $(dir $@)
 	$(A64_CC) $(A64_CFLAGS) -c $< -o $@
+
+$(A64_BUILD_DIR)/kernel/mtask64.o : $(TASK_STACK_DEBUG64_STAMP)
 
 $(A64_BUILD_DIR)/drivers/%.o : $(SRC64_DIR)/drivers/%.c
 	@$(MKDIR) $(dir $@)

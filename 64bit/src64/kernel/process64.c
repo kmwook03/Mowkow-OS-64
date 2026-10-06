@@ -181,19 +181,28 @@ static void process_free_memory(struct PROCESS64 *process)
 #ifdef __aarch64__
 	arch64_user_unmap_all();
 #endif
-	/* 이미지는 풀 밖의 고정 창이라 memman에 돌려주는 게 아니라
-	   소유권만 놓는다. */
-	elf64_release_process(process);
-	if (process->stack.base != 0 && process->stack.size != 0) {
-		memman64_free_4k(&memman64,
-			process->stack_backing != 0 ? process->stack_backing :
-			process->stack.base, process->stack.size);
-	}
 	if (process->heap.base != 0 && process->heap.size != 0) {
-		memman64_free_4k(&memman64,
+		(void) memman64_free_4k(&memman64,
 			process->heap_backing != 0 ? process->heap_backing :
 			process->heap.base, process->heap.size);
+		process->heap.base = 0;
+		process->heap.size = 0;
+		process->heap_backing = 0;
+		process->heap_next = 0;
 	}
+	if (process->stack.base != 0 && process->stack.size != 0) {
+		(void) memman64_free_4k(&memman64,
+			process->stack_backing != 0 ? process->stack_backing :
+			process->stack.base, process->stack.size);
+		process->stack.base = 0;
+		process->stack.size = 0;
+		process->stack_backing = 0;
+	}
+	/* 이미지는 가장 먼저 얻은 자원이다. 풀 밖의 고정 창이라 memman에
+	   돌려주는 대신 마지막에 소유권만 놓는다. */
+	elf64_release_process(process);
+	process->image.base = 0;
+	process->image.size = 0;
 }
 
 int process64_exec_file(const char *path, const char *cmdline,
@@ -231,20 +240,27 @@ int process64_exec_file(const char *path, const char *cmdline,
 		return status == -8 ? -8 : -2;
 	}
 	stack = memman64_alloc_4k(&memman64, USER_STACK_SIZE);
-	heap = memman64_alloc_4k(&memman64, USER_HEAP_SIZE);
-	if (stack == 0 || heap == 0) {
+	if (stack == 0) {
 		process_free_memory(process);
 		process->pid = 0;
 		return -3;
 	}
 	process->stack.base = stack;
 	process->stack.size = USER_STACK_SIZE;
+#ifdef __aarch64__
+	process->stack_backing = stack;
+	process->stack.base = arch64_virt_to_phys(stack);
+#endif
+	heap = memman64_alloc_4k(&memman64, USER_HEAP_SIZE);
+	if (heap == 0) {
+		process_free_memory(process);
+		process->pid = 0;
+		return -3;
+	}
 	process->heap.base = heap;
 	process->heap.size = USER_HEAP_SIZE;
 #ifdef __aarch64__
-	process->stack_backing = stack;
 	process->heap_backing = heap;
-	process->stack.base = arch64_virt_to_phys(stack);
 	process->heap.base = arch64_virt_to_phys(heap);
 #endif
 	process->heap_next = heap;

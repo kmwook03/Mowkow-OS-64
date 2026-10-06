@@ -1073,9 +1073,11 @@ void aarch64_high_main(void)
 	}
 	hid_event.type = 0;
 	hid_event.data = 0;
-	fifo64_init(&hid_fifo, 2U, hid_event_buffer, NULL);
-	status = usbhid64_emit_transition(&hid_fifo,
-		(uint8_t) xhci_key.keycode, 1);
+	status = fifo64_init(&hid_fifo, 2U, hid_event_buffer, NULL);
+	if (status == 0) {
+		status = usbhid64_emit_transition(&hid_fifo,
+			(uint8_t) xhci_key.keycode, 1);
+	}
 	if (status == 0) {
 		status = usbhid64_emit_transition(&hid_fifo,
 			(uint8_t) xhci_key.keycode, 0);
@@ -1220,7 +1222,11 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(36);
 	}
-	fifo64_init(&hid_fifo, 32U, hid_event_buffer, NULL);
+	status = fifo64_init(&hid_fifo, 32U, hid_event_buffer, NULL);
+	if (status != 0) {
+		arch64_dbg_puts("PANIC: live USB keyboard FIFO init failed\n");
+		arch64_panic_blink(29);
+	}
 	usbhid64_state_init(&hid_state);
 	status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid);
 	if (status != 0) {
