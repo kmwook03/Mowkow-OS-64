@@ -21,13 +21,15 @@ org stage2_addr
 
 kernel_load_real equ 0x10000
 kernel_load_addr equ 0x100000
-pml4_addr equ 0x70000
-pdpt_addr equ 0x71000
-pd0_addr equ 0x72000
-pd1_addr equ 0x73000
-pd2_addr equ 0x74000
-pd3_addr equ 0x75000
-stack64_top equ 0x90000
+pml4_addr equ 0x90000
+pdpt_addr equ 0x91000
+pd0_addr equ 0x92000
+pd1_addr equ 0x93000
+pd2_addr equ 0x94000
+pd3_addr equ 0x95000
+page_tables_end equ pd3_addr + 0x1000
+stack64_bottom equ 0x97000
+stack64_top equ 0x9f000
 
 %if KERNEL_SECTORS <= 0
 %error "KERNEL_SECTORS must be positive"
@@ -41,8 +43,8 @@ stack64_top equ 0x90000
 %if stage2_addr + STAGE2_SECTORS * 512 > kernel_load_real
 %error "stage 2 overlaps the temporary kernel buffer"
 %endif
-%if kernel_load_real + KERNEL_SECTORS * 512 > stack64_top
-%error "temporary kernel buffer overlaps the long-mode stack"
+%if kernel_load_real + KERNEL_SECTORS * 512 > pml4_addr
+%error "temporary kernel buffer overlaps the page tables"
 %endif
 %if pml4_addr & 0xfff || pdpt_addr != pml4_addr + 0x1000
 %error "invalid PML4/PDPT layout"
@@ -53,8 +55,11 @@ stack64_top equ 0x90000
 %if pd2_addr != pd1_addr + 0x1000 || pd3_addr != pd2_addr + 0x1000
 %error "page-directory tables must be contiguous"
 %endif
-%if pd3_addr + 0x1000 > stack64_top
-%error "page tables must be contiguous and below the long-mode stack"
+%if page_tables_end > stack64_bottom || stack64_bottom >= stack64_top
+%error "page tables overlap the protected-mode stack"
+%endif
+%if stack64_top > kernel_load_addr
+%error "protected-mode stack overlaps the kernel destination"
 %endif
 
 ; 화면 크기. VBE 표준 모드에는 16:9가 없어서 Bochs DISPI 레지스터로 직접

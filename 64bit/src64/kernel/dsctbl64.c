@@ -13,6 +13,7 @@
 #include <interrupt64.h>
 #include <keyboard64.h>
 #include <mouse64.h>
+#include <process64.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <timer64.h>
@@ -109,15 +110,80 @@ static void serial_print_hex64(uint64_t value)
 	}
 }
 
-void exception_handler64(const struct INTERRUPT_FRAME64 *frame)
+static void serial_print_register(const char *name, uint64_t value)
 {
-	serial_print("EXC vector=");
+	serial_print(name);
+	serial_print("=");
+	serial_print_hex64(value);
+}
+
+static void serial_print_exception(const struct INTERRUPT_FRAME64 *frame,
+	uint64_t fault_address, int from_user)
+{
+	serial_print(from_user != 0 ? "USER EXCEPTION vector=" :
+		"KERNEL PANIC vector=");
 	serial_print_hex64(frame->vector);
 	serial_print(" error=");
 	serial_print_hex64(frame->error);
-	serial_print(" rip=");
-	serial_print_hex64(frame->rip);
 	serial_print("\r\n");
+	serial_print_register("rip", frame->rip);
+	serial_print_register(" cs", frame->cs);
+	serial_print_register(" rflags", frame->rflags);
+	if (from_user != 0) {
+		serial_print_register(" rsp", frame->rsp);
+		serial_print_register(" ss", frame->ss);
+	} else {
+		serial_print_register(" rsp",
+			(uintptr_t) frame + INTERRUPT64_FRAME_RSP_OFFSET);
+	}
+	serial_print("\r\n");
+	serial_print_register("rax", frame->rax);
+	serial_print_register(" rbx", frame->rbx);
+	serial_print_register(" rcx", frame->rcx);
+	serial_print_register(" rdx", frame->rdx);
+	serial_print("\r\n");
+	serial_print_register("rsi", frame->rsi);
+	serial_print_register(" rdi", frame->rdi);
+	serial_print_register(" rbp", frame->rbp);
+	serial_print("\r\n");
+	serial_print_register("r8", frame->r8);
+	serial_print_register(" r9", frame->r9);
+	serial_print_register(" r10", frame->r10);
+	serial_print_register(" r11", frame->r11);
+	serial_print("\r\n");
+	serial_print_register("r12", frame->r12);
+	serial_print_register(" r13", frame->r13);
+	serial_print_register(" r14", frame->r14);
+	serial_print_register(" r15", frame->r15);
+	if (frame->vector == 14) {
+		serial_print("\r\n");
+		serial_print_register("cr2", fault_address);
+	}
+	serial_print("\r\n");
+}
+
+uint64_t exception_handler64(const struct INTERRUPT_FRAME64 *frame)
+{
+	struct PROCESS64 *process;
+	uint64_t fault_address = 0;
+	int from_user;
+
+	if (frame->vector == 14) {
+		__asm__ volatile("mov %%cr2, %0" : "=r"(fault_address));
+	}
+	from_user = (frame->cs & 3U) == 3U;
+	serial_print_exception(frame, fault_address, from_user);
+	process = process64_current();
+	if (from_user != 0 && process != NULL) {
+		process64_exit_current(PROCESS64_EXIT_FAULT_BASE +
+			(int) frame->vector);
+		return 1;
+	}
+	serial_print("kernel exception halted\r\n");
+	io_cli();
+	for (;;) {
+		io_hlt();
+	}
 }
 
 void irq_handler64(const struct INTERRUPT_FRAME64 *frame)

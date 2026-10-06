@@ -79,6 +79,40 @@ static void serial_print_uint(uint64_t value)
 	}
 }
 
+static void serial_print_int64(int64_t value)
+{
+	uint64_t magnitude;
+
+	if (value >= 0) {
+		serial_print_uint((uint64_t) value);
+		return;
+	}
+	serial_putc('-');
+	magnitude = (uint64_t) (-(value + 1)) + 1U;
+	serial_print_uint(magnitude);
+}
+
+static void boot_panic64(const char *stage, int status)
+{
+	serial_print("PANIC: init stage=");
+	serial_print(stage);
+	serial_print(" status=");
+	serial_print_int64(status);
+	serial_print("\r\n");
+	io_cli();
+	for (;;) {
+		io_hlt();
+	}
+}
+
+static int boot_info_valid64(const struct BOOTINFO64 *boot_info)
+{
+	return boot_info != NULL && boot_info->vram != 0 &&
+		boot_info->scrnx >= 8U && boot_info->scrny >= 16U &&
+		boot_info->bytes_per_scanline >= boot_info->scrnx &&
+		boot_info->bpp == 8U && boot_info->framebuffer_type != 0U;
+}
+
 static void serial_fpu_smoke(void)
 {
 	volatile double d;
@@ -112,8 +146,8 @@ static void serial_fat32_smoke(void)
 	serial_print("\r\n");
 }
 
-/* 페이즈 0 점검: 만들고, 쓰고, 내보내고, 다시 읽는다. 부팅마다 돌기 때문에
-   FAT32 쓰기 경로가 망가지면 콘솔이 뜨기도 전에 COM1에 드러난다. */
+#if MOWKOW64_BOOT_TESTS
+/* Explicit test images may create, write, sync, and re-open FAT32 files. */
 static void serial_fat32_write_smoke(void)
 {
 	struct FDHANDLE64 fh;
@@ -218,6 +252,7 @@ static void serial_fat32_lfn_smoke(void)
 	}
 	serial_print(listed != 0 ? "fat32 lfn=ok\r\n" : "fat32 lfn=not-listed\r\n");
 }
+#endif
 
 /* Phase 3 check: 겹침 처리와 스트라이드를 실제 화면 없이 검증한다.
    가짜 VRAM은 폭 64, 스트라이드 80으로 잡아 stride > xsize 경로를 강제한다
@@ -391,25 +426,44 @@ static void serial_bss_smoke(void)
 void kernel64_main(const struct BOOTINFO64 *boot_info)
 {
 	struct EVENT64 event;
+	int status;
 
 	serial_init();
 	serial_print("Mowkow OS x86_64 kernel64_main\r\n");
+	if (boot_info_valid64(boot_info) == 0) {
+		boot_panic64("framebuffer", -1);
+	}
 	init_gdtidt64();
 	serial_bss_smoke();
 	init_fpu64();
 	serial_fpu_smoke();
 	init_memory64();
-	block64_init();
+	if (memman64_total(&memman64) < MEMMAN64_PAGE_SIZE) {
+		boot_panic64("memory", -1);
+	}
+	status = block64_init();
+	if (status != 0) {
+		boot_panic64("block", status);
+	}
 	serial_print("disk transport=");
 	serial_print(block64_transport());
 	serial_print(" part-base=");
 	serial_print_uint(block64_part_base());
 	serial_print("\r\n");
-	fd64_init();
+	if (strcmp(block64_transport(), "ata") == 0) {
+		serial_print("DEGRADED: AHCI unavailable, using ATA PIO\r\n");
+	}
+	status = fd64_init();
+	if (status != 0) {
+		boot_panic64("fat32", status);
+	}
 	serial_fat32_smoke();
+#if MOWKOW64_BOOT_TESTS
+	serial_print("destructive boot tests=enabled\r\n");
 	serial_fat32_write_smoke();
 	serial_fat32_chain_smoke();
 	serial_fat32_lfn_smoke();
+#endif
 	serial_sheet64_smoke();
 	serial_keyboard64_smoke();
 	serial_print(console64_hangul_smoke() != 0 ?
@@ -417,10 +471,17 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 	load_hangul_font();
 	init_palette64();
 	console64_init(boot_info);
-	task_init64();
+	if (gui64_available() == 0) {
+		serial_print("DEGRADED: GUI unavailable, using direct framebuffer\r\n");
+	}
+	status = task_init64();
+	if (status != 0) {
+		boot_panic64("scheduler", status);
+	}
 	fifo64_init(&event_fifo, EVENT_BUF_SIZE, event_buf, task_now64());
-	if (console64_start_task(console64_active()) != 0) {
-		serial_print("console task=start-failed\r\n");
+	status = console64_start_task(console64_active());
+	if (status != 0) {
+		boot_panic64("console-task", status);
 	}
 	init_pit64(&event_fifo);
 	init_pic64();
@@ -428,8 +489,19 @@ void kernel64_main(const struct BOOTINFO64 *boot_info)
 	/* 인터럽트를 켠 뒤에 KBC를 건드린다. 마우스 활성화 명령의 ACK(0xfa)는
 	   IRQ12로 돌아오므로, 마스킹된 상태에서 보내면 출력 버퍼에 갇힌 채
 	   에지를 놓쳐 이후 패킷이 오지 않는다 (32비트 bootpack.c:76-85과 같은 순서). */
-	init_keyboard64(&event_fifo);
-	init_mouse64(&event_fifo, gui64_mouse_dec());
+	status = init_keyboard64(&event_fifo);
+	if (status != 0) {
+		serial_print("KBC status=");
+		serial_print_uint(keyboard64_controller_status());
+		serial_print("\r\n");
+		boot_panic64("ps2-keyboard", status);
+	}
+	status = init_mouse64(&event_fifo, gui64_mouse_dec());
+	if (status != 0) {
+		serial_print("DEGRADED: PS/2 mouse unavailable, KBC status=");
+		serial_print_uint(keyboard64_controller_status());
+		serial_print("\r\n");
+	}
 
 	for (;;) {
 		io_cli();

@@ -22,6 +22,11 @@
 	.space	124
 	.endm
 
+	.macro VECTOR_KERNEL_SYNC
+	b	arch64_kernel_sync_common
+	.space	124
+	.endm
+
 arch64_vector_table:
 	/* Current EL with SP0. */
 	VECTOR_FATAL 0
@@ -29,7 +34,7 @@ arch64_vector_table:
 	VECTOR_FATAL 2
 	VECTOR_FATAL 3
 	/* Current EL with SPx (the kernel runs here). */
-	VECTOR_FATAL 4
+	VECTOR_KERNEL_SYNC
 	VECTOR_IRQ
 	VECTOR_FATAL 6
 	VECTOR_FATAL 7
@@ -49,6 +54,7 @@ arch64_vector_table:
 	.text
 	.align 4
 	.extern arch64_exception_handler
+	.extern arch64_kernel_sync_handler
 	.extern arch64_irq_dispatch
 	.extern arch64_sync_dispatch
 	.extern process64_current_exit_rsp
@@ -150,6 +156,16 @@ arch64_fatal_common:
 	mrs	x2, elr_el1
 	mrs	x3, far_el1
 	bl	arch64_exception_handler
+1:
+	wfe
+	b	1b
+
+arch64_kernel_sync_common:
+	SAVE_EXCEPTION_FRAME
+	mov	x0, sp
+	mrs	x1, esr_el1
+	mrs	x2, far_el1
+	bl	arch64_kernel_sync_handler
 1:
 	wfe
 	b	1b

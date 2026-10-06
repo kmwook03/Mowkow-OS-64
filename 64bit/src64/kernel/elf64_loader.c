@@ -1,4 +1,4 @@
-#include <asmfunc64.h>
+#include <arch/platform64.h>
 #ifdef __aarch64__
 #include <arch/arch64.h>
 #endif
@@ -211,26 +211,13 @@ int elf64_load_process(const char *path, struct PROCESS64 *process)
 	uint64_t flags;
 	int status;
 
-#ifdef __aarch64__
-	flags = arch64_irq_save();
-#else
-	flags = io_load_rflags();
-	io_cli();
-#endif
+	flags = platform_irq_save64();
 	if (image_owner != NULL) {
-#ifdef __aarch64__
-		arch64_irq_restore(flags);
-#else
-		io_store_rflags(flags);
-#endif
+		platform_irq_restore64(flags);
 		return -8;
 	}
 	image_owner = process;
-#ifdef __aarch64__
-	arch64_irq_restore(flags);
-#else
-	io_store_rflags(flags);
-#endif
+	platform_irq_restore64(flags);
 	status = load_image(path, process);
 	if (status != 0) {
 		image_owner = NULL;

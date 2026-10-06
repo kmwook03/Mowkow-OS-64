@@ -57,7 +57,7 @@ uintptr_t arch64_task_frame_init(void (*entry)(void), uintptr_t stack_base,
 	return (uintptr_t) frame;
 }
 
-void arch64_scheduler_init(void)
+int arch64_scheduler_init(void)
 {
 	struct TASK64 *worker;
 	struct TASK64 *fp_task_a;
@@ -66,7 +66,9 @@ void arch64_scheduler_init(void)
 	uintptr_t fp_stack_a;
 	uintptr_t fp_stack_b;
 
-	task_init64();
+	if (task_init64() != 0) {
+		return -1;
+	}
 	main_beats = 0;
 	worker_beats = 0;
 	sleep_cycles = 0;
@@ -86,6 +88,8 @@ void arch64_scheduler_init(void)
 			TASK64_STACK_SIZE) == 0) {
 		worker_task = worker;
 		task_run64(worker, 0, 1);
+	} else {
+		return -2;
 	}
 
 	fp_task_a = task_alloc64();
@@ -103,7 +107,9 @@ void arch64_scheduler_init(void)
 		fp_task_b_task = fp_task_b;
 	} else {
 		fp_context_errors = 1;
+		return -3;
 	}
+	return 0;
 }
 
 uintptr_t arch64_scheduler_tick(uintptr_t frame)
@@ -116,16 +122,16 @@ uintptr_t arch64_scheduler_tick(uintptr_t frame)
 	if (current == NULL) {
 		return frame;
 	}
-	current->context.frame = frame;
+	current->context.stack_pointer = frame;
 	if (current->flags != TASK64_FLAGS_SLEEP_PENDING &&
 			scheduler_ticks % SCHEDULER_QUANTUM_TICKS != 0) {
 		return frame;
 	}
 	next = task_switch_prepare64();
-	if (next == NULL || next->context.frame == 0) {
+	if (next == NULL || next->context.stack_pointer == 0) {
 		return frame;
 	}
-	return next->context.frame;
+	return next->context.stack_pointer;
 }
 
 void arch64_scheduler_main_beat(void)

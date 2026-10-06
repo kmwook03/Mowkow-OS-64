@@ -151,6 +151,15 @@ make parity64       # 머꼬 병행 검사 (호스트 CPython과 견주기)
 make clean64        # build64/, img64/ 지우기(rm)
 ```
 
+일반 빌드는 부팅 중 FAT32에 테스트 파일을 쓰지 않습니다. 저장장치 쓰기
+smoke test가 필요한 폐기 가능한 이미지나 SD 카드에서만 clean build로
+명시적으로 켭니다.
+
+```bash
+make clean64
+make BOOT_TEST64=1 x86_64 aarch64
+```
+
 `make help`를 치면 32bit와 64bit 명령이 함께 출력됩니다.
 
 `run64`와 `run64-ahci`는 같은 이미지를 서로 다른 저장 장치 경로로 띄웁니다.
@@ -166,17 +175,16 @@ Mowkow OS x86_64 kernel64_main
 fpu smoke=2
 disk transport=ata part-base=0
 fat32 files=8
-fat32 write=18 sectors=0
-fat32 chain=ok
-fat32 lfn=ok
 sheet64 smoke=ok
 keyboard64 smoke=ok
 hangul64 smoke=ok
 hangul font=loaded
 ```
 
-위 출력은 부팅마다 수행되는 자체 점검입니다.
-멈춘 위치가 깨진 위치입니다. `sectors=0`은 오류가 아니라, 이미 디스크에 쓰기가 끝나서 내보낼 것이 없다는 뜻입니다.
+위 출력은 읽기 전용 자체 점검입니다. `BOOT_TEST64=1` 빌드는
+`destructive boot tests=enabled` 뒤에 `fat32 write`, `fat32 chain`,
+`fat32 lfn` 결과도 출력하고 테스트 파일을 생성하거나 갱신합니다.
+멈춘 위치가 깨진 위치입니다.
 
 ## 3. Raspberry Pi 5 이미지 빌드 및 부팅 방법
 

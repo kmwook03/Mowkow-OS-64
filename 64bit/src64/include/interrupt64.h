@@ -46,7 +46,7 @@ _Static_assert(offsetof(struct INTERRUPT_FRAME64, rsp) ==
 _Static_assert(sizeof(struct INTERRUPT_FRAME64) == INTERRUPT64_FRAME_SIZE,
 	"x86_64 interrupt frame size mismatch");
 
-void exception_handler64(const struct INTERRUPT_FRAME64 *frame);
+uint64_t exception_handler64(const struct INTERRUPT_FRAME64 *frame);
 void irq_handler64(const struct INTERRUPT_FRAME64 *frame);
 
 #endif

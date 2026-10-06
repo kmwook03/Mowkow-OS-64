@@ -46,7 +46,7 @@ A64_BASE_CFLAGS = -O2 -ffreestanding -nostdlib -mgeneral-regs-only \
 	-mcpu=cortex-a76 -mstrict-align -fno-stack-protector -fno-pic \
 	-fno-asynchronous-unwind-tables -fno-unwind-tables \
 	-ffunction-sections -fdata-sections -MMD -MP -I$(SRC64_DIR)/include
-A64_CFLAGS = $(A64_BASE_CFLAGS) $(WARN64_CFLAGS)
+A64_CFLAGS = $(A64_BASE_CFLAGS) $(WARN64_CFLAGS) $(BOOT_TEST64_CFLAGS)
 A64_LDFLAGS = -nostdlib --gc-sections -T $(A64_ARCH_DIR)/kernel64.ld
 
 A64_SRCS = $(A64_ARCH_DIR)/boot64.S $(A64_ARCH_DIR)/vectors64.S \
@@ -56,6 +56,7 @@ A64_SRCS = $(A64_ARCH_DIR)/boot64.S $(A64_ARCH_DIR)/vectors64.S \
 	$(A64_ARCH_DIR)/mailbox64.c $(A64_ARCH_DIR)/fb64.c \
 	$(A64_ARCH_DIR)/exception64.c $(A64_ARCH_DIR)/gic64.c \
 	$(A64_ARCH_DIR)/gtimer64.c $(A64_ARCH_DIR)/sched64.c \
+	$(A64_ARCH_DIR)/platform64.c \
 	$(A64_ARCH_DIR)/sdhci64.c $(A64_ARCH_DIR)/pcie64.c \
 	$(A64_ARCH_DIR)/rp164.c $(A64_ARCH_DIR)/xhci64.c \
 	$(A64_ARCH_DIR)/usbhid64.c $(A64_ARCH_DIR)/keyboard64.c \

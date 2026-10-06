@@ -7,6 +7,8 @@
 #include <asmfunc64.h>
 #include <int64.h>
 #include <keyboard64.h>
+#include <stddef.h>
+#include <timer64.h>
 
 #define PORT_KEYDAT 0x0060
 #define PORT_KEYSTA 0x0064
@@ -14,6 +16,8 @@
 #define KEYSTA_SEND_NOTREADY 0x02
 #define KEYCMD_WRITE_MODE 0x60
 #define KBC_MODE 0x47
+#define KBC_TIMEOUT_TICKS 20U
+#define KBC_POLL_LIMIT 1000000U
 
 static struct FIFO64 *keyfifo64;
 static uint8_t ext_pending;
@@ -52,19 +56,43 @@ int keyboard64_ctrl(void)
 	return ctrl_down;
 }
 
-static void wait_kbc_sendready64(void)
+static int wait_kbc_sendready64(void)
 {
-	while ((io_in8(PORT_KEYSTA) & KEYSTA_SEND_NOTREADY) != 0) {
+	uint64_t start;
+	uint32_t polls;
+
+	start = timerctl64.count;
+	for (polls = 0; polls < KBC_POLL_LIMIT; polls++) {
+		if ((io_in8(PORT_KEYSTA) & KEYSTA_SEND_NOTREADY) == 0) {
+			return 0;
+		}
+		if (timerctl64.count - start >= KBC_TIMEOUT_TICKS) {
+			break;
+		}
 	}
+	return -1;
 }
 
-void init_keyboard64(struct FIFO64 *fifo)
+uint8_t keyboard64_controller_status(void)
 {
+	return io_in8(PORT_KEYSTA);
+}
+
+int init_keyboard64(struct FIFO64 *fifo)
+{
+	if (fifo == NULL) {
+		return -1;
+	}
 	keyfifo64 = fifo;
-	wait_kbc_sendready64();
+	if (wait_kbc_sendready64() != 0) {
+		return -1;
+	}
 	io_out8(PORT_KEYCMD, KEYCMD_WRITE_MODE);
-	wait_kbc_sendready64();
+	if (wait_kbc_sendready64() != 0) {
+		return -1;
+	}
 	io_out8(PORT_KEYDAT, KBC_MODE);
+	return 0;
 }
 
 int keyboard64_decode(uint8_t byte, uint16_t *out)

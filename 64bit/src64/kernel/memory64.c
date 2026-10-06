@@ -1,4 +1,4 @@
-#include <asmfunc64.h>
+#include <arch/platform64.h>
 #ifdef __aarch64__
 #include <arch/arch64.h>
 #endif
@@ -11,22 +11,12 @@ static uintptr_t early_limit;
 
 static uint64_t memory_lock64(void)
 {
-#ifdef __aarch64__
-	return arch64_irq_save();
-#else
-	uint64_t flags = io_load_rflags();
-	io_cli();
-	return flags;
-#endif
+	return platform_irq_save64();
 }
 
 static void memory_unlock64(uint64_t state)
 {
-#ifdef __aarch64__
-	arch64_irq_restore(state);
-#else
-	io_store_rflags(state);
-#endif
+	platform_irq_restore64(state);
 }
 
 uintptr_t align_up64(uintptr_t value, size_t alignment)

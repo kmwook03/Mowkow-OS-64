@@ -7,10 +7,7 @@
  * 레벨이 높은 쪽이 우선이고, 같은 레벨 안에서는 차례대로 돈다. 잠든 태스크는
  * 목록에서 빠지므로 깨우기 전까지는 아예 돌지 않는다.
  */
-#include <asmfunc64.h>
-#ifdef __aarch64__
-#include <arch/arch64.h>
-#endif
+#include <arch/platform64.h>
 #include <memory64.h>
 #include <mtask64.h>
 #include <stddef.h>
@@ -78,11 +75,7 @@ static void task_switchsub64(void)
 static void task_idle64(void)
 {
 	for (;;) {
-#ifdef __aarch64__
-		arch64_halt_with_irq();
-#else
-		io_stihlt();
-#endif
+		platform_halt_with_irq64();
 	}
 }
 
@@ -114,11 +107,7 @@ struct TASK64 *task_alloc64(void)
 			task->process = NULL;
 			task->is_user = 0;
 			task->kernel_rsp = 0;
-#ifdef __aarch64__
-			task->context.frame = 0;
-#else
-			task->context.rsp = 0;
-#endif
+			task->context.stack_pointer = 0;
 			return task;
 		}
 	}
@@ -128,35 +117,19 @@ struct TASK64 *task_alloc64(void)
 int task_set_entry64(struct TASK64 *task, void (*entry)(void),
 	uintptr_t stack_base, size_t stack_size)
 {
-#ifdef __aarch64__
-	if (task == NULL || entry == NULL || stack_base == 0 ||
-			stack_size < ARCH64_EXCEPTION_FRAME_SIZE) {
-		return -1;
-	}
-	task->stack_base = stack_base;
-	task->stack_size = stack_size;
-	task->context.frame = arch64_task_frame_init(entry, stack_base, stack_size);
-	return task->context.frame != 0 ? 0 : -1;
-#else
-	uint64_t *sp;
+	int status;
 
-	if (task == NULL || entry == NULL || stack_base == 0 || stack_size < 128) {
+	if (task == NULL) {
 		return -1;
+	}
+	status = platform_task_context_init64(&task->context, entry, stack_base,
+		stack_size);
+	if (status != 0) {
+		return status;
 	}
 	task->stack_base = stack_base;
 	task->stack_size = stack_size;
-	sp = (uint64_t *) align_down64(stack_base + stack_size, 16);
-	*--sp = 0;
-	*--sp = (uint64_t) entry;
-	*--sp = 0;
-	*--sp = 0;
-	*--sp = 0;
-	*--sp = 0;
-	*--sp = 0;
-	*--sp = 0;
-	task->context.rsp = (uintptr_t) sp;
 	return 0;
-#endif
 }
 
 void task_run64(struct TASK64 *task, int level, int priority)
@@ -198,15 +171,9 @@ void task_sleep64(struct TASK64 *task)
 		return;
 	}
 	now_task = task_now64();
-#ifdef __aarch64__
-	if (task == now_task) {
-		task->flags = TASK64_FLAGS_SLEEP_PENDING;
-		while (task->flags == TASK64_FLAGS_SLEEP_PENDING) {
-			arch64_halt_with_irq();
-		}
+	if (task == now_task && platform_task_sleep_current64(task) != 0) {
 		return;
 	}
-#endif
 	task_remove64(task);
 	if (task != now_task) {
 		return;
@@ -216,9 +183,7 @@ void task_sleep64(struct TASK64 *task)
 	if (new_task != NULL && new_task != now_task) {
 		taskctl64.switches++;
 		new_task->switches++;
-#ifndef __aarch64__
-		context_switch64(&now_task->context, &new_task->context);
-#endif
+		platform_task_switch64(&now_task->context, &new_task->context);
 	}
 }
 
@@ -232,22 +197,13 @@ int task_kill64(struct TASK64 *task)
 	if (task == NULL || task->flags == TASK64_FLAGS_UNUSED || task == task_now64()) {
 		return -1;
 	}
-#ifdef __aarch64__
-	flags = arch64_irq_save();
-#else
-	flags = io_load_rflags();
-	io_cli();
-#endif
+	flags = platform_irq_save64();
 	if (task->flags == TASK64_FLAGS_RUNNING ||
 			task->flags == TASK64_FLAGS_SLEEP_PENDING) {
 		task_remove64(task);
 	}
 	task->flags = TASK64_FLAGS_UNUSED;
-#ifdef __aarch64__
-	arch64_irq_restore(flags);
-#else
-	io_store_rflags(flags);
-#endif
+	platform_irq_restore64(flags);
 	if (task->stack_base != 0) {
 		memman64_free_4k(&memman64, task->stack_base, task->stack_size);
 		task->stack_base = 0;
@@ -301,19 +257,17 @@ struct TASK64 *task_switch_prepare64(void)
 
 void task_switch64(void)
 {
-#ifndef __aarch64__
 	struct TASK64 *now_task;
 	struct TASK64 *new_task;
 
 	now_task = task_now64();
 	new_task = task_switch_prepare64();
 	if (now_task != NULL && new_task != NULL && new_task != now_task) {
-		context_switch64(&now_task->context, &new_task->context);
+		platform_task_switch64(&now_task->context, &new_task->context);
 	}
-#endif
 }
 
-void task_init64(void)
+int task_init64(void)
 {
 	uint32_t i;
 	struct TASK64 *main_task;
@@ -333,7 +287,7 @@ void task_init64(void)
 
 	main_task = task_alloc64();
 	if (main_task == NULL) {
-		return;
+		return -1;
 	}
 	main_task->flags = TASK64_FLAGS_RUNNING;
 	main_task->priority = 1;
@@ -342,9 +296,20 @@ void task_init64(void)
 	task_switchsub64();
 
 	idle_task = task_alloc64();
-	idle_stack = memman64_alloc_4k(&memman64, TASK64_STACK_SIZE);
-	if (idle_task != NULL && idle_stack != 0 &&
-			task_set_entry64(idle_task, task_idle64, idle_stack, TASK64_STACK_SIZE) == 0) {
-		task_run64(idle_task, MAX_TASKLEVELS64 - 1, 1);
+	if (idle_task == NULL) {
+		return -2;
 	}
+	idle_stack = memman64_alloc_4k(&memman64, TASK64_STACK_SIZE);
+	if (idle_stack == 0) {
+		idle_task->flags = TASK64_FLAGS_UNUSED;
+		return -3;
+	}
+	if (task_set_entry64(idle_task, task_idle64, idle_stack,
+			TASK64_STACK_SIZE) != 0) {
+		memman64_free_4k(&memman64, idle_stack, TASK64_STACK_SIZE);
+		idle_task->flags = TASK64_FLAGS_UNUSED;
+		return -4;
+	}
+	task_run64(idle_task, MAX_TASKLEVELS64 - 1, 1);
+	return 0;
 }

@@ -14,16 +14,8 @@
 #define TASK64_FLAGS_RUNNING   2
 #define TASK64_FLAGS_SLEEP_PENDING 3
 
-#ifdef __aarch64__
-#include <arch/exception_frame64.h>
-#endif
-
 struct CONTEXT64 {
-#ifdef __aarch64__
-	uintptr_t frame;
-#else
-	uint64_t rsp;
-#endif
+	uintptr_t stack_pointer;
 };
 
 struct TASK64 {
@@ -55,8 +47,7 @@ struct TASKCTL64 {
 
 extern struct TASKCTL64 taskctl64;
 
-void context_switch64(struct CONTEXT64 *old_context, struct CONTEXT64 *new_context);
-void task_init64(void);
+int task_init64(void);
 struct TASK64 *task_now64(void);
 struct TASK64 *task_alloc64(void);
 int task_set_entry64(struct TASK64 *task, void (*entry)(void),

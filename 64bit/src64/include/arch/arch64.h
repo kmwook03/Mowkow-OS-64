@@ -34,6 +34,8 @@ void aarch64_high_main(void);
 void arch64_cpu_init(void);
 void arch64_exception_handler(uint64_t vector, uint64_t esr, uint64_t elr,
 	uint64_t far);
+void arch64_kernel_sync_handler(const struct ARCH64_EXCEPTION_FRAME *frame,
+	uint64_t esr, uint64_t far);
 uint64_t arch64_sync_dispatch(struct ARCH64_EXCEPTION_FRAME *frame,
 	uint64_t esr);
 void arch64_mmu_init(void);
@@ -223,7 +225,7 @@ int xhci64_hid_poll(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid, uint8_t *report,
 	size_t report_length);
 
-void arch64_scheduler_init(void);
+int arch64_scheduler_init(void);
 uintptr_t arch64_scheduler_tick(uintptr_t frame);
 void arch64_scheduler_main_beat(void);
 int arch64_scheduler_healthy(void);

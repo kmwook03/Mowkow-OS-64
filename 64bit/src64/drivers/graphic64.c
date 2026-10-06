@@ -3,6 +3,7 @@
  */
 
 #include <asmfunc64.h>
+#include <arch/platform64.h>
 #ifdef __aarch64__
 #include <arch/arch64.h>
 #endif
@@ -46,11 +47,8 @@ void set_palette64(int32_t start, int32_t end, const uint8_t *rgb)
 		return;
 	}
 	source = rgb;
-#ifdef __aarch64__
-	rflags = arch64_irq_save();
-#else
-	rflags = io_load_rflags();
-	io_cli();
+	rflags = platform_irq_save64();
+#ifndef __aarch64__
 	io_out8(PALETTE64_DAC_INDEX, (uint8_t) start);
 #endif
 	for (i = start; i <= end; i++) {
@@ -67,11 +65,7 @@ void set_palette64(int32_t start, int32_t end, const uint8_t *rgb)
 		#endif
 		source += 3;
 	}
-	#ifdef __aarch64__
-	arch64_irq_restore(rflags);
-	#else
-	io_store_rflags(rflags);
-	#endif
+	platform_irq_restore64(rflags);
 }
 
 uint32_t graphic64_rgb32(uint8_t index)

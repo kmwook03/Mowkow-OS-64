@@ -7,7 +7,7 @@
  */
 #include "py/mphal.h"
 
-#include <asmfunc64.h>
+#include <arch/platform64.h>
 #ifdef __aarch64__
 #include <arch/arch64.h>
 #endif
@@ -57,18 +57,10 @@ void mp_hal_delay_ms(mp_uint_t ms)
 {
 	uint64_t target;
 
-
-#ifdef __aarch64__
 	target = mpport_ticks_100hz() + (ms + 9) / 10;
 	while (mpport_ticks_100hz() < target) {
-		arch64_halt_with_irq();
+		platform_wait_for_interrupt64();
 	}
-#else
-	target = mpport_ticks_100hz() + (ms + 9) / 10;
-	while (mpport_ticks_100hz() < target) {
-		io_hlt();
-	}
-#endif
 }
 
 /*

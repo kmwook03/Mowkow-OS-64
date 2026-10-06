@@ -51,6 +51,7 @@ help :
 	@echo "    make parity64   머꼬 병행 검사 (호스트 CPython과 견주기)"
 	@echo "    make parity64-ahci  같은 검사를 q35 + AHCI로 실행"
 	@echo "    make clean64    build64/ img64/ 지우기"
+	@echo "    BOOT_TEST64=1   부팅 중 파괴적 FAT32 쓰기 검사를 명시적으로 활성화"
 	@echo ""
 	@echo "  Raspberry Pi 5 (AArch64, M9)"
 	@echo "    make aarch64    Pi 5 kernel과 boot partition staging 빌드"

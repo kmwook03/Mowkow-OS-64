@@ -25,7 +25,9 @@
 #define KEY64_RCTRL   (KEY64_EXT | 0x1d)
 #define KEY64_RALT    (KEY64_EXT | 0x38)
 
-void init_keyboard64(struct FIFO64 *fifo);
+/* PIT와 IRQ0를 먼저 켜야 timeout이 진행한다. */
+int init_keyboard64(struct FIFO64 *fifo);
+uint8_t keyboard64_controller_status(void);
 void inthandler21_64(void);
 
 /*

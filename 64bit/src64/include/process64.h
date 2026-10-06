@@ -7,6 +7,7 @@
 
 #define PROCESS64_MAX_FILES 8
 #define PROCESS64_MAX_ARGS 8
+#define PROCESS64_EXIT_FAULT_BASE 128
 
 struct PROCESS64_RANGE {
 	uintptr_t base;

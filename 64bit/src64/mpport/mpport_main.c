@@ -20,10 +20,7 @@
 #include "shared/runtime/gchelper.h"
 #include "shared/runtime/pyexec.h"
 
-#include <asmfunc64.h>
-#ifdef __aarch64__
-#include <arch/arch64.h>
-#endif
+#include <arch/platform64.h>
 #include <console64.h>
 #include <fd64.h>
 #include <memory64.h>
@@ -56,29 +53,16 @@ static int mpport_claim(void)
 {
 	uint64_t flags;
 
-#ifdef __aarch64__
-	flags = arch64_irq_save();
-#else
-	flags = io_load_rflags();
-	io_cli();
-#endif
+	flags = platform_irq_save64();
 	if (mp_busy != 0) {
-#ifdef __aarch64__
-		arch64_irq_restore(flags);
-#else
-		io_store_rflags(flags);
-#endif
+		platform_irq_restore64(flags);
 		/* console64_puts는 도는 태스크로 콘솔을 찾으므로 거절 메시지는
 		   거절당한 콘솔에 찍힌다. */
 		console64_puts("py already running in another console\n");
 		return -1;
 	}
 	mp_busy = 1;
-#ifdef __aarch64__
-	arch64_irq_restore(flags);
-#else
-	io_store_rflags(flags);
-#endif
+	platform_irq_restore64(flags);
 	return 0;
 }
 

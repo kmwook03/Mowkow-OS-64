@@ -272,8 +272,19 @@ exception_common:
 	push r14
 	push r15
 
+	mov ax, KERNEL_DATA_SEL
+	mov ds, ax
+	mov es, ax
+
+	; 커널 예외는 임의의 명령 경계에서 들어오므로 C ABI 정렬을 다시 맞춘다.
+	; rbx 원래 값은 이미 프레임에 저장했고 C 호출 규약도 rbx를 보존한다.
 	mov rdi, rsp
+	mov rbx, rsp
+	and rsp, -16
 	call exception_handler64
+	mov rsp, rbx
+	cmp rax, 1
+	je syscall_exit_to_kernel
 
 	pop r15
 	pop r14

@@ -100,6 +100,29 @@ static int32_t gui_win_x;
 static int32_t gui_win_y;
 static int gui_mode;
 
+static void gui64_release_failed_init(uintptr_t back_addr,
+	uintptr_t console_addr, size_t screen_size)
+{
+	if (console_addr != 0) {
+		memman64_free_4k(&memman64, console_addr, screen_size);
+	}
+	if (back_addr != 0) {
+		memman64_free_4k(&memman64, back_addr, screen_size);
+	}
+	if (gui_ctl != NULL) {
+		memman64_free_4k(&memman64, (uintptr_t) gui_ctl->map,
+			(size_t) gui_ctl->xsize * (size_t) gui_ctl->ysize);
+		memman64_free_4k(&memman64, (uintptr_t) gui_ctl,
+			sizeof (struct SHTCTL64));
+	}
+	gui_ctl = NULL;
+	gui_back = NULL;
+	gui_console = NULL;
+	gui_console_buf = NULL;
+	gui_console_buf_size = 0;
+	gui_cursor = NULL;
+}
+
 /* src/drivers/graphic.c의 init_mouse_cursor8과 같은 비트맵. */
 static void init_cursor_buf(void)
 {
@@ -231,8 +254,8 @@ static void draw_desktop_icon(uint8_t *buf, int32_t stride)
 
 struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 {
-	uintptr_t back_addr;
-	uintptr_t console_addr;
+	uintptr_t back_addr = 0;
+	uintptr_t console_addr = 0;
 	uintptr_t bar_addr;
 	size_t screen_size;
 	int32_t xsize;
@@ -253,6 +276,7 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	back_addr = memman64_alloc_4k(&memman64, screen_size);
 	console_addr = memman64_alloc_4k(&memman64, screen_size);
 	if (back_addr == 0 || console_addr == 0) {
+		gui64_release_failed_init(back_addr, console_addr, screen_size);
 		return NULL;
 	}
 
@@ -269,6 +293,7 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	gui_back = sheet64_alloc(gui_ctl);
 	gui_console = sheet64_alloc(gui_ctl);
 	if (gui_back == NULL || gui_console == NULL) {
+		gui64_release_failed_init(back_addr, console_addr, screen_size);
 		return NULL;
 	}
 
@@ -287,6 +312,7 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 
 	gui_cursor = sheet64_alloc(gui_ctl);
 	if (gui_cursor == NULL) {
+		gui64_release_failed_init(back_addr, console_addr, screen_size);
 		return NULL;
 	}
 	init_cursor_buf();
@@ -308,6 +334,9 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 		sheet64_setbuf(gui_taskbar, gui_taskbar_buf, xsize, GUI64_BAR_H, -1);
 		gui_taskbar->vx0 = 0;
 		gui_taskbar->vy0 = ysize - GUI64_BAR_H;
+	} else if (bar_addr != 0) {
+		memman64_free_4k(&memman64, bar_addr,
+			(size_t) xsize * (size_t) GUI64_BAR_H);
 	}
 
 	gui_wins[0].sht = gui_console;
@@ -321,6 +350,11 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	sheet64_updown(gui_console, 1);
 	sheet64_updown(gui_cursor, 2);    /* 커서는 항상 맨 위 */
 	return gui_console;
+}
+
+int gui64_available(void)
+{
+	return gui_ctl != NULL && gui_console != NULL;
 }
 
 static struct GUI64_WIN *find_win(const struct SHEET64 *sht)

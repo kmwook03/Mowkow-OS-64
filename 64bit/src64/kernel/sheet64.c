@@ -7,7 +7,7 @@
  *   2. 4픽셀 묶음 최적화를 뺐다.
  */
 
-#include <asmfunc64.h>
+#include <arch/platform64.h>
 #ifdef __aarch64__
 #include <arch/arch64.h>
 #endif
@@ -26,22 +26,12 @@ static void sheet64_refreshsub(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
 
 static uint64_t sheet64_lock(void)
 {
-#ifdef __aarch64__
-	return arch64_irq_save();
-#else
-	uint64_t flags = io_load_rflags();
-	io_cli();
-	return flags;
-#endif
+	return platform_irq_save64();
 }
 
 static void sheet64_unlock(uint64_t state)
 {
-#ifdef __aarch64__
-	arch64_irq_restore(state);
-#else
-	io_store_rflags(state);
-#endif
+	platform_irq_restore64(state);
 }
 
 static void sheet64_flush_vram(struct SHTCTL64 *ctl, int32_t x0, int32_t y0,

@@ -113,6 +113,7 @@ static void delay_ms64(uint32_t milliseconds)
 	}
 }
 
+#if MOWKOW64_BOOT_TESTS
 static int m4_write_smoke64(void)
 {
 	static const char payload[] = "Mowkow OS M4 SDHCI write smoke\n";
@@ -154,6 +155,7 @@ static int m4_write_smoke64(void)
 	}
 	return 0;
 }
+#endif
 
 static int m4_load_hangul_font64(void)
 {
@@ -539,6 +541,7 @@ void aarch64_high_main(void)
 	int heartbeat_led_on;
 	int fp_test_reported;
 	uintptr_t rp1_base;
+	int mouse_available;
 	int mouse_status;
 	int status;
 
@@ -546,6 +549,9 @@ void aarch64_high_main(void)
 	arch64_cpu_init();
 	status = arch64_fb_probe(&bootinfo);
 	if (status != 0) {
+		arch64_dbg_puts("PANIC: framebuffer init failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
 		arch64_panic_blink(status == -2 ? 2 : 3);
 	}
 	init_palette64();
@@ -562,17 +568,35 @@ void aarch64_high_main(void)
 	   초기화한다. scheduler 뒤에 다시 초기화하면 이미 할당한 스택이
 	   free list에 재등록되어 예외 복귀 frame이 파일 데이터에 덮어쓰인다. */
 	init_memory64();
-	arch64_scheduler_init();
+	if (memman64_total(&memman64) < MEMMAN64_PAGE_SIZE) {
+		arch64_dbg_puts("PANIC: memory init found no usable pages\n");
+		arch64_panic_blink(4);
+	}
+	status = arch64_scheduler_init();
+	if (status != 0) {
+		arch64_dbg_puts("M3: scheduler init failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(4);
+	}
 	arch64_timer_init(NULL);
 	arch64_dbg_puts("M3: exceptions + scheduler + high-half paging OK\n");
-	if (block64_init() != 0) {
-		arch64_dbg_puts("M4a: SDHCI init failed\n");
+	status = block64_init();
+	if (status != 0) {
+		arch64_dbg_puts("M4a: SDHCI init failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
 		arch64_panic_blink(6);
 	}
-	if (fd64_init() != 0) {
-		arch64_dbg_puts("M4a: FAT32 mount failed\n");
+	status = fd64_init();
+	if (status != 0) {
+		arch64_dbg_puts("M4a: FAT32 mount failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
 		arch64_panic_blink(7);
 	}
+#if MOWKOW64_BOOT_TESTS
+	arch64_dbg_puts("destructive boot tests=enabled\n");
 	status = m4_write_smoke64();
 	if (status == -2) {
 		arch64_dbg_puts("M4b: existing write smoke is corrupt\n");
@@ -581,11 +605,12 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("M4b: write smoke failed\n");
 		arch64_panic_blink(8);
 	}
+#endif
 	if (m4_load_hangul_font64() != 0) {
 		arch64_dbg_puts("M4c: H04.FNT load failed\n");
 		arch64_panic_blink(10);
 	}
-	arch64_dbg_puts("M4: SDHCI + FAT32 + write + Hangul font OK\n");
+	arch64_dbg_puts("M4: SDHCI + FAT32 + Hangul font OK\n");
 	rp1_vendor_device = 0;
 	rp1_class_revision = 0;
 	rp1_bar0 = 0;
@@ -1092,6 +1117,7 @@ void aarch64_high_main(void)
 	mouse_descriptor = (struct XHCI64_DESCRIPTOR_RESULT) { 0 };
 	mouse_hid = (struct XHCI64_HID_RESULT) { 0 };
 	mouse_configure = (struct XHCI64_CONFIGURE_RESULT) { 0 };
+	mouse_available = 0;
 	mouse_stage = 1U;
 	status = xhci64_start_controller(rp1_base, 0U, &mouse_start);
 	if (status == 0) {
@@ -1130,7 +1156,7 @@ void aarch64_high_main(void)
 			mouse_slot.slot_id, &mouse_hid);
 	}
 	if (status != 0) {
-		arch64_dbg_puts("M8c: USB boot mouse init failed, stage/status=");
+		arch64_dbg_puts("DEGRADED: USB mouse init failed, stage/status=");
 		dbg_hex32(mouse_stage);
 		arch64_dbg_puts("/");
 		dbg_hex32((uint32_t) status);
@@ -1151,9 +1177,11 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("/");
 		dbg_hex32(mouse_hid.endpoint_max_packet);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(41);
+	} else {
+		mouse_available = 1;
 	}
 	if (xhci64_select_controller(1U) != 0) {
+		arch64_dbg_puts("PANIC: USB keyboard controller unavailable\n");
 		arch64_panic_blink(41);
 	}
 	status = m7a_sheet32_smoke64();
@@ -1201,12 +1229,13 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(29);
 	}
-	if (xhci64_select_controller(0U) != 0 ||
-			xhci64_hid_arm(rp1_base, mouse_slot.slot_id, &mouse_hid) != 0) {
-		arch64_dbg_puts("M8c: live USB mouse arm failed\n");
-		arch64_panic_blink(42);
+	if (mouse_available != 0 && (xhci64_select_controller(0U) != 0 ||
+			xhci64_hid_arm(rp1_base, mouse_slot.slot_id, &mouse_hid) != 0)) {
+		arch64_dbg_puts("DEGRADED: live USB mouse arm failed\n");
+		mouse_available = 0;
 	}
 	if (xhci64_select_controller(1U) != 0) {
+		arch64_dbg_puts("PANIC: USB keyboard controller restore failed\n");
 		arch64_panic_blink(42);
 	}
 	__asm__ volatile ("mrs %0, cntfrq_el0" : "=r" (heartbeat_frequency));
@@ -1222,7 +1251,10 @@ void aarch64_high_main(void)
 
 	/* Keep the M1 heartbeat as an independent liveness signal. */
 	for (;;) {
-		xhci64_select_controller(1U);
+		if (xhci64_select_controller(1U) != 0) {
+			arch64_dbg_puts("\nPANIC: USB keyboard controller lost\n");
+			arch64_panic_blink(29);
+		}
 		status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
 			&xhci_hid, hid_report);
 		if (status < 0) {
@@ -1249,28 +1281,35 @@ void aarch64_high_main(void)
 				}
 			}
 		}
-		xhci64_select_controller(0U);
-		mouse_status = xhci64_hid_poll(rp1_base, mouse_slot.slot_id,
-			&mouse_hid, mouse_report, sizeof(mouse_report));
-		if (mouse_status < 0) {
-			arch64_dbg_puts("\nM8c: live USB mouse poll failed, status=");
-			dbg_hex32((uint32_t) mouse_status);
-			arch64_dbg_puts("\n");
-			arch64_panic_blink(42);
-		}
-		if (mouse_status > 0) {
-			status = usbhid64_decode_mouse_report(mouse_report,
-				(size_t) mouse_status, &mouse_decoded);
-			if (status != 0) {
-				arch64_dbg_puts("\nM8c: live USB mouse decode failed\n");
-				arch64_panic_blink(42);
+		if (mouse_available != 0) {
+			status = xhci64_select_controller(0U);
+			if (status == 0) {
+				mouse_status = xhci64_hid_poll(rp1_base,
+					mouse_slot.slot_id, &mouse_hid, mouse_report,
+					sizeof(mouse_report));
+			} else {
+				mouse_status = status;
 			}
-			gui64_mouse_event(mouse_decoded.dx, mouse_decoded.dy,
-				(int32_t) mouse_decoded.buttons);
-			if (xhci64_hid_arm(rp1_base, mouse_slot.slot_id,
-					&mouse_hid) != 0) {
-				arch64_dbg_puts("\nM8c: live USB mouse rearm failed\n");
-				arch64_panic_blink(42);
+			if (mouse_status < 0) {
+				arch64_dbg_puts("\nDEGRADED: USB mouse poll failed, status=");
+				dbg_hex32((uint32_t) mouse_status);
+				arch64_dbg_puts("\n");
+				mouse_available = 0;
+			} else if (mouse_status > 0) {
+				status = usbhid64_decode_mouse_report(mouse_report,
+					(size_t) mouse_status, &mouse_decoded);
+				if (status != 0) {
+					arch64_dbg_puts("\nDEGRADED: USB mouse decode failed\n");
+					mouse_available = 0;
+				} else {
+					gui64_mouse_event(mouse_decoded.dx, mouse_decoded.dy,
+						(int32_t) mouse_decoded.buttons);
+					if (xhci64_hid_arm(rp1_base, mouse_slot.slot_id,
+							&mouse_hid) != 0) {
+						arch64_dbg_puts("\nDEGRADED: USB mouse rearm failed\n");
+						mouse_available = 0;
+					}
+				}
 			}
 		}
 		/* 닫기 요청을 처리하고 잠든 console task와 window를 회수한다. */

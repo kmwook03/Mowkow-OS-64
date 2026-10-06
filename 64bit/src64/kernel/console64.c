@@ -10,6 +10,7 @@
  * 않는다.
  */
 #include <asmfunc64.h>
+#include <arch/platform64.h>
 #ifdef __aarch64__
 #include <arch/arch64.h>
 #endif
@@ -158,20 +159,12 @@ static struct CONSOLE64 *console_self(void)
 
 static void console_irq_disable(void)
 {
-#ifdef __aarch64__
-	arch64_irq_disable();
-#else
-	io_cli();
-#endif
+	platform_irq_disable64();
 }
 
 static void console_irq_enable(void)
 {
-#ifdef __aarch64__
-	arch64_irq_enable();
-#else
-	io_sti();
-#endif
+	platform_irq_enable64();
 }
 
 /*

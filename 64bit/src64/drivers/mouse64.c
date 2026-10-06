@@ -9,6 +9,8 @@
 #include <fifo64.h>
 #include <int64.h>
 #include <mouse64.h>
+#include <stddef.h>
+#include <timer64.h>
 
 #define PORT_KEYDAT 0x0060
 #define PORT_KEYSTA 0x0064
@@ -16,26 +18,47 @@
 #define KEYSTA_SEND_NOTREADY 0x02
 #define KEYCMD_SENDTO_MOUSE  0xd4
 #define MOUSECMD_ENABLE      0xf4
+#define KBC_TIMEOUT_TICKS 20U
+#define KBC_POLL_LIMIT 1000000U
 
 static struct FIFO64 *mousefifo64;
 
-static void wait_kbc_sendready64(void)
+static int wait_kbc_sendready64(void)
 {
-	while ((io_in8(PORT_KEYSTA) & KEYSTA_SEND_NOTREADY) != 0) {
+	uint64_t start;
+	uint32_t polls;
+
+	start = timerctl64.count;
+	for (polls = 0; polls < KBC_POLL_LIMIT; polls++) {
+		if ((io_in8(PORT_KEYSTA) & KEYSTA_SEND_NOTREADY) == 0) {
+			return 0;
+		}
+		if (timerctl64.count - start >= KBC_TIMEOUT_TICKS) {
+			break;
+		}
 	}
+	return -1;
 }
 
-void init_mouse64(struct FIFO64 *fifo, struct MOUSE_DEC64 *mdec)
+int init_mouse64(struct FIFO64 *fifo, struct MOUSE_DEC64 *mdec)
 {
+	if (fifo == NULL || mdec == NULL) {
+		return -1;
+	}
 	mousefifo64 = fifo;
-	wait_kbc_sendready64();
+	if (wait_kbc_sendready64() != 0) {
+		return -1;
+	}
 	io_out8(PORT_KEYCMD, KEYCMD_SENDTO_MOUSE);
-	wait_kbc_sendready64();
+	if (wait_kbc_sendready64() != 0) {
+		return -1;
+	}
 	io_out8(PORT_KEYDAT, MOUSECMD_ENABLE);
 	mdec->phase = 0;        /* ACK(0xfa) 대기 */
 	mdec->x = 0;
 	mdec->y = 0;
 	mdec->btn = 0;
+	return 0;
 }
 
 void inthandler2c_64(void)
