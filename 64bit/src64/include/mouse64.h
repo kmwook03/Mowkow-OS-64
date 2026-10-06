@@ -12,7 +12,7 @@ struct MOUSE_DEC64 {
 	int32_t btn;
 };
 
-/* 키보드와 PIT 초기화 뒤에 호출한다. */
+/* 키보드 초기화 뒤에 호출한다. */
 int init_mouse64(struct FIFO64 *fifo, struct MOUSE_DEC64 *mdec);
 void inthandler2c_64(void);
 /* 3바이트 패킷이 완성되면 1, 대기 중이면 0. */

@@ -15,8 +15,10 @@
 #include <stdint.h>
 
 /* HBA 레지스터 */
+#define HBA_CAP 0x00
 #define HBA_GHC 0x04
 #define HBA_PI 0x0c
+#define CAP_S64A 0x80000000u
 #define GHC_AE 0x80000000u
 #define GHC_IE 0x00000002u
 
@@ -51,9 +53,28 @@
 #define ATA_CMD_IDENTIFY 0xec
 
 #define AHCI_TIMEOUT 10000000
+#define AHCI_LBA48_SECTORS (1ULL << 48)
+#define AHCI_PRDT_DBC_MASK 0x003fffffu
+#define AHCI_PRDT_MAX_BYTES ((size_t) AHCI_PRDT_DBC_MASK + 1U)
+#define AHCI_COMMAND_LIST_SIZE 1024U
+#define AHCI_RECEIVED_FIS_OFFSET 1024U
+#define AHCI_RECEIVED_FIS_SIZE 256U
+#define AHCI_COMMAND_TABLE_OFFSET 1280U
+#define AHCI_COMMAND_TABLE_SIZE 144U
+#define AHCI_PRDT_OFFSET 128U
+#define AHCI_PRDT_SIZE 16U
+#define AHCI_IDENTIFY_OFFSET 256U
 /* 명령 하나가 옮기는 최대 섹터 수. PRDT 항목 하나로 8192섹터까지 되지만,
    캐시는 한 번에 블록 하나보다 많이 요청하지 않는다. */
 #define AHCI_MAX_SECTORS 128
+
+_Static_assert(AHCI_COMMAND_TABLE_OFFSET + AHCI_IDENTIFY_OFFSET +
+	BLOCK64_SECTOR_SIZE <= MEMMAN64_PAGE_SIZE,
+	"AHCI command structures exceed one DMA page");
+_Static_assert(AHCI_PRDT_OFFSET + AHCI_PRDT_SIZE <= AHCI_COMMAND_TABLE_SIZE,
+	"AHCI PRDT exceeds the command table");
+_Static_assert(SIZE_MAX / BLOCK64_SECTOR_SIZE >= UINT32_MAX,
+	"AHCI request byte counts require a 64-bit size_t");
 
 static volatile uint8_t *abar;
 static uint32_t port_base;
@@ -61,6 +82,7 @@ static uint8_t *command_list;
 static uint8_t *received_fis;
 static uint8_t *command_table;
 static uint64_t sector_total;
+static int dma_64bit;
 static int ready;
 
 static uint32_t reg_read(uint32_t offset)
@@ -100,6 +122,70 @@ static void zero(uint8_t *p, uint32_t size)
 	}
 }
 
+static int dma_range_valid(const void *buffer, size_t bytes)
+{
+	uintptr_t address;
+	uintptr_t last;
+
+	if (buffer == NULL || bytes == 0) {
+		return 0;
+	}
+	address = (uintptr_t) buffer;
+	if ((address & 1U) != 0 || bytes - 1 > UINTPTR_MAX - address) {
+		return 0;
+	}
+	last = address + bytes - 1;
+	if (dma_64bit == 0 && last > UINT32_MAX) {
+		return 0;
+	}
+	return 1;
+}
+
+static int data_request_valid(uint64_t lba, uint32_t count,
+	const void *buffer)
+{
+	size_t bytes;
+
+	if (ready == 0 || count == 0 || sector_total == 0 ||
+			lba >= AHCI_LBA48_SECTORS ||
+			(uint64_t) count > AHCI_LBA48_SECTORS - lba ||
+			lba >= sector_total || (uint64_t) count > sector_total - lba) {
+		return 0;
+	}
+	bytes = (size_t) count * BLOCK64_SECTOR_SIZE;
+	return dma_range_valid(buffer, bytes);
+}
+
+static int command_valid(uint8_t command, uint64_t lba, uint32_t sectors,
+	const void *buffer, uint32_t bytes, int write)
+{
+	uint64_t expected;
+
+	if (write != 0 && write != 1) {
+		return 0;
+	}
+	if (command == ATA_CMD_IDENTIFY) {
+		return ready == 0 && write == 0 && lba == 0 && sectors == 0 &&
+			bytes == BLOCK64_SECTOR_SIZE && dma_range_valid(buffer, bytes);
+	}
+	if ((command != ATA_CMD_READ_DMA_EX || write != 0) &&
+			(command != ATA_CMD_WRITE_DMA_EX || write != 1)) {
+		return 0;
+	}
+	if (ready == 0 || sectors == 0 || sectors > UINT16_MAX ||
+			lba >= AHCI_LBA48_SECTORS ||
+			(uint64_t) sectors > AHCI_LBA48_SECTORS - lba ||
+			lba >= sector_total ||
+			(uint64_t) sectors > sector_total - lba) {
+		return 0;
+	}
+	expected = (uint64_t) sectors * BLOCK64_SECTOR_SIZE;
+	if (expected != bytes || bytes > AHCI_PRDT_MAX_BYTES) {
+		return 0;
+	}
+	return dma_range_valid(buffer, bytes);
+}
+
 static int port_stop(void)
 {
 	uint32_t timeout;
@@ -129,7 +215,8 @@ static int run_command(uint8_t command, uint64_t lba, uint32_t sectors,
 	uint8_t *prdt;
 	uint32_t timeout;
 
-	if (ready == 0 && command != ATA_CMD_IDENTIFY) {
+	if (command_list == NULL || command_table == NULL ||
+			command_valid(command, lba, sectors, buffer, bytes, write) == 0) {
 		return -1;
 	}
 	for (timeout = 0; timeout < AHCI_TIMEOUT; timeout++) {
@@ -151,7 +238,7 @@ static int run_command(uint8_t command, uint64_t lba, uint32_t sectors,
 	write32(header + 8, (uint32_t) (uintptr_t) command_table);
 	write32(header + 12, (uint32_t) ((uint64_t) (uintptr_t) command_table >> 32));
 
-	zero(command_table, 128 + 16);
+	zero(command_table, AHCI_COMMAND_TABLE_SIZE);
 	fis = command_table;
 	fis[0] = 0x27;			/* 호스트에서 장치로 */
 	fis[1] = 0x80;			/* 명령이라는 표시 */
@@ -166,10 +253,11 @@ static int run_command(uint8_t command, uint64_t lba, uint32_t sectors,
 	fis[12] = (uint8_t) sectors;
 	fis[13] = (uint8_t) (sectors >> 8);
 
-	prdt = command_table + 128;
+	prdt = command_table + AHCI_PRDT_OFFSET;
 	write32(prdt, (uint32_t) (uintptr_t) buffer);
 	write32(prdt + 4, (uint32_t) ((uint64_t) (uintptr_t) buffer >> 32));
-	write32(prdt + 12, bytes - 1);	/* 바이트 수는 0부터 센다 */
+	write32(prdt + 12, (bytes - 1) & AHCI_PRDT_DBC_MASK);
+	/* DBC는 바이트 수를 0부터 세며, 위 검증이 예약 비트를 0으로 보장한다. */
 
 	port_write(PORT_CI, 1);
 	for (timeout = 0; timeout < AHCI_TIMEOUT; timeout++) {
@@ -193,6 +281,13 @@ static int transfer(uint64_t lba, uint32_t count, uint8_t *buffer, int write)
 {
 	uint32_t chunk;
 
+	if (count == 0) {
+		return 0;
+	}
+	if ((write != 0 && write != 1) ||
+			data_request_valid(lba, count, buffer) == 0) {
+		return -1;
+	}
 	while (count > 0) {
 		chunk = count > AHCI_MAX_SECTORS ? AHCI_MAX_SECTORS : count;
 		if (run_command(write != 0 ? ATA_CMD_WRITE_DMA_EX : ATA_CMD_READ_DMA_EX,
@@ -200,7 +295,7 @@ static int transfer(uint64_t lba, uint32_t count, uint8_t *buffer, int write)
 			return -1;
 		}
 		lba += chunk;
-		buffer += chunk * BLOCK64_SECTOR_SIZE;
+		buffer += (size_t) chunk * BLOCK64_SECTOR_SIZE;
 		count -= chunk;
 	}
 	return 0;
@@ -227,7 +322,7 @@ static int identify(void)
 	uint64_t total;
 	int i;
 
-	buffer = command_table + 256;	/* 같은 페이지 안의 임시 버퍼 */
+	buffer = command_table + AHCI_IDENTIFY_OFFSET;
 	zero(buffer, BLOCK64_SECTOR_SIZE);
 	if (run_command(ATA_CMD_IDENTIFY, 0, 0, buffer, BLOCK64_SECTOR_SIZE, 0) != 0) {
 		return -1;
@@ -241,6 +336,9 @@ static int identify(void)
 		total = (uint64_t) buffer[120] | ((uint64_t) buffer[121] << 8) |
 			((uint64_t) buffer[122] << 16) | ((uint64_t) buffer[123] << 24);
 	}
+	if (total == 0 || total > AHCI_LBA48_SECTORS) {
+		return -1;
+	}
 	sector_total = total;
 	return 0;
 }
@@ -250,6 +348,7 @@ int ahci64_probe(void)
 	uintptr_t page = 0;
 	uint32_t bdf;
 	uint32_t command;
+	uint32_t cap;
 	uint32_t ghc;
 	uint32_t ports;
 	uint32_t status;
@@ -277,15 +376,23 @@ int ahci64_probe(void)
 	pci64_write32(bdf, PCI64_REG_COMMAND,
 		command | PCI64_COMMAND_MEMORY | PCI64_COMMAND_MASTER);
 
+	cap = reg_read(HBA_CAP);
+	dma_64bit = (cap & CAP_S64A) != 0;
 	page = memman64_alloc_4k(&memman64, MEMMAN64_PAGE_SIZE);
-	if (page == 0 || (page & 0x3ff) != 0) {
-		goto fail_pci;		/* 구조체들이 1KiB 경계에 맞아야 한다 */
+	if (page == 0 || (page & (MEMMAN64_PAGE_SIZE - 1U)) != 0 ||
+			dma_range_valid((const void *) page, MEMMAN64_PAGE_SIZE) == 0) {
+		goto fail_pci;
 	}
 	/* 한 페이지에 셋을 다 넣는다. 명령 목록(1KiB, 1KiB 정렬), 받은 FIS
 	   (256B, 256 정렬), 명령 테이블과 임시 버퍼(128 정렬). */
 	command_list = (uint8_t *) page;
-	received_fis = command_list + 1024;
-	command_table = command_list + 1280;
+	received_fis = command_list + AHCI_RECEIVED_FIS_OFFSET;
+	command_table = command_list + AHCI_COMMAND_TABLE_OFFSET;
+	if (((uintptr_t) command_list & (AHCI_COMMAND_LIST_SIZE - 1U)) != 0 ||
+			((uintptr_t) received_fis & (AHCI_RECEIVED_FIS_SIZE - 1U)) != 0 ||
+			((uintptr_t) command_table & 0x7fU) != 0) {
+		goto fail_dma;
+	}
 	zero(command_list, MEMMAN64_PAGE_SIZE);
 
 	ghc = reg_read(HBA_GHC);
@@ -343,6 +450,21 @@ int ahci64_probe(void)
 	abar = NULL;
 	port_base = 0;
 	sector_total = 0;
+	dma_64bit = 0;
+	ready = 0;
+	pci64_write32(bdf, PCI64_REG_COMMAND, command);
+	return -1;
+
+fail_dma:
+	(void) memman64_free_4k(&memman64, page, MEMMAN64_PAGE_SIZE);
+	command_list = NULL;
+	received_fis = NULL;
+	command_table = NULL;
+	port_base = 0;
+	sector_total = 0;
+	dma_64bit = 0;
+	ready = 0;
+	abar = NULL;
 	pci64_write32(bdf, PCI64_REG_COMMAND, command);
 	return -1;
 
@@ -351,6 +473,13 @@ fail_pci:
 		(void) memman64_free_4k(&memman64, page,
 			MEMMAN64_PAGE_SIZE);
 	}
+	command_list = NULL;
+	received_fis = NULL;
+	command_table = NULL;
+	port_base = 0;
+	sector_total = 0;
+	dma_64bit = 0;
+	ready = 0;
 	abar = NULL;
 	pci64_write32(bdf, PCI64_REG_COMMAND, command);
 	return -1;

@@ -16,24 +16,31 @@
 #define PORT_KEYSTA 0x0064
 #define PORT_KEYCMD 0x0064
 #define KEYSTA_SEND_NOTREADY 0x02
+#define KEYSTA_TIMEOUT_ERROR 0x40
+#define KEYSTA_PARITY_ERROR  0x80
 #define KEYCMD_SENDTO_MOUSE  0xd4
 #define MOUSECMD_ENABLE      0xf4
-#define KBC_TIMEOUT_TICKS 20U
+#define KBC_TIMEOUT_MS 200U
 #define KBC_POLL_LIMIT 1000000U
 
 static struct FIFO64 *mousefifo64;
 
 static int wait_kbc_sendready64(void)
 {
-	uint64_t start;
+	uint64_t deadline;
 	uint32_t polls;
+	uint8_t status;
 
-	start = timerctl64.count;
+	deadline = poll_deadline64(KBC_TIMEOUT_MS);
 	for (polls = 0; polls < KBC_POLL_LIMIT; polls++) {
-		if ((io_in8(PORT_KEYSTA) & KEYSTA_SEND_NOTREADY) == 0) {
+		status = io_in8(PORT_KEYSTA);
+		if ((status & (KEYSTA_TIMEOUT_ERROR | KEYSTA_PARITY_ERROR)) != 0) {
+			return -1;
+		}
+		if ((status & KEYSTA_SEND_NOTREADY) == 0) {
 			return 0;
 		}
-		if (timerctl64.count - start >= KBC_TIMEOUT_TICKS) {
+		if (poll_deadline_expired64(deadline) != 0) {
 			break;
 		}
 	}

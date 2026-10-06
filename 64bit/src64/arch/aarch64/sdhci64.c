@@ -48,6 +48,8 @@
 #define SDHCI_CLOCK_CARD_EN (1U << 2)
 
 #define SDHCI_RESET_ALL (1U << 0)
+#define SDHCI_RESET_CMD (1U << 1)
+#define SDHCI_RESET_DATA (1U << 2)
 #define SDHCI_CTRL_4BIT (1U << 1)
 #define SDHCI_CTRL_HISPD (1U << 2)
 
@@ -71,7 +73,9 @@
 #define SD_OCR_CCS (1U << 30)
 #define SD_OCR_VOLTAGE 0x00ff8000U
 
+#ifndef SDHCI_TIMEOUT
 #define SDHCI_TIMEOUT 10000000U
+#endif
 
 static uintptr_t sdhci;
 static uintptr_t sdhci_cfg;
@@ -79,6 +83,33 @@ static uint32_t card_rca;
 static uint64_t card_sectors;
 static int card_high_capacity;
 static int card_ready;
+static int recovery_failed;
+
+#ifdef SDHCI64_HOST_TEST
+uint8_t sdhci64_test_read8(uint32_t offset);
+uint16_t sdhci64_test_read16(uint32_t offset);
+uint32_t sdhci64_test_read32(uint32_t offset);
+void sdhci64_test_write8(uint32_t offset, uint8_t value);
+void sdhci64_test_write16(uint32_t offset, uint16_t value);
+void sdhci64_test_write32(uint32_t offset, uint32_t value);
+
+static void cpu_relax(void)
+{
+}
+
+static void delay_us(uint32_t microseconds)
+{
+	(void) microseconds;
+}
+
+static void mmio_barrier(void)
+{
+}
+#else
+static void cpu_relax(void)
+{
+	__asm__ volatile ("yield");
+}
 
 static void delay_us(uint32_t microseconds)
 {
@@ -95,34 +126,64 @@ static void delay_us(uint32_t microseconds)
 	} while ((int64_t) (now - start) < (int64_t) ticks);
 }
 
+static void mmio_barrier(void)
+{
+	__asm__ volatile ("dsb sy" ::: "memory");
+}
+#endif
+
 static uint8_t read8(uint32_t offset)
 {
+#ifdef SDHCI64_HOST_TEST
+	return sdhci64_test_read8(offset);
+#else
 	return *(volatile uint8_t *) (sdhci + offset);
+#endif
 }
 
 static uint16_t read16(uint32_t offset)
 {
+#ifdef SDHCI64_HOST_TEST
+	return sdhci64_test_read16(offset);
+#else
 	return *(volatile uint16_t *) (sdhci + offset);
+#endif
 }
 
 static uint32_t read32(uint32_t offset)
 {
+#ifdef SDHCI64_HOST_TEST
+	return sdhci64_test_read32(offset);
+#else
 	return *(volatile uint32_t *) (sdhci + offset);
+#endif
 }
 
 static void write8(uint32_t offset, uint8_t value)
 {
+#ifdef SDHCI64_HOST_TEST
+	sdhci64_test_write8(offset, value);
+#else
 	*(volatile uint8_t *) (sdhci + offset) = value;
+#endif
 }
 
 static void write16(uint32_t offset, uint16_t value)
 {
+#ifdef SDHCI64_HOST_TEST
+	sdhci64_test_write16(offset, value);
+#else
 	*(volatile uint16_t *) (sdhci + offset) = value;
+#endif
 }
 
 static void write32(uint32_t offset, uint32_t value)
 {
+#ifdef SDHCI64_HOST_TEST
+	sdhci64_test_write32(offset, value);
+#else
 	*(volatile uint32_t *) (sdhci + offset) = value;
+#endif
 }
 
 static int wait_reg32(uint32_t offset, uint32_t mask, uint32_t value)
@@ -133,7 +194,7 @@ static int wait_reg32(uint32_t offset, uint32_t mask, uint32_t value)
 		if ((read32(offset) & mask) == value) {
 			return 0;
 		}
-		__asm__ volatile ("yield");
+		cpu_relax();
 	}
 	return -1;
 }
@@ -153,9 +214,33 @@ static int wait_interrupt(uint32_t wanted)
 			write32(SDHCI_INT_STATUS, wanted);
 			return 0;
 		}
-		__asm__ volatile ("yield");
+		cpu_relax();
 	}
 	return -1;
+}
+
+static void recover_command(int has_data)
+{
+	uint8_t reset;
+	uint32_t timeout;
+
+	write32(SDHCI_INT_STATUS, 0xffffffffU);
+	reset = SDHCI_RESET_CMD;
+	if (has_data != 0) {
+		reset |= SDHCI_RESET_DATA;
+	}
+	write8(SDHCI_SOFTWARE_RESET, reset);
+	for (timeout = 0; timeout < SDHCI_TIMEOUT; timeout++) {
+		if ((read8(SDHCI_SOFTWARE_RESET) & reset) == 0) {
+			return;
+		}
+		cpu_relax();
+	}
+	/* A wedged command/data reset needs a full controller reset.  The card is
+	   no longer usable until probe initializes it again. */
+	write8(SDHCI_SOFTWARE_RESET, SDHCI_RESET_ALL);
+	card_ready = 0;
+	recovery_failed = 1;
 }
 
 static int set_clock(uint32_t target_hz)
@@ -188,20 +273,24 @@ static int set_clock(uint32_t target_hz)
 static int send_command(uint32_t index, uint32_t argument, uint16_t flags,
 	uint32_t *response)
 {
+	int has_data;
 	uint32_t inhibit;
 
+	has_data = (flags & SDHCI_CMD_DATA) != 0 ||
+		(flags & 3U) == SDHCI_CMD_RESP_SHORT_BUSY;
 	inhibit = SDHCI_CMD_INHIBIT;
-	if ((flags & SDHCI_CMD_DATA) != 0 ||
-			(flags & 3U) == SDHCI_CMD_RESP_SHORT_BUSY) {
+	if (has_data != 0) {
 		inhibit |= SDHCI_DATA_INHIBIT;
 	}
 	if (wait_reg32(SDHCI_PRESENT_STATE, inhibit, 0) != 0) {
+		recover_command(has_data);
 		return -1;
 	}
 	write32(SDHCI_INT_STATUS, 0xffffffffU);
 	write32(SDHCI_ARGUMENT, argument);
 	write16(SDHCI_COMMAND, SDHCI_MAKE_CMD(index, flags));
 	if (wait_interrupt(SDHCI_INT_CMD_COMPLETE) != 0) {
+		recover_command(has_data);
 		return -1;
 	}
 	if (response != NULL) {
@@ -209,6 +298,7 @@ static int send_command(uint32_t index, uint32_t argument, uint16_t flags,
 	}
 	if ((flags & 3U) == SDHCI_CMD_RESP_SHORT_BUSY &&
 			wait_reg32(SDHCI_PRESENT_STATE, SDHCI_DATA_INHIBIT, 0) != 0) {
+		recover_command(1);
 		return -1;
 	}
 	return 0;
@@ -227,7 +317,41 @@ static uint32_t response_bits(const uint32_t response[4], uint32_t start,
 	if (size + shift > 32U && offset != 0) {
 		value |= response[offset - 1U] << (32U - shift);
 	}
-	return value & ((1U << size) - 1U);
+	return value & (UINT32_MAX >> (32U - size));
+}
+
+static int decode_card_capacity(const uint32_t response[4],
+	uint64_t *sectors)
+{
+	uint32_t structure;
+	uint32_t c_size;
+	uint32_t c_size_mult;
+	uint32_t read_bl_len;
+	uint64_t value;
+
+	if (response == NULL || sectors == NULL) {
+		return -1;
+	}
+	structure = response_bits(response, 126, 2);
+	if (structure == 1U) {
+		c_size = response_bits(response, 48, 22);
+		value = ((uint64_t) c_size + 1ULL) * 1024ULL;
+	} else if (structure == 0U) {
+		read_bl_len = response_bits(response, 80, 4);
+		c_size = response_bits(response, 62, 12);
+		c_size_mult = response_bits(response, 47, 3);
+		value = (((uint64_t) c_size + 1ULL) <<
+			(c_size_mult + 2U + read_bl_len)) / BLOCK64_SECTOR_SIZE;
+	} else {
+		return -1;
+	}
+	if (value == 0 || (structure == 1U && value > UINT32_MAX + 1ULL) ||
+			(structure == 0U && value >
+			(UINT32_MAX / BLOCK64_SECTOR_SIZE) + 1ULL)) {
+		return -1;
+	}
+	*sectors = value;
+	return 0;
 }
 
 static int read_card_capacity(void)
@@ -235,9 +359,7 @@ static int read_card_capacity(void)
 	uint32_t response[4];
 	uint32_t offset;
 	uint32_t i;
-	uint32_t c_size;
-	uint32_t c_size_mult;
-	uint32_t read_bl_len;
+	uint32_t structure;
 
 	if (send_command(9, card_rca << 16,
 			SDHCI_CMD_RESP_LONG | SDHCI_CMD_CRC, NULL) != 0) {
@@ -252,17 +374,12 @@ static int read_card_capacity(void)
 			response[i] |= read8(SDHCI_RESPONSE0 + offset - 1U);
 		}
 	}
-	if (response_bits(response, 126, 2) == 1U) {
-		c_size = response_bits(response, 48, 22);
-		card_sectors = ((uint64_t) c_size + 1ULL) * 1024ULL;
-	} else {
-		read_bl_len = response_bits(response, 80, 4);
-		c_size = response_bits(response, 62, 12);
-		c_size_mult = response_bits(response, 47, 3);
-		card_sectors = (((uint64_t) c_size + 1ULL) <<
-			(c_size_mult + 2U + read_bl_len)) / BLOCK64_SECTOR_SIZE;
+	structure = response_bits(response, 126, 2);
+	if ((card_high_capacity != 0 && structure != 1U) ||
+			(card_high_capacity == 0 && structure != 0U)) {
+		return -1;
 	}
-	return card_sectors != 0 ? 0 : -1;
+	return decode_card_capacity(response, &card_sectors);
 }
 
 static int send_app_command(uint32_t index, uint32_t argument, uint16_t flags,
@@ -279,48 +396,84 @@ static int send_app_command(uint32_t index, uint32_t argument, uint16_t flags,
 static int read_data_command(uint32_t index, uint32_t argument, void *dst,
 	uint16_t bytes)
 {
-	uint32_t *out;
+	uint8_t *out;
 	uint32_t words;
 	uint32_t i;
+	uint32_t value;
+
+	if (dst == NULL || bytes == 0 ||
+			(bytes & (sizeof(uint32_t) - 1U)) != 0) {
+		return -1;
+	}
 
 	write16(SDHCI_BLOCK_SIZE, bytes);
 	write16(SDHCI_BLOCK_COUNT, 1);
 	write16(SDHCI_TRANSFER_MODE,
 		SDHCI_TRNS_BLK_CNT_EN | SDHCI_TRNS_READ);
 	if (send_command(index, argument, SDHCI_CMD_RESP_SHORT | SDHCI_CMD_CRC |
-			SDHCI_CMD_INDEX | SDHCI_CMD_DATA, NULL) != 0 ||
-			wait_interrupt(SDHCI_INT_BUF_READ_READY) != 0) {
+			SDHCI_CMD_INDEX | SDHCI_CMD_DATA, NULL) != 0) {
 		return -1;
 	}
-	out = (uint32_t *) dst;
+	if (wait_interrupt(SDHCI_INT_BUF_READ_READY) != 0) {
+		recover_command(1);
+		return -1;
+	}
+	/* The SDHCI buffer is a 32-bit PIO port, not DMA.  Marshal bytes so an
+	   unaligned cache buffer is safe and no cache maintenance is required. */
+	out = (uint8_t *) dst;
 	words = bytes / sizeof(uint32_t);
 	for (i = 0; i < words; i++) {
-		out[i] = read32(SDHCI_BUFFER);
+		value = read32(SDHCI_BUFFER);
+		out[i * 4U] = (uint8_t) value;
+		out[i * 4U + 1U] = (uint8_t) (value >> 8);
+		out[i * 4U + 2U] = (uint8_t) (value >> 16);
+		out[i * 4U + 3U] = (uint8_t) (value >> 24);
 	}
-	return wait_interrupt(SDHCI_INT_XFER_COMPLETE);
+	if (wait_interrupt(SDHCI_INT_XFER_COMPLETE) != 0) {
+		recover_command(1);
+		return -1;
+	}
+	return 0;
 }
 
 static int write_data_command(uint32_t index, uint32_t argument,
 	const void *src, uint16_t bytes)
 {
-	const uint32_t *in;
+	const uint8_t *in;
 	uint32_t words;
 	uint32_t i;
+	uint32_t value;
+
+	if (src == NULL || bytes == 0 ||
+			(bytes & (sizeof(uint32_t) - 1U)) != 0) {
+		return -1;
+	}
 
 	write16(SDHCI_BLOCK_SIZE, bytes);
 	write16(SDHCI_BLOCK_COUNT, 1);
 	write16(SDHCI_TRANSFER_MODE, SDHCI_TRNS_BLK_CNT_EN);
 	if (send_command(index, argument, SDHCI_CMD_RESP_SHORT | SDHCI_CMD_CRC |
-			SDHCI_CMD_INDEX | SDHCI_CMD_DATA, NULL) != 0 ||
-			wait_interrupt(SDHCI_INT_BUF_WRITE_READY) != 0) {
+			SDHCI_CMD_INDEX | SDHCI_CMD_DATA, NULL) != 0) {
 		return -1;
 	}
-	in = (const uint32_t *) src;
+	if (wait_interrupt(SDHCI_INT_BUF_WRITE_READY) != 0) {
+		recover_command(1);
+		return -1;
+	}
+	in = (const uint8_t *) src;
 	words = bytes / sizeof(uint32_t);
 	for (i = 0; i < words; i++) {
-		write32(SDHCI_BUFFER, in[i]);
+		value = (uint32_t) in[i * 4U] |
+			((uint32_t) in[i * 4U + 1U] << 8) |
+			((uint32_t) in[i * 4U + 2U] << 16) |
+			((uint32_t) in[i * 4U + 3U] << 24);
+		write32(SDHCI_BUFFER, value);
 	}
-	return wait_interrupt(SDHCI_INT_XFER_COMPLETE);
+	if (wait_interrupt(SDHCI_INT_XFER_COMPLETE) != 0) {
+		recover_command(1);
+		return -1;
+	}
+	return 0;
 }
 
 static void try_high_speed(void)
@@ -357,7 +510,7 @@ static int controller_init(void)
 	pin_select = (volatile uint32_t *) (sdhci_cfg + SDIO_CFG_SD_PIN_SEL);
 	*pin_select = (*pin_select & ~SDIO_CFG_SD_PIN_SEL_MASK) |
 		SDIO_CFG_SD_PIN_SEL_SD;
-	__asm__ volatile ("dsb sy" ::: "memory");
+	mmio_barrier();
 
 	write8(SDHCI_SOFTWARE_RESET, SDHCI_RESET_ALL);
 	for (retry = 0; retry < SDHCI_TIMEOUT; retry++) {
@@ -368,6 +521,7 @@ static int controller_init(void)
 	if (retry == SDHCI_TIMEOUT) {
 		return -1;
 	}
+	recovery_failed = 0;
 	write8(SDHCI_POWER_CONTROL, 0x0f); /* 3.3 V, bus power on */
 	delay_us(2000);
 	write8(SDHCI_TIMEOUT_CONTROL, 0x0e);
@@ -423,35 +577,90 @@ static int controller_init(void)
 		return -1;
 	}
 	try_high_speed();
+	if (recovery_failed != 0) {
+		return -1;
+	}
 	card_ready = 1;
 	return 0;
 }
 
 int sdhci64_probe(void)
 {
+	int status;
+
 	if (card_ready != 0) {
 		return 0;
 	}
-	return controller_init();
+	card_rca = 0;
+	card_sectors = 0;
+	card_high_capacity = 0;
+	recovery_failed = 0;
+	status = controller_init();
+	if (status != 0) {
+		card_ready = 0;
+		card_rca = 0;
+		card_sectors = 0;
+		card_high_capacity = 0;
+		recovery_failed = 0;
+	}
+	return status;
 }
 
-static uint32_t card_argument(uint64_t lba)
+static int card_argument(uint64_t lba, uint32_t *argument)
 {
-	return card_high_capacity != 0 ? (uint32_t) lba :
-		(uint32_t) (lba * BLOCK64_SECTOR_SIZE);
+	if (argument == NULL) {
+		return -1;
+	}
+	if (card_high_capacity != 0) {
+		if (lba > UINT32_MAX) {
+			return -1;
+		}
+		*argument = (uint32_t) lba;
+		return 0;
+	}
+	if (lba > UINT32_MAX / BLOCK64_SECTOR_SIZE) {
+		return -1;
+	}
+	*argument = (uint32_t) (lba * BLOCK64_SECTOR_SIZE);
+	return 0;
+}
+
+static int request_valid(uint64_t lba, uint32_t count, const void *buffer)
+{
+	uint64_t last;
+	size_t bytes;
+
+	if (count == 0 || card_ready == 0 || buffer == NULL || card_sectors == 0 ||
+			lba >= card_sectors || (uint64_t) count > card_sectors - lba) {
+		return 0;
+	}
+	bytes = (size_t) count * BLOCK64_SECTOR_SIZE;
+	if ((uintptr_t) buffer > UINTPTR_MAX - bytes) {
+		return 0;
+	}
+	last = lba + (uint64_t) count - 1ULL;
+	if (card_high_capacity != 0) {
+		return last <= UINT32_MAX;
+	}
+	return last <= UINT32_MAX / BLOCK64_SECTOR_SIZE;
 }
 
 static int sdhci64_read(uint64_t lba, uint32_t count, void *dst)
 {
 	uint8_t *out;
+	uint32_t argument;
 	uint32_t i;
 
-	if (card_ready == 0 || dst == NULL || lba > 0xffffffffULL) {
+	if (count == 0) {
+		return 0;
+	}
+	if (request_valid(lba, count, dst) == 0) {
 		return -1;
 	}
 	out = (uint8_t *) dst;
 	for (i = 0; i < count; i++) {
-		if (read_data_command(17, card_argument(lba + i),
+		if (card_argument(lba + i, &argument) != 0 ||
+				read_data_command(17, argument,
 				out + (size_t) i * BLOCK64_SECTOR_SIZE,
 				BLOCK64_SECTOR_SIZE) != 0) {
 			return -1;
@@ -463,14 +672,19 @@ static int sdhci64_read(uint64_t lba, uint32_t count, void *dst)
 static int sdhci64_write(uint64_t lba, uint32_t count, const void *src)
 {
 	const uint8_t *in;
+	uint32_t argument;
 	uint32_t i;
 
-	if (card_ready == 0 || src == NULL || lba > 0xffffffffULL) {
+	if (count == 0) {
+		return 0;
+	}
+	if (request_valid(lba, count, src) == 0) {
 		return -1;
 	}
 	in = (const uint8_t *) src;
 	for (i = 0; i < count; i++) {
-		if (write_data_command(24, card_argument(lba + i),
+		if (card_argument(lba + i, &argument) != 0 ||
+				write_data_command(24, argument,
 				in + (size_t) i * BLOCK64_SECTOR_SIZE,
 				BLOCK64_SECTOR_SIZE) != 0) {
 			return -1;
