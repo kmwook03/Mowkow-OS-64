@@ -919,6 +919,14 @@ static int run_program(struct CONSOLE64 *con, const char *cmdline)
 		puts_con(con, "another program is running\n");
 		return 1;
 	}
+	if (status == PROCESS64_ERR_ARGS) {
+		puts_con(con, "program name/command line too long or too many arguments\n");
+		return 1;
+	}
+	if (status == PROCESS64_ERR_INVALID || status == PROCESS64_ERR_STACK) {
+		puts_con(con, "invalid program name, command line, or user stack\n");
+		return 1;
+	}
 	puts_con(con, "exit ");
 	print_uint64(con, (uint64_t) status);
 	puts_con(con, "\n");
@@ -1721,11 +1729,13 @@ int console64_hangul_smoke(void)
 	return ok;
 }
 
-void console64_set_raw(int on)
+void console64_set_raw_con(struct CONSOLE64 *con, int on)
 {
-	struct CONSOLE64 *con = console_self();
 	int was_raw;
 
+	if (con == NULL) {
+		return;
+	}
 	was_raw = con->raw_mode;
 	con->raw_mode = on != 0;
 	con->raw_queue_head = 0;
@@ -1743,6 +1753,11 @@ void console64_set_raw(int on)
 			clear_screen(con);
 		}
 	}
+}
+
+void console64_set_raw(int on)
+{
+	console64_set_raw_con(console_self(), on);
 }
 
 int console64_is_raw(void)

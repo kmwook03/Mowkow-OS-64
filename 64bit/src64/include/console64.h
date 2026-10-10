@@ -34,6 +34,8 @@ void console64_process_input_key(struct CONSOLE64 *con, uint16_t key);
 /* raw 모드: 줄 편집과 에코를 끄고 키를 앱에게 그대로 넘긴다 (나노 등).
    모두 부르는 태스크의 콘솔에 걸린다. */
 void console64_set_raw(int on);
+/* Explicit target for process cleanup; NULL is a no-op, with no fallback. */
+void console64_set_raw_con(struct CONSOLE64 *con, int on);
 int console64_is_raw(void);
 uint64_t console64_read_key(void);
 uint64_t console64_size(void);

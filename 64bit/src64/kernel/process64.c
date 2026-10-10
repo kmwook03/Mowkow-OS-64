@@ -31,6 +31,14 @@
  */
 #define USER_STACK_SIZE (64 * 1024)
 #define USER_HEAP_SIZE  (1024 * 1024)
+#define USER_STACK_ALIGNMENT64 16U
+
+struct PROCESS64_ARGS {
+	char line[PROCESS64_CMDLINE_MAX];
+	size_t offsets[PROCESS64_MAX_ARGS];
+	size_t lengths[PROCESS64_MAX_ARGS];
+	size_t argc;
+};
 
 static struct PROCESS64 process_table[4];
 static uint32_t next_pid = 1;
@@ -71,15 +79,18 @@ static struct PROCESS64 *process_alloc(void)
 	return NULL;
 }
 
-static int range_contains(const struct PROCESS64_RANGE *range, uintptr_t ptr, size_t size)
+static int range_contains64(const struct PROCESS64_RANGE *range, uintptr_t ptr, size_t size)
 {
-	uintptr_t end;
+	size_t offset;
 
-	if (size == 0) {
-		return 1;
+	if (range->base == 0 || range->size == 0 ||
+		range->size > UINTPTR_MAX - range->base || ptr < range->base) {
+		return 0;
 	}
-	end = ptr + size;
-	return ptr >= range->base && end >= ptr && end <= range->base + range->size;
+	offset = ptr - range->base;
+	/* Do not merge adjacent image/stack/heap ranges, even for contiguous RAM.
+	   A zero-byte buffer may point at this valid range's one-past-end address. */
+	return offset <= range->size && size <= range->size - offset;
 }
 
 /* 실행 중인 프로세스는 태스크마다 다르다. 콘솔이 여러 개면 전역 하나로는
@@ -100,9 +111,12 @@ int process64_user_range_valid(const void *ptr, size_t size)
 		return 0;
 	}
 	p = (uintptr_t) ptr;
-	return range_contains(&process->image, p, size) != 0 ||
-		range_contains(&process->stack, p, size) != 0 ||
-		range_contains(&process->heap, p, size) != 0;
+	if (size > UINTPTR_MAX - p) {
+		return 0;
+	}
+	return range_contains64(&process->image, p, size) != 0 ||
+		range_contains64(&process->stack, p, size) != 0 ||
+		range_contains64(&process->heap, p, size) != 0;
 }
 
 void process64_exit_current(int status)
@@ -130,56 +144,144 @@ int process64_current_exit_status(void)
 	return process != NULL ? process->exit_status : -1;
 }
 
-/* 유저 스택의 첫 rsp를 돌려준다. argv 묶음보다 아래라 앱이 쌓는 스택
-   프레임이 자기 인수를 덮어쓰지 않는다. */
-static uintptr_t setup_args(struct PROCESS64 *process, const char *cmdline,
-	uint64_t *argc_out, uintptr_t *argv_out)
+static int copy_program_name64(const char *path, char *name, size_t capacity)
 {
-	uintptr_t sp;
-	uintptr_t argv[PROCESS64_MAX_ARGS];
-	uint64_t argc;
-	size_t len;
-	const char *p;
-	const char *start;
-	char *dst;
-	uint64_t i;
+	size_t i;
 
-	sp = process->stack.base + process->stack.size;
-	argc = 0;
-	p = cmdline;
-	while (*p != '\0' && argc < PROCESS64_MAX_ARGS) {
-		while (*p == ' ') {
-			p++;
+	if (path == NULL || name == NULL || capacity == 0) {
+		return PROCESS64_ERR_INVALID;
+	}
+	for (i = 0; i < capacity; i++) {
+		if (path[i] == '\0' || path[i] == ' ') {
+			name[i] = '\0';
+			return i != 0 ? 0 : PROCESS64_ERR_INVALID;
 		}
-		if (*p == '\0') {
+		if (i == capacity - 1) {
+			return PROCESS64_ERR_ARGS;
+		}
+		name[i] = path[i];
+	}
+	return PROCESS64_ERR_ARGS;
+}
+
+static int parse_args64(const char *cmdline, struct PROCESS64_ARGS *args)
+{
+	size_t len;
+	size_t pos;
+	size_t start;
+
+	if (cmdline == NULL || args == NULL) {
+		return PROCESS64_ERR_INVALID;
+	}
+	/* Snapshot once so validation and stack construction use identical input. */
+	for (len = 0; len < sizeof(args->line); len++) {
+		args->line[len] = cmdline[len];
+		if (args->line[len] == '\0') {
 			break;
 		}
-		start = p;
-		while (*p != '\0' && *p != ' ') {
-			p++;
+	}
+	if (len == sizeof(args->line)) {
+		return PROCESS64_ERR_ARGS;
+	}
+	args->argc = 0;
+	pos = 0;
+	while (pos < len) {
+		while (pos < len && args->line[pos] == ' ') {
+			pos++;
 		}
-		len = (size_t) (p - start);
-		sp -= len + 1;
-		dst = (char *) sp;
-		copy_bytes(dst, start, len);
-		dst[len] = '\0';
-		argv[argc++] = sp;
+		if (pos == len) {
+			break;
+		}
+		if (args->argc == PROCESS64_MAX_ARGS) {
+			return PROCESS64_ERR_ARGS;
+		}
+		start = pos;
+		while (pos < len && args->line[pos] != ' ') {
+			pos++;
+		}
+		args->offsets[args->argc] = start;
+		args->lengths[args->argc++] = pos - start;
+		args->line[pos] = '\0';
+		if (pos < len) {
+			pos++;
+		}
 	}
-	sp &= ~(uintptr_t) 0x0f;
-	sp -= ((argc + 1) * sizeof(uintptr_t) + 15) & ~(uintptr_t) 15;
-	for (i = 0; i < argc; i++) {
-		((uintptr_t *) sp)[i] = argv[i];
+	return 0;
+}
+
+/* Plan all byte ranges before writing; argv pointers refer to user addresses,
+   while writes use the kernel backing alias on AArch64. */
+static int setup_args64(struct PROCESS64 *process, const struct PROCESS64_ARGS *args,
+	uintptr_t *rsp_out, uintptr_t *argv_out)
+{
+	uintptr_t base;
+	uintptr_t backing;
+	uintptr_t sp;
+	uintptr_t argv[PROCESS64_MAX_ARGS];
+	uintptr_t *user_argv;
+	size_t size;
+	size_t bytes;
+	size_t i;
+
+	if (process == NULL || args == NULL || rsp_out == NULL || argv_out == NULL ||
+		args->argc > PROCESS64_MAX_ARGS) {
+		return PROCESS64_ERR_INVALID;
 	}
-	((uintptr_t *) sp)[argc] = 0;
-	*argc_out = argc;
+	base = process->stack.base;
+	size = process->stack.size;
+	backing = process->stack_backing != 0 ? process->stack_backing : base;
+	if (base == 0 || backing == 0 || size == 0 ||
+		size > UINTPTR_MAX - base || size > UINTPTR_MAX - backing ||
+		(base & (USER_STACK_ALIGNMENT64 - 1)) != 0 ||
+		(backing & (USER_STACK_ALIGNMENT64 - 1)) != 0 ||
+		(size & (USER_STACK_ALIGNMENT64 - 1)) != 0) {
+		return PROCESS64_ERR_STACK;
+	}
+	sp = base + size;
+	for (i = 0; i < args->argc; i++) {
+		if (args->offsets[i] >= sizeof(args->line) ||
+			args->lengths[i] >= sizeof(args->line) - args->offsets[i] ||
+			args->line[args->offsets[i] + args->lengths[i]] != '\0') {
+			return PROCESS64_ERR_INVALID;
+		}
+		if (args->lengths[i] >= sp - base) {
+			return PROCESS64_ERR_STACK;
+		}
+		sp -= args->lengths[i] + 1;
+		argv[i] = sp;
+	}
+	/* argc is bounded by MAX_ARGS before the terminator and byte count. */
+	bytes = (args->argc + 1) * sizeof(uintptr_t);
+	if (bytes > sp - base) {
+		return PROCESS64_ERR_STACK;
+	}
+	/* Fixed 16-byte ABI alignment rounds down without addition overflow. */
+	sp = (sp - bytes) & ~(uintptr_t) (USER_STACK_ALIGNMENT64 - 1);
+	/* Leave one aligned slot below argv for the CRT's first call frame. */
+	if (sp < base || sp - base < USER_STACK_ALIGNMENT64) {
+		return PROCESS64_ERR_STACK;
+	}
+	for (i = 0; i < args->argc; i++) {
+		copy_bytes((void *) (backing + (argv[i] - base)),
+			args->line + args->offsets[i], args->lengths[i] + 1);
+	}
+	user_argv = (uintptr_t *) (backing + (sp - base));
+	for (i = 0; i < args->argc; i++) {
+		user_argv[i] = argv[i];
+	}
+	user_argv[args->argc] = 0;
+	*rsp_out = sp;
 	*argv_out = sp;
-	return sp;
+	return 0;
 }
 
 static void process_free_memory(struct PROCESS64 *process)
 {
 #ifdef __aarch64__
-	arch64_user_unmap_all();
+	if (process->user_mappings != 0) {
+		arch64_user_unmap_all();
+		process->user_mappings = 0;
+	}
 #endif
 	if (process->heap.base != 0 && process->heap.size != 0) {
 		(void) memman64_free_4k(&memman64,
@@ -205,45 +307,60 @@ static void process_free_memory(struct PROCESS64 *process)
 	process->image.size = 0;
 }
 
+static void process_cleanup64(struct PROCESS64 *process, struct TASK64 *task)
+{
+	if (task != NULL && task->process == process) {
+		/* A console-less run must not reset the active console's terminal. */
+		console64_set_raw_con(process->console, 0);
+	}
+	/* FAT handles are value copies, with no backend close allocation. Writes
+	   already sync before returning, so closing cannot discard dirty cache data. */
+	memzero(process->files, sizeof(process->files));
+	if (task != NULL && task->process == process) {
+		task->process = NULL;
+		task->is_user = 0;
+		task->kernel_rsp = 0;
+	}
+	process_free_memory(process);
+	memzero(process, sizeof(*process));
+}
+
 int process64_exec_file(const char *path, const char *cmdline,
 	struct CONSOLE64 *console)
 {
 	char name[FD64_NAME_MAX];
-	size_t name_len;
+	struct PROCESS64_ARGS args;
 	struct PROCESS64 *process;
 	uintptr_t stack;
 	uintptr_t heap;
 	uintptr_t user_rsp;
-	uint64_t argc;
 	uintptr_t argv;
-	struct TASK64 *task;
+	struct TASK64 *task = NULL;
 	int status;
 
-	/* "cat test.txt"는 한 문자열로 들어온다. 앞 토큰이 실행 파일이고 나머지는
-	   setup_args()에 넘길 argv다. */
-	for (name_len = 0; name_len < sizeof(name) - 1; name_len++) {
-		if (path[name_len] == '\0' || path[name_len] == ' ') {
-			break;
-		}
-		name[name_len] = path[name_len];
+	status = copy_program_name64(path, name, sizeof(name));
+	if (status != 0) {
+		return status;
 	}
-	name[name_len] = '\0';
+	status = parse_args64(cmdline != NULL ? cmdline : path, &args);
+	if (status != 0) {
+		return status;
+	}
 	process = process_alloc();
 	if (process == NULL) {
 		return -1;
 	}
 	status = elf64_load_process(name, process);
 	if (status != 0) {
-		process->pid = 0;
 		/* -8은 "이미지 창을 다른 앱이 쓰는 중"이다. 콘솔이 여럿이면
 		   실제로 일어나므로 뭉개지 않고 그대로 올려보낸다. */
-		return status == -8 ? -8 : -2;
+		status = status == -8 ? -8 : -2;
+		goto cleanup;
 	}
 	stack = memman64_alloc_4k(&memman64, USER_STACK_SIZE);
 	if (stack == 0) {
-		process_free_memory(process);
-		process->pid = 0;
-		return -3;
+		status = -3;
+		goto cleanup;
 	}
 	process->stack.base = stack;
 	process->stack.size = USER_STACK_SIZE;
@@ -253,9 +370,8 @@ int process64_exec_file(const char *path, const char *cmdline,
 #endif
 	heap = memman64_alloc_4k(&memman64, USER_HEAP_SIZE);
 	if (heap == 0) {
-		process_free_memory(process);
-		process->pid = 0;
-		return -3;
+		status = -3;
+		goto cleanup;
 	}
 	process->heap.base = heap;
 	process->heap.size = USER_HEAP_SIZE;
@@ -268,41 +384,39 @@ int process64_exec_file(const char *path, const char *cmdline,
 	process->heap_next = process->heap.base;
 #endif
 	process->console = console;
+	status = setup_args64(process, &args, &user_rsp, &argv);
+	if (status != 0) {
+		goto cleanup;
+	}
 #ifdef __aarch64__
+	/* Mapping can fail after publishing part of the shared translation tree. */
+	process->user_mappings = 1;
 	if (arch64_user_map_range(process->image.base, process->image.size, 1) != 0 ||
 			arch64_user_map_range(process->stack.base,
 			process->stack.size, 0) != 0 ||
 			arch64_user_map_range(process->heap.base,
 			process->heap.size, 0) != 0) {
-		process_free_memory(process);
-		process->pid = 0;
-		return -5;
+		status = -5;
+		goto cleanup;
 	}
 #endif
-	user_rsp = setup_args(process, cmdline != NULL ? cmdline : path, &argc, &argv);
 	task = task_now64();
 	if (task == NULL) {
 		/* 프로세스 소유자는 태스크다. 태스크가 없으면 syscall이 자기
 		   프로세스를 찾을 수 없으므로 진입 자체를 막는다. */
-		process_free_memory(process);
-		process->pid = 0;
-		return -4;
+		status = -4;
+		goto cleanup;
 	}
 	task->process = process;
 	task->is_user = 1;
 	status = enter_user_mode64(process->entry, user_rsp,
-		argc, argv, GDT64_USER_CODE, GDT64_USER_DATA, &process->saved_kernel_rsp);
+		args.argc, argv, GDT64_USER_CODE, GDT64_USER_DATA, &process->saved_kernel_rsp);
 	task->kernel_rsp = process->saved_kernel_rsp;
-	/* raw 모드는 프로세스 상태다. 앱이 정리하지 않고 나가도(SYS_EXIT이든
-	   폴트든) 콘솔이 줄 편집기로 돌아오게 커널이 되돌린다. */
-	console64_set_raw(0);
 	if (process->exited != 0) {
 		status = process->exit_status;
 	}
-	task->process = NULL;
-	task->is_user = 0;
-	task->kernel_rsp = 0;
-	process_free_memory(process);
-	process->pid = 0;
+
+cleanup:
+	process_cleanup64(process, task);
 	return status;
 }
