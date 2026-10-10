@@ -41,6 +41,10 @@ VOLUME_ID = 0x646B776D
 VOLUME_LABEL = b"MOWKOW64   "
 
 FAT32_EOC = 0x0FFFFFFF
+FAT_FILE_SIZE_MAX = 0xFFFFFFFF
+FD64_LFN_MAX_UNITS = 52
+FD64_NAME_MAX = 160
+VFAT_FORBIDDEN = set('"*/:<>?\\|')
 # no RTC in the image builder or the kernel: same fixed stamp both sides
 FIXED_DATE = ((2026 - 1980) << 9) | (1 << 5) | 1
 FIXED_TIME = 0
@@ -131,6 +135,29 @@ NT_LOWER_BASE = 0x08
 NT_LOWER_EXT = 0x10
 
 
+def validate_file_name(name: str) -> None:
+    """Reject names that the kernel cannot represent or VFAT must alter."""
+    encoded = name.encode("utf-8")
+    units = [ord(c) if ord(c) <= 0xFFFF else ord("_") for c in name]
+    if not encoded or len(encoded) >= FD64_NAME_MAX:
+        raise SystemExit(f"이름의 UTF-8 길이가 범위를 벗어납니다: {name}")
+    if len(units) > FD64_LFN_MAX_UNITS:
+        raise SystemExit(f"이름의 UTF-16 길이가 범위를 벗어납니다: {name}")
+    if name in (".", "..") or name[-1] in (" ", "."):
+        raise SystemExit(f"VFAT에서 허용되지 않는 이름입니다: {name}")
+    if any(ord(c) < 0x20 or c in VFAT_FORBIDDEN for c in name):
+        raise SystemExit(f"VFAT에서 허용되지 않는 문자가 있습니다: {name}")
+
+
+def validate_file_size(size: int) -> None:
+    if size < 0 or size > FAT_FILE_SIZE_MAX:
+        raise SystemExit("파일 크기가 FAT32의 4 GiB 제한을 넘습니다")
+
+
+def ascii_fold(name: str) -> str:
+    return "".join(c.lower() if "A" <= c <= "Z" else c for c in name)
+
+
 def short_char(c):
     """8.3에 넣을 수 있는 바이트로. 표현할 수 없으면 None (kernel의
     shortname_char와 같은 규칙)."""
@@ -200,7 +227,7 @@ def lfn_entries(name, name11):
     units = [ord(c) if ord(c) <= 0xFFFF else ord("_") for c in name]
     total = len(units)
     count = (total + LFN_UNITS_PER_ENTRY - 1) // LFN_UNITS_PER_ENTRY
-    if count > 20:
+    if count > FD64_LFN_MAX_UNITS // LFN_UNITS_PER_ENTRY:
         raise SystemExit(f"이름이 너무 깁니다: {name}")
     checksum = short_checksum(name11)
     out = []
@@ -225,11 +252,13 @@ def lfn_entries(name, name11):
 
 def name_entries(name, cluster, size):
     """이 파일의 디렉터리 엔트리 전부 (필요하면 긴 이름 + 8.3)."""
+    validate_file_name(name)
+    validate_file_size(size)
     name11, lossy = make_shortname(name)
     flags = case_flags(name)
     if not lossy and short_name_text(name11, flags) == name:
         return [dir_entry(name11, 0x20, cluster, size, flags)]
-    # ~1: 이미지 안에서 이름은 유일하므로 번호는 1로 충분하다
+    # build 전에 요청 이름과 이 별칭의 유일성을 함께 검사한다.
     base = name11[:8].rstrip()[:6].ljust(6, b" ")
     name11 = (base[:6] + b"~1")[:8] + name11[8:]
     return lfn_entries(name, name11) + [dir_entry(name11, 0x20, cluster, size, 0)]
@@ -285,6 +314,7 @@ class Volume:
             self.image[lba * SECTOR_SIZE:lba * SECTOR_SIZE + len(chunk)] = chunk
 
     def add_file(self, name, data):
+        validate_file_size(len(data))
         clusters = max(1, math.ceil(len(data) / SECTOR_SIZE))
         first = self.alloc_chain(clusters)
         self.write_cluster_data(first, data)
@@ -299,6 +329,25 @@ class Volume:
         packed = packed.ljust(SECTORS_PER_FAT * SECTOR_SIZE, b"\0")
         for copy in range(FAT_COUNT):
             self.put_sectors(RESERVED_SECTORS + copy * SECTORS_PER_FAT, packed)
+
+
+def validate_files(files: list[tuple[str, bytes]]) -> None:
+    seen_names = set()
+    seen_aliases = set()
+    for name, data in files:
+        validate_file_name(name)
+        validate_file_size(len(data))
+        folded = ascii_fold(name)
+        if folded in seen_names:
+            raise SystemExit(
+                f"중복되거나 대소문자만 다른 이름입니다: {name}"
+            )
+        seen_names.add(folded)
+        entries = name_entries(name, 2, len(data))
+        alias = entries[-1][:11]
+        if alias in seen_aliases:
+            raise SystemExit(f"8.3 별칭이 충돌합니다: {name}")
+        seen_aliases.add(alias)
 
 
 def build(image_path, boot, loader, kernel, h04, app_specs):
@@ -329,10 +378,10 @@ def build(image_path, boot, loader, kernel, h04, app_specs):
             raise SystemExit(f"bad app spec: {spec}")
         with open(path, "rb") as f:
             files.append((name, f.read()))
+    validate_files(files)
 
     # the root directory is itself a cluster chain, so reserve it first and let
     # the files follow; the kernel grows the chain when it runs out of slots
-    entries_per_cluster = SECTOR_SIZE * SECTORS_PER_CLUSTER // 32
     # a long name costs extra entries, so size the root by bytes, not by files
     root_bytes = 32 + sum(len(b"".join(name_entries(n, 2, 0))) for n, _ in files)
     root_clusters = max(1, math.ceil(root_bytes / (SECTOR_SIZE * SECTORS_PER_CLUSTER)))

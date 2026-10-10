@@ -29,6 +29,34 @@ class Fat32LayoutTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "FAT is too small"):
             BUILDER.validate_layout(sectors_per_fat=1)
 
+    def test_enforces_kernel_name_limits(self) -> None:
+        BUILDER.validate_file_name("a" * BUILDER.FD64_LFN_MAX_UNITS)
+        with self.assertRaisesRegex(SystemExit, "UTF-16"):
+            BUILDER.validate_file_name(
+                "a" * (BUILDER.FD64_LFN_MAX_UNITS + 1)
+            )
+        with self.assertRaisesRegex(SystemExit, "UTF-8"):
+            BUILDER.validate_file_name("가" * 54)
+
+    def test_rejects_vfat_forbidden_names(self) -> None:
+        for name in (".", "..", "tail.", "tail ", "bad/name", "bad\x01name"):
+            with self.subTest(name=name), self.assertRaises(SystemExit):
+                BUILDER.validate_file_name(name)
+
+    def test_rejects_name_and_alias_collisions(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "대소문자"):
+            BUILDER.validate_files([("Report.txt", b""), ("report.TXT", b"")])
+        with self.assertRaisesRegex(SystemExit, "8.3 별칭"):
+            BUILDER.validate_files(
+                [("longfilename-one.txt", b""),
+                 ("longfilename-two.txt", b"")]
+            )
+
+    def test_rejects_file_larger_than_fat_entry(self) -> None:
+        BUILDER.validate_file_size(BUILDER.FAT_FILE_SIZE_MAX)
+        with self.assertRaisesRegex(SystemExit, "4 GiB"):
+            BUILDER.validate_file_size(BUILDER.FAT_FILE_SIZE_MAX + 1)
+
 
 if __name__ == "__main__":
     unittest.main()

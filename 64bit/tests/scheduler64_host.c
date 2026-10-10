@@ -170,9 +170,18 @@ static int test_sleep_wake64(void)
 {
 	struct TASK64 *main_task;
 	struct TASK64 *next;
+	uint32_t switches_before;
 
 	main_task = task_now64();
 	CHECK64(main_task != NULL);
+	/* A wake between wait-queue insertion and commit must cancel sleep. */
+	switches_before = context_switches;
+	CHECK64(task_sleep_prepare64(main_task) == 0);
+	CHECK64(main_task->flags == TASK64_FLAGS_SLEEP_PENDING);
+	CHECK64(task_run64(main_task, -1, 0) == 0);
+	CHECK64(task_sleep_commit64(main_task) == 0);
+	CHECK64(main_task->flags == TASK64_FLAGS_RUNNING);
+	CHECK64(context_switches == switches_before);
 	wake_during_sleep = 1;
 	CHECK64(task_sleep64(main_task) == 0);
 	CHECK64(main_task->flags == TASK64_FLAGS_RUNNING);

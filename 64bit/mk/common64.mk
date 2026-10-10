@@ -18,6 +18,7 @@ COMMON64_C_SRCS = \
 	$(SRC64_DIR)/kernel/gui64.c \
 	$(SRC64_DIR)/kernel/memory64.c \
 	$(SRC64_DIR)/kernel/mtask64.c \
+	$(SRC64_DIR)/kernel/mutex64.c \
 	$(SRC64_DIR)/kernel/process64.c \
 	$(SRC64_DIR)/kernel/sheet64.c \
 	$(SRC64_DIR)/kernel/syscall64.c \

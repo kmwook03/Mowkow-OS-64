@@ -72,6 +72,10 @@ struct TASK64 *task_alloc64(void);
 int task_set_entry64(struct TASK64 *task, void (*entry)(void),
 	uintptr_t stack_base, size_t stack_size);
 int task_run64(struct TASK64 *task, int level, int priority);
+/* Split sleep closes the wait-queue lost-wakeup window: prepare marks the
+   current task pending, then commit either sleeps or observes an early wake. */
+int task_sleep_prepare64(struct TASK64 *task);
+int task_sleep_commit64(struct TASK64 *task);
 int task_sleep64(struct TASK64 *task);
 int task_kill64(struct TASK64 *task);
 void task_switch64(void);

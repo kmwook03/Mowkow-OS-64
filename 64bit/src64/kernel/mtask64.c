@@ -585,7 +585,26 @@ out:
 	return status;
 }
 
-int task_sleep64(struct TASK64 *task)
+int task_sleep_prepare64(struct TASK64 *task)
+{
+	struct TASK64 *now_task;
+	uint64_t irq_state;
+	int status;
+
+	irq_state = platform_irq_save64();
+	now_task = task_now_nolock();
+	if (task == NULL || !task_pointer_valid_nolock(task) ||
+			task != now_task || task->flags != TASK64_FLAGS_RUNNING ||
+			task_stack_debug_check_nolock(task) != 0) {
+		platform_irq_restore64(irq_state);
+		return TASK64_ERR_INVALID;
+	}
+	status = task_state_change_nolock(task, TASK64_FLAGS_SLEEP_PENDING);
+	platform_irq_restore64(irq_state);
+	return status;
+}
+
+int task_sleep_commit64(struct TASK64 *task)
 {
 	struct TASK64 *new_task;
 	struct TASK64 *now_task;
@@ -593,34 +612,32 @@ int task_sleep64(struct TASK64 *task)
 	int status;
 
 	irq_state = platform_irq_save64();
-	if (task == NULL || !task_pointer_valid_nolock(task) ||
-			task->flags != TASK64_FLAGS_RUNNING) {
-		platform_irq_restore64(irq_state);
-		return TASK64_ERR_INVALID;
-	}
 	now_task = task_now_nolock();
-	if (task == now_task && task_stack_debug_check_nolock(task) != 0) {
+	if (task == NULL || !task_pointer_valid_nolock(task) ||
+			task != now_task) {
 		platform_irq_restore64(irq_state);
 		return TASK64_ERR_INVALID;
 	}
-	if (task == now_task) {
-		status = task_state_change_nolock(task,
-			TASK64_FLAGS_SLEEP_PENDING);
+	/* An unlock between prepare and commit changes pending back to running. */
+	if (task->flags == TASK64_FLAGS_RUNNING) {
 		platform_irq_restore64(irq_state);
-		if (status != 0) {
-			return status;
-		}
-		if (platform_task_sleep_current64(task) != 0) {
-			return 0;
-		}
-		irq_state = platform_irq_save64();
-		if (task->flags != TASK64_FLAGS_SLEEP_PENDING) {
-			platform_irq_restore64(irq_state);
-			return 0;
-		}
+		return 0;
+	}
+	if (task->flags != TASK64_FLAGS_SLEEP_PENDING) {
+		platform_irq_restore64(irq_state);
+		return TASK64_ERR_INVALID;
+	}
+	platform_irq_restore64(irq_state);
+	if (platform_task_sleep_current64(task) != 0) {
+		return 0;
+	}
+	irq_state = platform_irq_save64();
+	if (task->flags != TASK64_FLAGS_SLEEP_PENDING) {
+		platform_irq_restore64(irq_state);
+		return 0;
 	}
 	status = task_remove_nolock(task);
-	if (status != 0 || task != now_task) {
+	if (status != 0) {
 		platform_irq_restore64(irq_state);
 		return status;
 	}
@@ -641,6 +658,32 @@ int task_sleep64(struct TASK64 *task)
 		platform_task_switch64(&now_task->context, &new_task->context);
 	}
 	return 0;
+}
+
+int task_sleep64(struct TASK64 *task)
+{
+	struct TASK64 *now_task;
+	uint64_t irq_state;
+	int status;
+
+	irq_state = platform_irq_save64();
+	if (task == NULL || !task_pointer_valid_nolock(task) ||
+			task->flags != TASK64_FLAGS_RUNNING) {
+		platform_irq_restore64(irq_state);
+		return TASK64_ERR_INVALID;
+	}
+	now_task = task_now_nolock();
+	if (task != now_task) {
+		status = task_remove_nolock(task);
+		platform_irq_restore64(irq_state);
+		return status;
+	}
+	platform_irq_restore64(irq_state);
+	status = task_sleep_prepare64(task);
+	if (status != 0) {
+		return status;
+	}
+	return task_sleep_commit64(task);
 }
 
 int task_kill64(struct TASK64 *task)

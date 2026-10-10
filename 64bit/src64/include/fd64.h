@@ -51,6 +51,8 @@ struct FDHANDLE64 {
 	uint32_t cluster;
 };
 
+/* All public operations are task-context only and may sleep on the filesystem
+   mutex. They must not be called from IRQ handlers. */
 int fd64_init(void);
 uint32_t fd64_file_count(void);
 /* `index`번째 항목을 *out에, 그 이름을 `name`에 복사한다. 이름은 긴 이름이

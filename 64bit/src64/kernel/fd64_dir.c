@@ -9,25 +9,65 @@
 #include <stdint.h>
 #include <utf864.h>
 
+struct FDDIR_GROW64 {
+	uint32_t parent;
+	uint32_t cluster;
+	uint32_t old_parent;
+};
+
+static int dir_growth_rollback(struct FDDIR_GROW64 *growth)
+{
+	if (growth == NULL || growth->cluster == 0) {
+		return 0;
+	}
+	if (fd64_fat_set(growth->parent, growth->old_parent) != 0) {
+		fd64_mark_read_only();
+		return -1;
+	}
+	if (fd64_free_chain(growth->cluster) != 0) {
+		fd64_mark_read_only();
+		return -1;
+	}
+	growth->cluster = 0;
+	return 0;
+}
+
 /* 사슬을 따라 다음 디렉터리 자리로 넘어간다. 사슬 끝이면 0을 돌려주고,
    `grow`가 참이면 대신 0으로 채운 클러스터를 새로 이어 붙인다. */
-static int dir_advance(struct FDPOS64 *pos, int grow)
+static int dir_advance(struct FDPOS64 *pos, int grow,
+	struct FDDIR_GROW64 *growth)
 {
+	uint32_t old_next;
 	uint32_t next;
 
 	pos->offset += FD64_DIR_ENTRY_SIZE;
 	if (pos->offset < fd64_cluster_bytes()) {
 		return 1;
 	}
-	next = fd64_next_cluster(pos->cluster);
+	next = fd64_next_cluster_unlocked(pos->cluster);
 	if (fd64_cluster_valid(next) == 0) {
 		if (grow == 0) {
 			return 0;
 		}
-		next = fd64_alloc_cluster();
-		if (next == 0 || fd64_zero_cluster(next) != 0 ||
-				fd64_fat_set(pos->cluster, next) != 0) {
+		if (growth != NULL && growth->cluster != 0) {
 			return 0;
+		}
+		old_next = next;
+		next = fd64_alloc_cluster();
+		if (next == 0) {
+			return 0;
+		}
+		if (fd64_zero_cluster(next) != 0 ||
+				fd64_fat_set(pos->cluster, next) != 0) {
+			if (fd64_free_chain(next) != 0) {
+				fd64_mark_read_only();
+			}
+			return 0;
+		}
+		if (growth != NULL) {
+			growth->parent = pos->cluster;
+			growth->cluster = next;
+			growth->old_parent = old_next;
 		}
 	}
 	pos->cluster = next;
@@ -50,6 +90,7 @@ void fd64_dir_first(struct FDPOS64 *pos)
 #define LFN_LAST 0x40
 #define LFN_UNITS_PER_ENTRY 13
 #define LFN_MAX_ENTRIES (FD64_LFN_MAX_UNITS / LFN_UNITS_PER_ENTRY)
+#define DIR_CREATE_MAX_ENTRIES (LFN_MAX_ENTRIES + 1)
 /* NT 대소문자 표시. 전부 소문자인 8.3 이름은 긴 항목을 쓰는 대신 대문자로
    저장하고 힌트 비트만 남긴다. 리눅스와 윈도우 모두 이 표시를 따른다. */
 #define NT_LOWER_BASE 0x08
@@ -62,6 +103,11 @@ struct LFN64_STATE {
 	uint8_t checksum;
 	uint8_t next_ord;
 	int units_total;
+};
+
+struct FDDIR_UNDO64 {
+	struct FDPOS64 pos;
+	struct FDINFO64 entry;
 };
 
 static int is_file_entry(const struct FDINFO64 *finfo)
@@ -132,6 +178,46 @@ static int name_eq_ci(const char *a, const char *b)
 		b++;
 	}
 	return *a == *b;
+}
+
+static int name_forbidden_byte(unsigned char c)
+{
+	if (c < 0x20) {
+		return 1;
+	}
+	return c == '"' || c == '*' || c == '/' || c == ':' || c == '<' ||
+		c == '>' || c == '?' || c == '\\' || c == '|';
+}
+
+/* FD64_NAME_MAX는 NUL까지 포함한 kernel buffer 크기다. VFAT가 허용하지
+   않는 ASCII 문자와 Windows/FAT에서 제거되는 끝의 space/dot도 거절해,
+   저장한 이름이 다른 철자로 되읽히거나 기존 파일과 합쳐지지 않게 한다. */
+static int name_bytes_valid(const char *name)
+{
+	size_t length;
+	unsigned char c;
+
+	if (name == NULL) {
+		return 0;
+	}
+	for (length = 0; length < FD64_NAME_MAX; length++) {
+		c = (unsigned char) name[length];
+		if (c == 0) {
+			break;
+		}
+		if (name_forbidden_byte(c) != 0) {
+			return 0;
+		}
+	}
+	if (length == 0 || length == FD64_NAME_MAX ||
+			name[length - 1] == ' ' || name[length - 1] == '.') {
+		return 0;
+	}
+	if (name[0] == '.' &&
+			(name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
+		return 0;
+	}
+	return 1;
 }
 
 static uint8_t short_checksum(const uint8_t name11[FD64_NAME_LEN])
@@ -275,12 +361,12 @@ int fd64_dir_scan_next(struct FDPOS64 *pos, struct FDINFO64 *out,
 					short_name_text(&entry, name, name_size);
 				}
 			}
-			dir_advance(pos, 0);
+			dir_advance(pos, 0, NULL);
 			return 1;
 		} else {
 			lfn_reset(&lfn);
 		}
-		if (dir_advance(pos, 0) == 0) {
+		if (dir_advance(pos, 0, NULL) == 0) {
 			return 0;
 		}
 	}
@@ -295,6 +381,9 @@ int fd64_dir_find(const char *name, struct FDINFO64 *out,
 	struct FDINFO64 entry;
 	struct FDPOS64 pos;
 
+	if (name_bytes_valid(name) == 0) {
+		return 0;
+	}
 	make_name83(name83, name);
 	fd64_dir_first(&pos);
 	while (fd64_dir_scan_next(&pos, &entry, at, found, sizeof(found)) != 0) {
@@ -509,7 +598,8 @@ static int lfn_write_entry(const struct FDPOS64 *pos, const uint16_t *units,
 
 /* 비어 있는 자리 `need`개가 잇달아 있는 곳을 찾는다. 지금 있는 디렉터리
    안에 그만한 자리가 없으면 사슬을 늘려서 만든다. */
-static int dir_find_run(struct FDPOS64 *start, uint32_t need)
+static int dir_find_run(struct FDPOS64 *start, uint32_t need,
+	struct FDDIR_GROW64 *growth)
 {
 	struct FDPOS64 pos;
 	struct FDPOS64 run;
@@ -518,11 +608,15 @@ static int dir_find_run(struct FDPOS64 *start, uint32_t need)
 	uint32_t guard;
 
 	fd64_dir_first(&pos);
+	growth->parent = 0;
+	growth->cluster = 0;
+	growth->old_parent = 0;
 	run = pos;
 	have = 0;
 	for (guard = 0; guard < DIR_SCAN_LIMIT; guard++) {
 		e = fd64_dir_at(&pos, CACHE64_READ);
 		if (e == NULL) {
+			dir_growth_rollback(growth);
 			return 0;
 		}
 		if (e->name[0] == 0x00 || e->name[0] == 0xe5) {
@@ -537,10 +631,12 @@ static int dir_find_run(struct FDPOS64 *start, uint32_t need)
 		} else {
 			have = 0;
 		}
-		if (dir_advance(&pos, 1) == 0) {
+		if (dir_advance(&pos, 1, growth) == 0) {
+			dir_growth_rollback(growth);
 			return 0;
 		}
 	}
+	dir_growth_rollback(growth);
 	return 0;
 }
 
@@ -549,20 +645,32 @@ int fd64_dir_create(struct FDHANDLE64 *fh, const char *name)
 	uint16_t units[FD64_LFN_MAX_UNITS];
 	uint8_t name11[FD64_NAME_LEN];
 	char text[FD64_NAME_MAX];
+	struct FDDIR_GROW64 growth;
+	struct FDDIR_UNDO64 undo[DIR_CREATE_MAX_ENTRIES];
 	struct FDINFO64 probe;
 	struct FDPOS64 pos;
+	const struct FDINFO64 *old_entry;
 	int units_total;
 	int entries;
 	int lossy;
 	int ord;
+	uint32_t need;
 	uint32_t j;
+	uint32_t undo_count;
 
-	if (fh == NULL || fd64_initialized == 0 || name == NULL || name[0] == '\0') {
+	if (fh == NULL || fd64_initialized == 0 || fd64_read_only != 0 ||
+			name_bytes_valid(name) == 0) {
 		return 0;
 	}
 	units_total = utf8_to_utf16_64(name, units, FD64_LFN_MAX_UNITS);
 	if (units_total <= 0) {
 		return 0;		/* 비었거나, 이 커널이 받는 길이를 넘었다 */
+	}
+	/* 같은 철자, ASCII 대소문자 차이, 기존 8.3 별칭으로의 충돌을 모두
+	   directory 변경 전에 거절한다. fd64_create()의 기존-file truncate는
+	   이 내부 생성 함수에 도달하기 전에 처리된다. */
+	if (fd64_dir_find(name, &probe, &pos) != 0) {
+		return 0;
 	}
 	make_shortname(name11, name, &lossy);
 	for (j = 0; j < sizeof(struct FDINFO64); j++) {
@@ -593,16 +701,32 @@ int fd64_dir_create(struct FDHANDLE64 *fh, const char *name)
 		}
 		entries = (units_total + LFN_UNITS_PER_ENTRY - 1) / LFN_UNITS_PER_ENTRY;
 	}
-	if (dir_find_run(&pos, (uint32_t) entries + 1) == 0) {
+	need = (uint32_t) entries + 1;
+	if (dir_find_run(&pos, need, &growth) == 0) {
 		return 0;
 	}
+	/* 항목 기록이 중간에 실패하면 기존 deleted/end marker까지 되살린다. */
+	undo_count = 0;
+	for (j = 0; j < need; j++) {
+		undo[j].pos = pos;
+		old_entry = fd64_dir_at(&pos, CACHE64_READ);
+		if (old_entry == NULL) {
+			goto rollback;
+		}
+		undo[j].entry = *old_entry;
+		undo_count++;
+		if (j + 1 < need && dir_advance(&pos, 0, NULL) == 0) {
+			goto rollback;
+		}
+	}
+	pos = undo[0].pos;
 	for (ord = entries; ord >= 1; ord--) {
 		if (lfn_write_entry(&pos, units, units_total, ord, ord == entries,
 				short_checksum(name11)) != 0) {
-			return 0;
+			goto rollback;
 		}
-		if (dir_advance(&pos, 1) == 0) {
-			return 0;
+		if (dir_advance(&pos, 0, NULL) == 0) {
+			goto rollback;
 		}
 	}
 	for (j = 0; j < 8; j++) {
@@ -618,8 +742,24 @@ int fd64_dir_create(struct FDHANDLE64 *fh, const char *name)
 	fh->pos = 0;
 	fh->cluster = 0;
 	if (fd64_dir_write(fh) != 0) {
-		fh->dir.cluster = 0;
-		return 0;
+		goto rollback;
 	}
 	return 1;
+
+rollback:
+	for (j = 0; j < undo_count; j++) {
+		struct FDINFO64 *entry;
+
+		entry = fd64_dir_at(&undo[j].pos, CACHE64_WRITE_META);
+		if (entry == NULL) {
+			fd64_mark_read_only();
+			break;
+		}
+		*entry = undo[j].entry;
+	}
+	if (dir_growth_rollback(&growth) != 0) {
+		fd64_mark_read_only();
+	}
+	fh->dir.cluster = 0;
+	return 0;
 }
