@@ -14,6 +14,7 @@ struct CONSOLE64;
    인스턴스를 모르는 호출자를 위한 것이다. */
 struct CONSOLE64 *console64_active(void);
 
+/* font is NULL or a complete HANGUL64_FONT_SIZE-byte H04 font. */
 void console64_set_hangul_font(const uint8_t *font);
 const uint8_t *console64_hangul_font(void);
 void console64_attach_sheet(struct CONSOLE64 *con, struct SHEET64 *sht,

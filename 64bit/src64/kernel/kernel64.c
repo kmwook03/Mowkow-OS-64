@@ -22,6 +22,7 @@
 #include <kstring64.h>
 #include <memory64.h>
 #include <gui64.h>
+#include <hangul64.h>
 #include <mouse64.h>
 #include <mtask64.h>
 #include <sheet64.h>
@@ -29,7 +30,7 @@
 #include <timer64.h>
 
 #define EVENT_BUF_SIZE 128
-#define HANGUL_FONT_SIZE 11520
+#define HANGUL_FONT_SIZE HANGUL64_FONT_SIZE
 
 static struct FIFO64 event_fifo;
 static struct EVENT64 event_buf[EVENT_BUF_SIZE];

@@ -135,10 +135,20 @@ NT_LOWER_BASE = 0x08
 NT_LOWER_EXT = 0x10
 
 
+def utf16_name_units(name: str) -> list[int]:
+    """Preserve Unicode scalars as UTF-16LE, rejecting unpaired surrogates."""
+    try:
+        encoded = name.encode("utf-16-le")
+    except UnicodeEncodeError as error:
+        raise SystemExit("잘못된 Unicode 파일명입니다") from error
+    return [int.from_bytes(encoded[i:i + 2], "little")
+            for i in range(0, len(encoded), 2)]
+
+
 def validate_file_name(name: str) -> None:
     """Reject names that the kernel cannot represent or VFAT must alter."""
+    units = utf16_name_units(name)
     encoded = name.encode("utf-8")
-    units = [ord(c) if ord(c) <= 0xFFFF else ord("_") for c in name]
     if not encoded or len(encoded) >= FD64_NAME_MAX:
         raise SystemExit(f"이름의 UTF-8 길이가 범위를 벗어납니다: {name}")
     if len(units) > FD64_LFN_MAX_UNITS:
@@ -222,9 +232,9 @@ def short_checksum(name11):
     return sum_
 
 
-def lfn_entries(name, name11):
+def lfn_entries(name: str, name11: bytes) -> list[bytes]:
     """긴 이름 엔트리들. 8.3 엔트리 앞에, 역순으로 놓인다."""
-    units = [ord(c) if ord(c) <= 0xFFFF else ord("_") for c in name]
+    units = utf16_name_units(name)
     total = len(units)
     count = (total + LFN_UNITS_PER_ENTRY - 1) // LFN_UNITS_PER_ENTRY
     if count > FD64_LFN_MAX_UNITS // LFN_UNITS_PER_ENTRY:

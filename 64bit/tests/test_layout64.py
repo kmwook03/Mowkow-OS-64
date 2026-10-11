@@ -43,6 +43,36 @@ class Fat32LayoutTest(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(SystemExit):
                 BUILDER.validate_file_name(name)
 
+    def test_preserves_surrogate_pairs_in_lfn_entries(self) -> None:
+        # High/low units straddle the first and second 13-unit LFN entries.
+        name = "a" * 12 + "😀" + ".txt"
+        alias = b"PAIR    TXT"
+        entries = BUILDER.lfn_entries(name, alias)
+        units = []
+        for entry in reversed(entries):
+            self.assertEqual(entry[13], BUILDER.short_checksum(alias))
+            for i in range(BUILDER.LFN_UNITS_PER_ENTRY):
+                offset = (1 + i * 2 if i < 5 else
+                          14 + (i - 5) * 2 if i < 11 else
+                          28 + (i - 11) * 2)
+                units.append(int.from_bytes(entry[offset:offset + 2], "little"))
+        self.assertEqual(units[12:14], [0xD83D, 0xDE00])
+        payload = b"".join(unit.to_bytes(2, "little")
+                           for unit in units[:units.index(0)])
+        self.assertEqual(payload.decode("utf-16-le"), name)
+
+    def test_enforces_non_bmp_unit_limits_and_rejects_surrogates(self) -> None:
+        BUILDER.validate_file_name("😀" * 26)
+        self.assertEqual(len(BUILDER.lfn_entries("😀" * 26, b"PAIR       ")), 4)
+        for name in ("😀" * 27, "a" * 51 + "😀"):
+            with self.subTest(name=name), self.assertRaisesRegex(SystemExit, "UTF-16"):
+                BUILDER.validate_file_name(name)
+        for name in ("\ud800", "\udfff", "\ud800\udc00"):
+            with self.subTest(name=repr(name)), self.assertRaisesRegex(SystemExit, "Unicode"):
+                BUILDER.validate_file_name(name)
+            with self.assertRaises(SystemExit):
+                BUILDER.lfn_entries(name, b"PAIR       ")
+
     def test_rejects_name_and_alias_collisions(self) -> None:
         with self.assertRaisesRegex(SystemExit, "대소문자"):
             BUILDER.validate_files([("Report.txt", b""), ("report.TXT", b"")])

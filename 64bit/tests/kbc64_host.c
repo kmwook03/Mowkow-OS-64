@@ -1,4 +1,5 @@
 #include <fifo64.h>
+#include <arch/platform64.h>
 #include <keyboard64.h>
 #include <mouse64.h>
 #include <stddef.h>
@@ -23,6 +24,16 @@ static uint32_t output_calls;
 static uint32_t deadline_calls;
 static uint32_t expiry_checks;
 static uint32_t expire_after;
+
+uint64_t platform_irq_save64(void)
+{
+	return 1;
+}
+
+void platform_irq_restore64(uint64_t state)
+{
+	(void) state;
+}
 
 static void set_statuses(const uint8_t *values, uint32_t count,
 	uint32_t expiry)

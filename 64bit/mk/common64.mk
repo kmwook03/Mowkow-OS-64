@@ -23,6 +23,7 @@ COMMON64_C_SRCS = \
 	$(SRC64_DIR)/kernel/sheet64.c \
 	$(SRC64_DIR)/kernel/syscall64.c \
 	$(SRC64_DIR)/kernel/window64.c \
+	$(SRC64_DIR)/lib/draw64.c \
 	$(SRC64_DIR)/lib/fifo64.c \
 	$(SRC64_DIR)/lib/hangul64.c \
 	$(SRC64_DIR)/lib/keymap64.c \

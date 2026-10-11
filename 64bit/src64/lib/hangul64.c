@@ -9,6 +9,7 @@
  * (H04.FNT)의 벌 번호를 골라 세 조각을 겹쳐 찍는 방식이다.
  */
 #include <hangul64.h>
+#include <utf864.h>
 
 static const uint8_t hangul_code[3][32] = {
 	{ 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -59,10 +60,46 @@ static const char jung_utf8[21][4] = {
 
 void hangul64_init(struct HANGUL64 *hangul)
 {
+	if (hangul == NULL) {
+		return;
+	}
 	hangul->state = 0;
 	hangul->cho = -1;
 	hangul->jung = -1;
 	hangul->jong = -1;
+}
+
+static int hangul64_components_valid(const struct HANGUL64 *hangul)
+{
+	return hangul != NULL && hangul->state >= 0 && hangul->state <= 4 &&
+		hangul->cho >= -1 && hangul->cho < 19 &&
+		hangul->jung >= -1 && hangul->jung < 21 &&
+		hangul->jong >= -1 && hangul->jong < 28 &&
+		(hangul->jong <= 0 || (hangul->cho >= 0 && hangul->jung >= 0));
+}
+
+static int hangul64_state_valid(const struct HANGUL64 *hangul)
+{
+	if (!hangul64_components_valid(hangul)) {
+		return 0;
+	}
+	switch (hangul->state) {
+	case 0:
+		return hangul->cho == -1 && hangul->jung == -1 && hangul->jong == -1;
+	case 1:
+		return ((hangul->cho >= 0 && hangul->jung == -1) ||
+			(hangul->cho == -1 && hangul->jung >= 0)) && hangul->jong == -1;
+	case 2:
+		return hangul->cho >= 0 && hangul->jung >= 0 && hangul->jong == -1;
+	case 3:
+		return hangul->cho >= 0 && hangul->jung >= 0 && hangul->jong > 0 &&
+			hangul64_first_jong(hangul->jong) == -1;
+	case 4:
+		return hangul->cho >= 0 && hangul->jung >= 0 &&
+			hangul64_first_jong(hangul->jong) != -1;
+	default:
+		return 0;
+	}
 }
 
 int hangul64_key_to_cho(char c)
@@ -166,6 +203,7 @@ static void hangul64_feed_commit(struct HANGUL64 *hangul,
 
 static int hangul64_cho_cannot_be_jong(int cho)
 {
+	/* ㄸ/ㅃ/ㅉ cannot be finals; ㄲ/ㅆ must remain valid finals. */
 	return cho == 4 || cho == 8 || cho == 13;
 }
 
@@ -186,6 +224,44 @@ int hangul64_feed(struct HANGUL64 *hangul, char key,
 	result->committed[0] = '\0';
 	result->committed_length = 0;
 	result->passthrough = '\0';
+	if (!hangul64_state_valid(hangul)) {
+		hangul64_init(hangul);
+		return -2;
+	}
+	/* Control keys use the same state transitions for cooked and raw input. */
+	if (key == '\0') {
+		hangul64_feed_commit(hangul, result);
+		return 0;
+	}
+	if (key == '\b') {
+		switch (hangul->state) {
+		case 0:
+			result->passthrough = key;
+			break;
+		case 1:
+			hangul64_init(hangul);
+			break;
+		case 2:
+			jung = hangul64_split_composite_jung(hangul->jung);
+			if (jung != -1) {
+				hangul->jung = jung;
+			} else {
+				hangul64_feed_set(hangul, 1, hangul->cho, -1, -1);
+			}
+			break;
+		case 3:
+			hangul64_feed_set(hangul, 2, hangul->cho, hangul->jung, -1);
+			break;
+		case 4:
+			hangul64_feed_set(hangul, 3, hangul->cho, hangul->jung,
+				hangul64_first_jong(hangul->jong));
+			break;
+		default:
+			hangul64_init(hangul);
+			return -2;
+		}
+		return 0;
+	}
 	cho = hangul64_key_to_cho(key);
 	jung = hangul64_key_to_jung(key);
 	jong = hangul64_key_to_jong(key);
@@ -287,6 +363,13 @@ int hangul64_compose_utf8(char *dest, const struct HANGUL64 *hangul)
 	const char *src;
 	int jong;
 
+	if (dest == NULL) {
+		return 0;
+	}
+	dest[0] = '\0';
+	if (!hangul64_components_valid(hangul)) {
+		return 0;
+	}
 	if (hangul->cho != -1 && hangul->jung == -1) {
 		src = cho_utf8[hangul->cho];
 		dest[0] = src[0];
@@ -320,6 +403,9 @@ uint16_t hangul64_to_johab(const struct HANGUL64 *hangul)
 	uint16_t johab;
 
 	johab = 0x8000;
+	if (!hangul64_components_valid(hangul)) {
+		return 0;
+	}
 	if (hangul->cho != -1) {
 		johab |= (uint16_t) (u2j_cho[hangul->cho] & 0x1f) << 10;
 	}
@@ -339,9 +425,12 @@ uint16_t hangul64_utf8_to_johab(const unsigned char *s)
 	int jung;
 	int jong;
 	uint16_t johab;
+	int length;
 
-	unicode = ((unsigned int) (s[0] & 0x0f) << 12) |
-		((unsigned int) (s[1] & 0x3f) << 6) | (unsigned int) (s[2] & 0x3f);
+	if (s == NULL || (s[0] & 0xf0) != 0xe0) {
+		return 0;
+	}
+	unicode = utf8_to_unicode64((const char *) s, &length);
 	if (unicode < 0xac00 || unicode > 0xd7a3) {
 		return 0;
 	}
@@ -357,8 +446,8 @@ uint16_t hangul64_utf8_to_johab(const unsigned char *s)
 	return johab;
 }
 
-void hangul64_draw_johab(uint8_t *vram, uint32_t stride, uint16_t x, uint16_t y,
-	uint8_t color, const uint8_t *font, uint16_t code)
+void hangul64_draw_johab(const struct SURFACE64 *surface, int32_t x, int32_t y,
+	uint8_t color, const uint8_t *font, size_t font_size, uint16_t code)
 {
 	int cho_val;
 	int jung_val;
@@ -374,25 +463,45 @@ void hangul64_draw_johab(uint8_t *vram, uint32_t stride, uint16_t x, uint16_t y,
 	const uint8_t *p_jung;
 	const uint8_t *p_jong;
 	int row;
-	int bit;
+	uint8_t bitmap[32];
+	size_t cho_offset, jung_offset, jong_offset;
 
+	if (!surface64_valid(surface) || font == NULL || (code & 0x8000) == 0 ||
+		font_size > UINTPTR_MAX - (uintptr_t) font) {
+		return;
+	}
 	cho_val = (code >> 10) & 0x1f;
 	jung_val = (code >> 5) & 0x1f;
 	jong_val = code & 0x1f;
 	cho_idx = hangul_code[0][cho_val];
 	jung_idx = hangul_code[1][jung_val];
 	jong_idx = hangul_code[2][jong_val];
+	if (cho_idx >= (int) sizeof(first[0]) || jung_idx >= (int) sizeof(middle[0])) {
+		return;
+	}
+	/* Zero fields are absent components. Reserved encodings are malformed. */
+	if ((cho_val != 0 && cho_idx == 0) || (jung_val != 0 && jung_idx == 0) ||
+		(jong_val != 0 && jong_idx == 0) ||
+		(jong_idx != 0 && (cho_idx == 0 || jung_idx == 0))) {
+		return;
+	}
 	jong_exist = jong_idx != 0;
 	cho_type = middle[1 + jong_exist][jung_idx];
 	jung_type = first[jong_exist][cho_idx];
 	jong_type = middle[0][jung_idx];
-	p_cho = font + (cho_type * 20 + cho_idx) * 32;
-	p_jung = font + (160 + jung_type * 22 + jung_idx) * 32;
-	p_jong = font + (248 + jong_type * 28 + jong_idx) * 32;
+	cho_offset = (size_t) (cho_type * 20 + cho_idx) * 32;
+	jung_offset = (size_t) (160 + jung_type * 22 + jung_idx) * 32;
+	jong_offset = (size_t) (248 + jong_type * 28 + jong_idx) * 32;
+	if (font_size < 32 || cho_offset > font_size - 32 ||
+		jung_offset > font_size - 32 || (jong_exist && jong_offset > font_size - 32)) {
+		return;
+	}
+	p_cho = font + cho_offset;
+	p_jung = font + jung_offset;
+	p_jong = jong_exist ? font + jong_offset : NULL;
 	for (row = 0; row < 16; row++) {
 		uint8_t line1;
 		uint8_t line2;
-		uint8_t *p;
 
 		line1 = p_cho[row * 2] | p_jung[row * 2];
 		line2 = p_cho[row * 2 + 1] | p_jung[row * 2 + 1];
@@ -400,20 +509,14 @@ void hangul64_draw_johab(uint8_t *vram, uint32_t stride, uint16_t x, uint16_t y,
 			line1 |= p_jong[row * 2];
 			line2 |= p_jong[row * 2 + 1];
 		}
-		p = vram + (uint32_t) (y + row) * stride + x;
-		for (bit = 0; bit < 8; bit++) {
-			if ((line1 & (0x80 >> bit)) != 0) {
-				p[bit] = color;
-			}
-			if ((line2 & (0x80 >> bit)) != 0) {
-				p[bit + 8] = color;
-			}
-		}
+		bitmap[row * 2] = line1;
+		bitmap[row * 2 + 1] = line2;
 	}
+	draw_glyph64(surface, x, y, color, bitmap, sizeof(bitmap), 16);
 }
 
-void hangul64_draw_unicode(uint8_t *vram, uint32_t stride, uint16_t x, uint16_t y,
-	uint8_t color, const uint8_t *font, unsigned int unicode)
+void hangul64_draw_unicode(const struct SURFACE64 *surface, int32_t x, int32_t y,
+	uint8_t color, const uint8_t *font, size_t font_size, unsigned int unicode)
 {
 	struct HANGUL64 h;
 	uint16_t johab;
@@ -425,21 +528,22 @@ void hangul64_draw_unicode(uint8_t *vram, uint32_t stride, uint16_t x, uint16_t 
 		h.jong = (int) (unicode % 28);
 		h.state = 2;
 		johab = hangul64_to_johab(&h);
-		hangul64_draw_johab(vram, stride, x, y, color, font, johab);
+		hangul64_draw_johab(surface, x, y, color, font, font_size, johab);
 	} else if (unicode >= 0x3131 && unicode <= 0x314e) {
 		h.state = 1;
 		h.cho = compat_cho_to_cho_idx[unicode - 0x3131];
 		h.jung = -1;
 		h.jong = -1;
 		if (h.cho != -1) {
-			hangul64_draw_johab(vram, stride, x, y, color, font, hangul64_to_johab(&h));
+			hangul64_draw_johab(surface, x, y, color, font, font_size,
+				hangul64_to_johab(&h));
 		}
 	} else if (unicode >= 0x314f && unicode <= 0x3163) {
 		h.state = 0;
 		h.cho = -1;
 		h.jung = (int) (unicode - 0x314f);
 		h.jong = -1;
-		hangul64_draw_johab(vram, stride, x, y, color, font, hangul64_to_johab(&h));
+		hangul64_draw_johab(surface, x, y, color, font, font_size, hangul64_to_johab(&h));
 	}
 }
 

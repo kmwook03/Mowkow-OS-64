@@ -23,7 +23,7 @@
 #define GIO_IODIR_OFFSET 0x08
 #define ACT_LED_PIN 9
 #define ACT_LED_MASK (1U << ACT_LED_PIN)
-#define HANGUL_FONT_SIZE 11520U
+#define HANGUL_FONT_SIZE HANGUL64_FONT_SIZE
 
 static uint8_t disk_hangul_font[HANGUL_FONT_SIZE];
 
@@ -363,6 +363,7 @@ static int m7e_gui_stack64(const struct BOOTINFO64 *bootinfo)
 	uint32_t x;
 	uint32_t y;
 	int found;
+	struct SURFACE64 surface;
 
 	console_sheet = gui64_init(bootinfo);
 	if (console_sheet == NULL || console_sheet->buf == NULL ||
@@ -372,8 +373,13 @@ static int m7e_gui_stack64(const struct BOOTINFO64 *bootinfo)
 	}
 	m7e_console_sheet = console_sheet;
 	window64_set_hangul_font(disk_hangul_font);
-	putstr64(console_sheet->buf, (uint32_t) console_sheet->bxsize,
-		64, 64, COL64_FFFFFF, label);
+	surface = (struct SURFACE64) {
+		console_sheet->buf, (size_t) console_sheet->bxsize * console_sheet->bysize,
+		(uint32_t) console_sheet->bxsize, console_sheet->bxsize, console_sheet->bysize,
+		0, 0, console_sheet->bxsize, console_sheet->bysize
+	};
+
+	putstr64(&surface, 64, 64, COL64_FFFFFF, label);
 	sheet64_refresh(console_sheet, 64, 64, 400, 80);
 	found = 0;
 	for (y = 64U; y < 80U && found == 0; y++) {
@@ -535,6 +541,7 @@ void aarch64_high_main(void)
 	struct FIFO64 hid_fifo;
 	struct EVENT64 hid_event_buffer[32];
 	struct EVENT64 hid_event;
+	uint64_t keyboard_test_deadline;
 	uint64_t heartbeat_frequency;
 	uint64_t heartbeat_deadline;
 	uint64_t heartbeat_half_period;
@@ -542,6 +549,7 @@ void aarch64_high_main(void)
 	int fp_test_reported;
 	uintptr_t rp1_base;
 	int mouse_available;
+	int keyboard_available = 1;
 	int mouse_status;
 	int status;
 
@@ -911,7 +919,7 @@ void aarch64_high_main(void)
 		arch64_dbg_puts(" ptr-lo=");
 		dbg_hex32(xhci_descriptor.trb_pointer_low);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(22);
+		goto keyboard_degraded64;
 	}
 	xhci_hid.vendor_product = 0;
 	xhci_hid.configuration_value = 0;
@@ -942,7 +950,7 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("/");
 		dbg_hex32(xhci_hid.event_control);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(23);
+		goto keyboard_degraded64;
 	}
 	xhci_configure.endpoint_id = 0;
 	xhci_configure.endpoint_state = 0;
@@ -969,7 +977,7 @@ void aarch64_high_main(void)
 		arch64_dbg_puts(" ptr-lo=");
 		dbg_hex32(xhci_configure.command_pointer_low);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(24);
+		goto keyboard_degraded64;
 	}
 	xhci_key.modifier = 0;
 	xhci_key.keycode = 0;
@@ -983,7 +991,17 @@ void aarch64_high_main(void)
 		status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid);
 	}
 	arch64_dbg_puts("M6 keyboard test: press and release one letter key\n");
+	__asm__ volatile ("mrs %0, cntfrq_el0" : "=r" (heartbeat_frequency));
+	if (heartbeat_frequency == 0 || heartbeat_frequency > (uint64_t) INT64_MAX / 30U) {
+		arch64_dbg_puts("M6k: USB keyboard test clock frequency invalid\n");
+		goto keyboard_degraded64;
+	}
+	keyboard_test_deadline = counter64() + heartbeat_frequency * 30U;
 	while (status == 0 && xhci_key.keycode == 0) {
+		if ((int64_t) (counter64() - keyboard_test_deadline) >= 0) {
+			status = -110;
+			break;
+		}
 		status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
 			&xhci_hid, hid_report);
 		if (status == 0) {
@@ -993,9 +1011,13 @@ void aarch64_high_main(void)
 		if (status < 0) {
 			break;
 		}
+		if (usbhid64_keyboard_report_valid(hid_report, (size_t) status) != 0) {
+			status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid);
+			continue;
+		}
 		xhci_key.modifier = hid_report[0];
 		for (hid_index = 2U; hid_index < 8U; hid_index++) {
-			if (hid_report[hid_index] != 0) {
+			if (usbhid64_key_transition(hid_report[hid_index], 1, &key_make) == 0) {
 				xhci_key.keycode = hid_report[hid_index];
 				break;
 			}
@@ -1023,14 +1045,19 @@ void aarch64_high_main(void)
 		arch64_dbg_puts(" ptr-lo=");
 		dbg_hex32(xhci_key.trb_pointer_low);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(25);
+		goto keyboard_degraded64;
 	}
 	key_make = 0;
 	key_break = 0;
+	keyboard_test_deadline = counter64() + heartbeat_frequency * 30U;
 	status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid);
 	while (status == 0) {
 		int key_still_pressed = 0;
 
+		if ((int64_t) (counter64() - keyboard_test_deadline) >= 0) {
+			status = -110;
+			break;
+		}
 		status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
 			&xhci_hid, hid_report);
 		if (status == 0) {
@@ -1045,6 +1072,9 @@ void aarch64_high_main(void)
 				key_still_pressed = 1;
 				break;
 			}
+		}
+		if (usbhid64_keyboard_report_valid(hid_report, (size_t) status) != 0) {
+			key_still_pressed = 1;
 		}
 		if (key_still_pressed == 0) {
 			status = 0;
@@ -1069,7 +1099,7 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("/");
 		dbg_hex32(0);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(26);
+		goto keyboard_degraded64;
 	}
 	hid_event.type = 0;
 	hid_event.data = 0;
@@ -1105,6 +1135,11 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(27);
 	}
+	goto keyboard_done64;
+keyboard_degraded64:
+	keyboard_available = 0;
+	arch64_dbg_puts("DEGRADED: USB keyboard rejected; continuing without keyboard\n");
+keyboard_done64:
 	status = m8a_mouse_report_smoke64();
 	if (status != 0) {
 		arch64_dbg_puts("M8a: USB HID mouse report decode failed, status=");
@@ -1228,12 +1263,13 @@ void aarch64_high_main(void)
 		arch64_panic_blink(29);
 	}
 	usbhid64_state_init(&hid_state);
-	status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid);
+	status = keyboard_available ?
+		xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid) : 0;
 	if (status != 0) {
 		arch64_dbg_puts("M6o: live USB keyboard arm failed, status=");
 		dbg_hex32((uint32_t) status);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(29);
+		keyboard_available = 0;
 	}
 	if (mouse_available != 0 && (xhci64_select_controller(0U) != 0 ||
 			xhci64_hid_arm(rp1_base, mouse_slot.slot_id, &mouse_hid) != 0)) {
@@ -1257,33 +1293,37 @@ void aarch64_high_main(void)
 
 	/* Keep the M1 heartbeat as an independent liveness signal. */
 	for (;;) {
-		if (xhci64_select_controller(1U) != 0) {
-			arch64_dbg_puts("\nPANIC: USB keyboard controller lost\n");
-			arch64_panic_blink(29);
-		}
-		status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
-			&xhci_hid, hid_report);
-		if (status < 0) {
-			arch64_dbg_puts("\nM6o: live USB keyboard poll failed, status=");
-			dbg_hex32((uint32_t) status);
-			arch64_dbg_puts("\n");
-			arch64_panic_blink(29);
-		}
-		if (status > 0) {
-			status = usbhid64_process_report(&hid_fifo, &hid_state,
-				hid_report);
-			if (status < 0 || xhci64_keyboard_arm(rp1_base,
-					xhci_slot.slot_id, &xhci_hid) != 0) {
-				arch64_dbg_puts("\nM6o: live USB keyboard rearm failed\n");
-				arch64_panic_blink(29);
+		if (keyboard_available) {
+			status = xhci64_select_controller(1U);
+			if (status == 0) {
+				status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
+					&xhci_hid, hid_report);
 			}
-			while (fifo64_get(&hid_fifo, &hid_event) == 0) {
-				focused_console = gui64_focused_console();
-				if (focused_console != NULL &&
+			if (status < 0) {
+				arch64_dbg_puts("DEGRADED: USB keyboard poll failed, status=");
+				dbg_hex32((uint32_t) status);
+				arch64_dbg_puts("\n");
+				keyboard_available = 0;
+			} else if (status > 0) {
+				status = usbhid64_process_report_n(&hid_fifo, &hid_state,
+					hid_report, (size_t) status);
+				if (status < 0) {
+					arch64_dbg_puts("USB keyboard report/FIFO error, status=");
+					dbg_hex32((uint32_t) status);
+					arch64_dbg_puts("\n");
+				}
+				while (fifo64_get(&hid_fifo, &hid_event) == 0) {
+					focused_console = gui64_focused_console();
+					if (focused_console != NULL &&
 						console64_post_input_key(focused_console,
-						(uint16_t) hid_event.data) != 0) {
-					arch64_dbg_puts("M7j: console task FIFO failed\n");
-					arch64_panic_blink(38);
+							(uint16_t) hid_event.data) != 0) {
+						arch64_dbg_puts("M7j: console task FIFO failed\n");
+						arch64_panic_blink(38);
+					}
+				}
+				if (xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid) != 0) {
+					arch64_dbg_puts("DEGRADED: USB keyboard rearm failed\n");
+					keyboard_available = 0;
 				}
 			}
 		}

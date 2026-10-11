@@ -47,6 +47,32 @@ class Style64Test(unittest.TestCase):
             [message for _, message in violations],
         )
 
+    def test_libc_exceptions_only_allow_exact_signatures(self) -> None:
+        cases = (
+            ("64bit/src64/lib/kstring64.c", "char *str" "cpy(char *dst, const char *src)"),
+            ("64bit/src64/include/kstring64.h", "char *str" "cpy(char *dst, const char *src);"),
+            ("64bit/src64/mpport/libc/stdio.h", "int spr" "intf(char *str, const char *fmt, ...);"),
+        )
+        for path, declaration in cases:
+            with self.subTest(path=path):
+                self.assertEqual([], CHECKER.check_string_apis(Path(path), declaration))
+                violations = CHECKER.check_string_apis(
+                    Path(path), declaration + "\nvoid f(void) { str" "cpy(a, b); }\n"
+                )
+                self.assertEqual([(2, "unbounded string API is forbidden")], violations)
+
+    def test_rejects_multiline_calls_and_function_aliases(self) -> None:
+        source = "void f(void) { str" "cpy\n(a, b); }\nvoid *p = str" "cpy;\n"
+        self.assertEqual(
+            [(1, "unbounded string API is forbidden"),
+             (3, "unbounded string API is forbidden")],
+            CHECKER.check_string_apis(Path("64bit/src64/lib/example.c"), source),
+        )
+
+    def test_ignores_comments_and_string_literals(self) -> None:
+        source = '/* str' 'cpy(a, b) */\n// spr' 'intf(b, f)\nchar *s = "str' 'cpy(a,b)";\n'
+        self.assertEqual([], CHECKER.check_string_apis(Path("example.c"), source))
+
 
 if __name__ == "__main__":
     unittest.main()

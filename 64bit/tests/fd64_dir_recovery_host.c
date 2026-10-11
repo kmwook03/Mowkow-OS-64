@@ -1,5 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "../src64/kernel/fd64.c"
 #include "../src64/kernel/fd64_fat.c"
@@ -7,6 +9,7 @@
 
 #define CHECK64(condition) do { \
 	if (!(condition)) { \
+		fprintf(stderr, "directory check failed at line %d\n", __LINE__); \
 		return __LINE__; \
 	} \
 } while (0)
@@ -89,33 +92,6 @@ int cache64_flush(uint32_t start, uint32_t end, int meta)
 		}
 	}
 	return 0;
-}
-
-int utf8_to_utf16_64(const char *in, uint16_t *out, int max_units)
-{
-	int i;
-
-	for (i = 0; in[i] != '\0'; i++) {
-		if (i >= max_units) {
-			return 0;
-		}
-		out[i] = (uint8_t) in[i];
-	}
-	return i;
-}
-
-int utf16_to_utf8_64(const uint16_t *in, int units, char *out, int out_size)
-{
-	int i;
-
-	if (units + 1 > out_size) {
-		return 0;
-	}
-	for (i = 0; i < units; i++) {
-		out[i] = (char) in[i];
-	}
-	out[units] = '\0';
-	return units;
 }
 
 static void write32(uint8_t *p, uint32_t value)
@@ -227,6 +203,93 @@ static int test_name_policy(void)
 	CHECK64(fd64_dir_create(&fh, "report.TXT") == 0);
 	CHECK64(fd64_dir_create(&fh, "Report.txt") == 0);
 	CHECK64(fd64_file_count() == 1);
+	return 0;
+}
+
+static int test_unicode_names64(void)
+{
+	const char *split = "aaaaaaaaaaaa\xf0\x9f\x98\x80.txt";
+	const char *other = "aaaaaaaaaaaa\xf0\x9f\x98\x81.txt";
+	const char *const invalid[] = {
+		"\xc2", "\xe0\x80\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80",
+	};
+	struct FDHANDLE64 fh;
+	struct FDHANDLE64 second;
+	struct FDINFO64 info;
+	char name[FD64_NAME_MAX];
+	char maximum[26 * 4 + 1];
+	char too_long[27 * 4 + 1];
+	char alias[13];
+	uint8_t snapshot[sizeof(sectors)];
+	uint8_t *raw;
+	uint32_t offset;
+
+	reset_empty_root();
+	CHECK64(fd64_create(&fh, split) == 1);
+	CHECK64(fd64_file_at(0, &info, name, sizeof(name)) == 1);
+	CHECK64(strcmp(name, split) == 0);
+	CHECK64(fd64_open(&second, split) == 1);
+	CHECK64(second.dir.cluster == fh.dir.cluster && second.dir.offset == fh.dir.offset);
+	/* Verify a pair split across LFN entries without joining scalar halves. */
+	raw = sectors[fd64_data_lba];
+	CHECK64(raw[0] == (LFN_LAST | 2));
+	CHECK64(fd64_read16(raw + lfn_unit_offset(0)) == 0xde00);
+	CHECK64(raw[32] == 1);
+	CHECK64(fd64_read16(raw + 32 + lfn_unit_offset(12)) == 0xd83d);
+	CHECK64(fd64_create(&second, other) == 1);
+	CHECK64(fd64_file_count() == 2);
+	CHECK64(fd64_file_at(1, &info, name, sizeof(name)) == 1);
+	CHECK64(strcmp(name, other) == 0);
+	CHECK64(fd64_open(&second, other) == 1);
+	CHECK64(second.dir.offset != fh.dir.offset);
+	CHECK64(fd64_write(&fh, "x", 1) == 1);
+	memcpy(snapshot, sectors, sizeof(sectors));
+	for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+		CHECK64(fd64_open(&second, invalid[i]) == 0);
+		CHECK64(fd64_create(&second, invalid[i]) == 0);
+		CHECK64(memcmp(snapshot, sectors, sizeof(sectors)) == 0);
+	}
+
+	/* Corrupt the low half into a high half: list uses the intact 8.3 alias,
+	 * and the malformed long name can no longer open the file.
+	 */
+	short_name_text(&fh.info, alias, sizeof(alias));
+	offset = lfn_unit_offset(0);
+	raw[offset] = 0x00;
+	raw[offset + 1] = 0xd8;
+	CHECK64(fd64_file_at(0, &info, name, sizeof(name)) == 1);
+	CHECK64(strcmp(name, alias) == 0);
+	CHECK64(fd64_open(&second, split) == 0);
+	CHECK64(fd64_open(&second, alias) == 1 && second.info.size == 1);
+	/* A NUL after the high half also truncates the pair and forces fallback. */
+	raw[offset + 1] = 0;
+	CHECK64(fd64_file_at(0, &info, name, sizeof(name)) == 1);
+	CHECK64(strcmp(name, alias) == 0);
+
+	for (size_t i = 0; i < 27; i++) {
+		memcpy(too_long + i * 4, "\xf0\x9f\x98\x80", 4);
+	}
+	too_long[sizeof(too_long) - 1] = '\0';
+	memcpy(maximum, too_long, sizeof(maximum) - 1);
+	maximum[sizeof(maximum) - 1] = '\0';
+	reset_empty_root();
+	CHECK64(fd64_create(&fh, maximum) == 1);
+	CHECK64(fd64_file_at(0, &info, name, sizeof(name)) == 1);
+	CHECK64(strcmp(name, maximum) == 0);
+	CHECK64(fd64_open(&second, maximum) == 1);
+	memcpy(snapshot, sectors, sizeof(sectors));
+	CHECK64(fd64_open(&second, too_long) == 0);
+	CHECK64(fd64_create(&second, too_long) == 0);
+	CHECK64(memcmp(snapshot, sectors, sizeof(sectors)) == 0);
+	/* Reject a malformed suffix before its first eight bytes can match an
+	 * existing short alias and trigger create's truncate behavior.
+	 */
+	reset_empty_root();
+	CHECK64(fd64_create(&fh, "abcdefgh") == 1);
+	CHECK64(fd64_write(&fh, "keep", 4) == 4);
+	memcpy(snapshot, sectors, sizeof(sectors));
+	CHECK64(fd64_create(&second, "abcdefgh\xed\xa0\x80") == 0);
+	CHECK64(memcmp(snapshot, sectors, sizeof(sectors)) == 0);
 	return 0;
 }
 
@@ -359,6 +422,10 @@ int main(void)
 	int status;
 
 	status = test_name_policy();
+	if (status != 0) {
+		return status;
+	}
+	status = test_unicode_names64();
 	if (status != 0) {
 		return status;
 	}

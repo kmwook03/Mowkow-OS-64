@@ -139,11 +139,13 @@ static void draw_hangul64(unsigned int unicode)
 {
 	uint8_t bitmap[16 * 16];
 	uint32_t i;
+	struct SURFACE64 surface = { bitmap, sizeof(bitmap), 16, 16, 16, 0, 0, 16, 16 };
 
 	for (i = 0; i < sizeof bitmap; i++) {
 		bitmap[i] = 0;
 	}
-	hangul64_draw_unicode(bitmap, 16, 0, 0, 1, active_hangul_font, unicode);
+	hangul64_draw_unicode(&surface, 0, 0, 1, active_hangul_font,
+		HANGUL64_FONT_SIZE, unicode);
 	draw_bitmap64(bitmap, 16, cursor_x, cursor_y);
 	cursor_x += 16 * FB_SCALE;
 }
@@ -237,6 +239,9 @@ void arch64_dbg_puts(const char *s)
 		}
 		if (unicode >= 0xac00 && unicode <= 0xd7a3) {
 			draw_hangul64(unicode);
+		} else if (unicode == UTF64_REPLACEMENT) {
+			/* U+FFFD is unavailable in the bitmap font. */
+			draw_ascii64('?');
 		} else if (length == 1) {
 			draw_ascii64((unsigned char) *s);
 		}

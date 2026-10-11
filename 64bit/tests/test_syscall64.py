@@ -29,6 +29,7 @@ class Syscall64Test(unittest.TestCase):
                             f"-I{ROOT / '64bit' / 'src64' / 'include'}",
                             str(ROOT / "64bit" / "tests" / "syscall64_host.c"),
                             str(ROOT / "64bit" / "src64" / "kernel" / "syscall64.c"),
+                            str(ROOT / "64bit" / "src64" / "lib" / "utf864.c"),
                             "-o",
                             str(executable),
                         ],

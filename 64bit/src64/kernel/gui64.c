@@ -161,8 +161,8 @@ static void init_cursor_buf(void)
 
 static void set_title(struct GUI64_WIN *win, const char *title)
 {
-	strncpy(win->title, title, GUI64_TITLE_MAX - 1);
-	win->title[GUI64_TITLE_MAX - 1] = '\0';
+	/* Display titles deliberately keep the fitting prefix; rendering is bounded. */
+	(void) str_copy64(win->title, sizeof(win->title), title);
 }
 
 /* 창을 맨 위로 올리되 작업 표시줄과 커서는 다시 그 위로 올린다. 예약된 띠를
@@ -189,6 +189,10 @@ static void taskbar_redraw(void)
 {
 	int32_t i, x0, y0;
 	uint8_t bg, fg;
+	struct SURFACE64 surface = {
+		gui_taskbar_buf, (size_t) gui_scrnx * GUI64_BAR_H,
+		(uint32_t) gui_scrnx, gui_scrnx, GUI64_BAR_H, 0, 0, gui_scrnx, GUI64_BAR_H
+	};
 
 	if (gui_taskbar == NULL || gui_taskbar->height < 0) {
 		return;
@@ -212,8 +216,11 @@ static void taskbar_redraw(void)
 			x0, y0, x0 + GUI64_BAR_ENTRY_W - 1, y0 + GUI64_BAR_ENTRY_H - 1);
 		boxfill64(gui_taskbar_buf, gui_scrnx, bg,
 			x0 + 1, y0 + 1, x0 + GUI64_BAR_ENTRY_W - 2, y0 + GUI64_BAR_ENTRY_H - 2);
-		putstr64(gui_taskbar_buf, (uint32_t) gui_scrnx, x0 + 6, y0 + 3, fg,
-			gui_wins[i].title);
+		surface.x0 = x0 + 1;
+		surface.y0 = y0 + 1;
+		surface.x1 = x0 + GUI64_BAR_ENTRY_W - 1;
+		surface.y1 = y0 + GUI64_BAR_ENTRY_H - 1;
+		putstr64(&surface, x0 + 6, y0 + 3, fg, gui_wins[i].title);
 	}
 	sheet64_refresh(gui_taskbar, 0, 0, gui_scrnx, GUI64_BAR_H);
 }
@@ -237,6 +244,11 @@ static void taskbar_show(int on)
 /* 바탕화면 아이콘. 누르면 콘솔이 하나 뜬다 (`new` 명령과 같은 길). */
 static void draw_desktop_icon(uint8_t *buf, int32_t stride)
 {
+	struct SURFACE64 surface = {
+		buf, (size_t) stride * (size_t) gui_scrny,
+		(uint32_t) stride, stride, gui_scrny, 0, 0, stride, gui_scrny
+	};
+
 	boxfill64(buf, stride, COL64_848484,
 		GUI64_ICON_X, GUI64_ICON_Y,
 		GUI64_ICON_X + GUI64_ICON_W - 1, GUI64_ICON_Y + GUI64_ICON_H - 1);
@@ -246,9 +258,9 @@ static void draw_desktop_icon(uint8_t *buf, int32_t stride)
 	boxfill64(buf, stride, COL64_000000,
 		GUI64_ICON_X + 4, GUI64_ICON_Y + 4,
 		GUI64_ICON_X + GUI64_ICON_W - 6, GUI64_ICON_Y + GUI64_ICON_H - 6);
-	putstr64(buf, (uint32_t) stride, GUI64_ICON_X + 16, GUI64_ICON_Y + 16,
+	putstr64(&surface, GUI64_ICON_X + 16, GUI64_ICON_Y + 16,
 		COL64_FFFFFF, ">_");
-	putstr64(buf, (uint32_t) stride, GUI64_ICON_X + 4,
+	putstr64(&surface, GUI64_ICON_X + 4,
 		GUI64_ICON_Y + GUI64_ICON_H + 2, COL64_FFFFFF, "터미널");
 }
 
@@ -737,7 +749,9 @@ void gui64_raise_bottom_window(void)
 int gui64_handle_system_event(const struct EVENT64 *event)
 {
 	if (event->type == EVENT64_MOUSE) {
-		if (mouse64_decode(&gui_mdec, (uint8_t) event->data) != 0) {
+		if (event->data == MOUSE64_DATA_ERROR) {
+			mouse64_decode_error(&gui_mdec);
+		} else if (mouse64_decode(&gui_mdec, (uint8_t) event->data) != 0) {
 			gui64_mouse_event(gui_mdec.x, gui_mdec.y, gui_mdec.btn);
 		}
 		return 1;

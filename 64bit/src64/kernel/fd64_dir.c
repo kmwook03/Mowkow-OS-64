@@ -195,6 +195,10 @@ static int name_forbidden_byte(unsigned char c)
 static int name_bytes_valid(const char *name)
 {
 	size_t length;
+	size_t offset;
+	size_t consumed;
+	uint32_t unicode;
+	uint32_t units = 0;
 	unsigned char c;
 
 	if (name == NULL) {
@@ -216,6 +220,18 @@ static int name_bytes_valid(const char *name)
 	if (name[0] == '.' &&
 			(name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) {
 		return 0;
+	}
+	/* A non-BMP scalar uses two of the 52 on-disk UTF-16 units. Validate
+	 * before lookup too: create may truncate an existing matching alias.
+	 */
+	for (offset = 0; offset < length; offset += consumed) {
+		if (utf8_decode64(name + offset, length - offset, &unicode, &consumed) != 0) {
+			return 0;
+		}
+		units += unicode > 0xffff ? 2U : 1U;
+		if (units > FD64_LFN_MAX_UNITS) {
+			return 0;
+		}
 	}
 	return 1;
 }

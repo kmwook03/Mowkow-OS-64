@@ -343,34 +343,30 @@ static void put(const char *s)
 	write(1, s, strlen(s));
 }
 
-static int append_str(char *buf, int at, const char *s)
-{
-	int i;
-
-	for (i = 0; s[i] != '\0'; i++) {
-		buf[at + i] = s[i];
-	}
-	return at + i;
-}
-
-static int append_dec(char *buf, int at, int v)
+static int append_dec(char *buf, size_t capacity, size_t *used, int v)
 {
 	char tmp[12];
+	char text[12];
+	unsigned int value;
+	size_t length = 0;
 	int i;
 
-	if (v == 0) {
-		buf[at] = '0';
-		return at + 1;
+	if (v < 0) {
+		text[length++] = '-';
+		value = (unsigned int) (-(v + 1)) + 1U;
+	} else {
+		value = (unsigned int) v;
 	}
 	i = 0;
-	while (v != 0 && i < 12) {
-		tmp[i++] = (char) ('0' + v % 10);
-		v /= 10;
-	}
+	do {
+		tmp[i++] = (char) ('0' + value % 10U);
+		value /= 10U;
+	} while (value != 0);
 	while (i > 0) {
-		buf[at++] = tmp[--i];
+		text[length++] = tmp[--i];
 	}
-	return at;
+	text[length] = '\0';
+	return str_append64(buf, capacity, used, text);
 }
 
 /* 화면 칸 수. 가운데 맞추기에 필요하다. */
@@ -502,7 +498,7 @@ static void draw_status(void)
 {
 	char buf[STATUS_MAX];
 	const char *msg;
-	int at;
+	size_t used = 0;
 	int start;
 
 	tty_attr(7, 0);
@@ -510,15 +506,18 @@ static void draw_status(void)
 	if (status[0] != '\0') {
 		msg = status;
 	} else {
-		at = append_str(buf, 0, "줄 ");
-		at = append_dec(buf, at, cur_line + 1);
-		at = append_str(buf, at, "/");
-		at = append_dec(buf, at, nlines);
-		at = append_str(buf, at, ", 칸 ");
-		at = append_dec(buf, at,
-			col_of_byte(&lines[cur_line], cur_byte) + 1);
-		buf[at] = '\0';
-		msg = buf;
+		buf[0] = '\0';
+		if (str_append64(buf, sizeof(buf), &used, "줄 ") != 0 ||
+			append_dec(buf, sizeof(buf), &used, cur_line + 1) != 0 ||
+			str_append64(buf, sizeof(buf), &used, "/") != 0 ||
+			append_dec(buf, sizeof(buf), &used, nlines) != 0 ||
+			str_append64(buf, sizeof(buf), &used, ", 칸 ") != 0 ||
+			append_dec(buf, sizeof(buf), &used,
+				col_of_byte(&lines[cur_line], cur_byte) + 1) != 0) {
+			msg = "상태를 표시할 수 없습니다";
+		} else {
+			msg = buf;
+		}
 	}
 
 	start = (cols - (str_cols(msg) + 4)) / 2;
@@ -627,12 +626,10 @@ static void draw_all(void)
 
 static void set_status(const char *s)
 {
-	int i;
-
-	for (i = 0; i < STATUS_MAX - 1 && s[i] != '\0'; i++) {
-		status[i] = s[i];
+	if (str_copy64(status, sizeof(status), s) != 0) {
+		/* Never pass a truncated UTF-8 suffix to this app's display decoder. */
+		(void) str_copy64(status, sizeof(status), "상태 메시지가 너무 깁니다");
 	}
-	status[i] = '\0';
 }
 
 static void insert_cp(unsigned int cp)
@@ -891,11 +888,15 @@ int main(int argc, char **argv)
 	}
 	if (has_name != 0) {                /* nano의 "Read N lines" */
 		char buf[STATUS_MAX];
-		int at = append_dec(buf, 0, nlines);
+		size_t used = 0;
 
-		at = append_str(buf, at, "줄을 읽었습니다");
-		buf[at] = '\0';
-		set_status(buf);
+		buf[0] = '\0';
+		if (append_dec(buf, sizeof(buf), &used, nlines) != 0 ||
+			str_append64(buf, sizeof(buf), &used, "줄을 읽었습니다") != 0) {
+			set_status("상태를 표시할 수 없습니다");
+		} else {
+			set_status(buf);
+		}
 	}
 
 	tty_raw(1);

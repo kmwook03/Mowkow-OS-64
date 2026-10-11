@@ -65,23 +65,61 @@ int init_mouse64(struct FIFO64 *fifo, struct MOUSE_DEC64 *mdec)
 	mdec->x = 0;
 	mdec->y = 0;
 	mdec->btn = 0;
+	mdec->discard = 0;
 	return 0;
 }
 
 void inthandler2c_64(void)
 {
 	struct EVENT64 event;
+	uint8_t status;
+	uint8_t byte;
 
 	/* 슬레이브 먼저, 그다음 마스터 (캐스케이드 IRQ2). */
 	io_out8(PIC1_OCW2, 0x64);
 	io_out8(PIC0_OCW2, 0x62);
 	event.type = EVENT64_MOUSE;
-	event.data = io_in8(PORT_KEYDAT);
+	status = io_in8(PORT_KEYSTA);
+	byte = io_in8(PORT_KEYDAT);
+	event.data = status & (KEYSTA_TIMEOUT_ERROR | KEYSTA_PARITY_ERROR) ?
+		MOUSE64_DATA_ERROR : byte;
 	fifo64_put(mousefifo64, event);
+}
+
+void mouse64_decode_reset(struct MOUSE_DEC64 *mdec)
+{
+	if (mdec != NULL) {
+		mdec->phase = 1;
+		mdec->discard = 0;
+	}
+}
+
+void mouse64_decode_error(struct MOUSE_DEC64 *mdec)
+{
+	if (mdec == NULL) {
+		return;
+	}
+	if (mdec->discard != 0 && mdec->discard <= 2) {
+		mdec->discard--;
+		return;
+	}
+	mdec->discard = mdec->phase >= 1 && mdec->phase <= 3 ?
+		(uint8_t) (3 - mdec->phase) : 0;
+	mdec->phase = 1;
 }
 
 int mouse64_decode(struct MOUSE_DEC64 *mdec, uint8_t dat)
 {
+	if (mdec == NULL) {
+		return 0;
+	}
+	if (mdec->phase < 0 || mdec->phase > 3 || mdec->discard > 2) {
+		mouse64_decode_reset(mdec);
+	}
+	if (mdec->discard != 0) {
+		mdec->discard--;
+		return 0;
+	}
 	if (mdec->phase == 0) {
 		if (dat == 0xfa) {
 			mdec->phase = 1;
@@ -89,7 +127,7 @@ int mouse64_decode(struct MOUSE_DEC64 *mdec, uint8_t dat)
 		return 0;
 	}
 	if (mdec->phase == 1) {
-		if ((dat & 0xc8) == 0x08) {
+		if ((dat & 0x08) != 0) {
 			mdec->buf[0] = dat;
 			mdec->phase = 2;
 		}
@@ -103,6 +141,10 @@ int mouse64_decode(struct MOUSE_DEC64 *mdec, uint8_t dat)
 	if (mdec->phase == 3) {
 		mdec->buf[2] = dat;
 		mdec->phase = 1;
+		/* Consume all three bytes of an overflow packet before resyncing. */
+		if ((mdec->buf[0] & 0xc8) != 0x08) {
+			return 0;
+		}
 		mdec->btn = mdec->buf[0] & 0x07;
 		mdec->x = mdec->buf[1];
 		mdec->y = mdec->buf[2];

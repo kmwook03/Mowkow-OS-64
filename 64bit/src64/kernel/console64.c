@@ -5,7 +5,7 @@
  * 해석하는 일이 여기 모여 있다. 콘솔은 시트 하나 위에 그려지므로 전체 화면
  * 이든 창 안이든 같은 코드로 동작한다.
  *
- * 두벌식 조합기는 커널 쪽인 이 파일이 갖고 있다.
+ * 두벌식 상태 전이는 hangul64_feed()가 맡고, 콘솔은 출력과 편집을 맡는다.
  * 앱은 완성된 글자와 조합 중인 글자를 SYS_TTY로 받을 뿐, 자모 상태는 보지
  * 않는다.
  */
@@ -25,6 +25,7 @@
 #include <mpport64.h>
 #include <mtask64.h>
 #include <gui64.h>
+#include <kstring64.h>
 #include <process64.h>
 #include <sheet64.h>
 #include <syscall64.h>
@@ -72,6 +73,7 @@ struct CONSOLE64 {
 	/* 시트에 붙어 있으면 vram은 시트 버퍼의 내용 영역을 가리킨다. 붙어
 	   있지 않으면(초기 부팅, 컴포지터 할당 실패) 예전처럼 LFB에 직접 쓴다. */
 	uint8_t *vram;
+	size_t vram_size;
 	uint32_t stride;
 	uint16_t width;
 	uint16_t height;
@@ -301,7 +303,8 @@ static unsigned int composing_unicode(struct CONSOLE64 *con)
 {
 	char utf8[4];
 	int len;
-	int decode_len;
+	size_t consumed;
+	uint32_t unicode;
 
 	if (con->composing.state == 0) {
 		return 0;
@@ -310,7 +313,8 @@ static unsigned int composing_unicode(struct CONSOLE64 *con)
 	if (len <= 0) {
 		return 0;
 	}
-	return utf8_to_unicode64(utf8, &decode_len);
+	utf8_decode64(utf8, (size_t) len, &unicode, &consumed);
+	return unicode;
 }
 
 static void raw_emit_preedit(struct CONSOLE64 *con)
@@ -352,24 +356,23 @@ static void fill_rect(struct CONSOLE64 *con, uint16_t x, uint16_t y,
 	console_flush(con, x, y, w, h);
 }
 
+static struct SURFACE64 console_surface64(const struct CONSOLE64 *con)
+{
+	struct SURFACE64 surface = {
+		con->vram, con->vram_size, con->stride, con->width, con->height,
+		0, 0, con->width, con->height
+	};
+
+	return surface;
+}
+
 static void draw_ascii(struct CONSOLE64 *con, uint16_t x, uint16_t y, char c)
 {
 	const uint8_t *font;
-	uint8_t d;
-	uint16_t row;
-	uint16_t bit;
-	uint8_t *p;
+	struct SURFACE64 surface = console_surface64(con);
 
 	font = hankaku64 + (uint8_t) c * 16;
-	for (row = 0; row < FONT_H; row++) {
-		d = font[row];
-		p = con->vram + (uint32_t) (y + row) * con->stride + x;
-		for (bit = 0; bit < FONT_W; bit++) {
-			if ((d & (0x80 >> bit)) != 0) {
-				p[bit] = color_fg;
-			}
-		}
-	}
+	draw_glyph64(&surface, x, y, color_fg, font, FONT_H, FONT_W);
 	console_flush(con, x, y, FONT_W, FONT_H);
 }
 
@@ -408,11 +411,16 @@ static void erase_prev_visual(struct CONSOLE64 *con, uint16_t width);
 
 static void put_utf8_char(struct CONSOLE64 *con, const char *s, int len)
 {
-	unsigned int unicode;
+	uint32_t unicode;
 	uint16_t width;
-	int decode_len;
+	size_t consumed;
+	int error;
 	int i;
 
+	if (len <= 0) {
+		return;
+	}
+	error = utf8_decode64(s, (size_t) len, &unicode, &consumed);
 	if (len == 1 && s[0] == '\n') {
 		newline(con);
 		return;
@@ -425,26 +433,33 @@ static void put_utf8_char(struct CONSOLE64 *con, const char *s, int len)
 		return;
 	}
 	width = FONT_W;
-	if (len == 3) {
-		unicode = utf8_to_unicode64(s, &decode_len);
-		if ((unicode >= 0xac00 && unicode <= 0xd7a3) ||
-				(unicode >= 0x3131 && unicode <= 0x3163)) {
-			width = HANGUL_W;
-		}
+	if ((unicode >= 0xac00 && unicode <= 0xd7a3) ||
+		(unicode >= 0x3131 && unicode <= 0x3163)) {
+		width = HANGUL_W;
 	}
 	if (con->cursor_x + width > con->width) {
 		newline(con);
 	}
 	fill_rect(con, con->cursor_x, con->cursor_y, width, FONT_H, color_bg);
 	if (width == HANGUL_W && hangul_font != NULL) {
-		unicode = utf8_to_unicode64(s, &decode_len);
-		hangul64_draw_unicode(con->vram, con->stride, con->cursor_x, con->cursor_y,
-			color_fg, hangul_font, unicode);
+		struct SURFACE64 surface = console_surface64(con);
+
+		hangul64_draw_unicode(&surface, con->cursor_x, con->cursor_y,
+			color_fg, hangul_font, HANGUL64_FONT_SIZE, unicode);
 		console_flush(con, con->cursor_x, con->cursor_y, HANGUL_W, FONT_H);
+	} else if (unicode == UTF64_REPLACEMENT) {
+		/* The bitmap font has no U+FFFD glyph; use its visible fallback. */
+		draw_ascii(con, con->cursor_x, con->cursor_y, '?');
 	} else if (len == 1) {
 		draw_ascii(con, con->cursor_x, con->cursor_y, s[0]);
 	}
 	con->cursor_x += width;
+	if (error != 0) {
+		serial_putc((char) 0xef);
+		serial_putc((char) 0xbf);
+		serial_putc((char) 0xbd);
+		return;
+	}
 	for (i = 0; i < len; i++) {
 		serial_putc(s[i]);
 	}
@@ -455,10 +470,7 @@ static void puts_con(struct CONSOLE64 *con, const char *s)
 	while (*s != '\0') {
 		int len;
 
-		len = utf8_byte_len64((unsigned char) *s);
-		if (len <= 0) {
-			len = 1;
-		}
+		utf8_to_unicode64(s, &len);
 		put_utf8_char(con, s, len);
 		s += len;
 	}
@@ -467,16 +479,14 @@ static void puts_con(struct CONSOLE64 *con, const char *s)
 static void put_bytes(struct CONSOLE64 *con, const char *s, size_t n)
 {
 	size_t i;
-	int len;
+	size_t consumed;
+	uint32_t unicode;
 
 	i = 0;
 	while (i < n) {
-		len = utf8_byte_len64((unsigned char) s[i]);
-		if (len <= 0 || i + (size_t) len > n) {
-			len = 1;
-		}
-		put_utf8_char(con, s + i, len);
-		i += (size_t) len;
+		utf8_decode64(s + i, n - i, &unicode, &consumed);
+		put_utf8_char(con, s + i, (int) consumed);
+		i += consumed;
 	}
 }
 
@@ -499,9 +509,14 @@ static int append_input(struct CONSOLE64 *con, const char *s, int len)
 	if (con->raw_mode != 0) {
 		/* raw 모드에서는 줄 버퍼 대신 앱의 큐로 간다. 에코도 하지 않으므로
 		   0을 돌려 호출자가 화면에 그리지 않게 한다. */
-		int decode_len;
+		size_t consumed;
+		uint32_t unicode;
 
-		raw_queue_push(con, TTY_KIND_CHAR, utf8_to_unicode64(s, &decode_len));
+		if (len <= 0) {
+			return 0;
+		}
+		utf8_decode64(s, (size_t) len, &unicode, &consumed);
+		raw_queue_push(con, TTY_KIND_CHAR, unicode);
 		return 0;
 	}
 	if (con->input_len + len >= CONSOLE_INPUT_MAX) {
@@ -521,6 +536,8 @@ static int append_input(struct CONSOLE64 *con, const char *s, int len)
 
 static void draw_composing(struct CONSOLE64 *con)
 {
+	struct SURFACE64 surface = console_surface64(con);
+
 	if (con->raw_mode != 0) {
 		raw_emit_preedit(con);
 		return;
@@ -529,228 +546,99 @@ static void draw_composing(struct CONSOLE64 *con)
 		return;
 	}
 	fill_rect(con, con->cursor_x - HANGUL_W, con->cursor_y, HANGUL_W, FONT_H, color_bg);
-	hangul64_draw_johab(con->vram, con->stride, con->cursor_x - HANGUL_W, con->cursor_y,
-		color_fg, hangul_font, hangul64_to_johab(&con->composing));
+	hangul64_draw_johab(&surface, con->cursor_x - HANGUL_W, con->cursor_y,
+		color_fg, hangul_font, HANGUL64_FONT_SIZE, hangul64_to_johab(&con->composing));
 	console_flush(con, con->cursor_x - HANGUL_W, con->cursor_y, HANGUL_W, FONT_H);
+}
+
+/* The automaton owns every composition transition. The console consumes its
+ * committed text and reserves one visual slot for the updated preedit.
+ */
+static void apply_hangul_key64(struct CONSOLE64 *con, char key, int emit_preedit)
+{
+	struct HANGUL64_FEED_RESULT feed;
+	size_t offset = 0;
+	size_t length;
+	uint32_t unicode;
+	int had_preedit = con->composing.state != 0;
+	int error;
+
+	error = hangul64_feed(&con->composing, key, &feed);
+	if (con->raw_mode != 0) {
+		if (error == 0) {
+			while (offset < feed.committed_length) {
+				utf8_decode64(feed.committed + offset,
+					feed.committed_length - offset, &unicode, &length);
+				raw_queue_push(con, TTY_KIND_CHAR, unicode);
+				offset += length;
+			}
+			if (feed.passthrough != '\0') {
+				raw_queue_push(con, TTY_KIND_CHAR,
+					(unsigned char) feed.passthrough);
+			}
+		}
+		if (emit_preedit != 0 || error != 0) {
+			raw_emit_preedit(con);
+		}
+		return;
+	}
+	/* Preedit was never sent to COM1. Erase its screen slot without serial
+	 * backspaces, then echo only committed text that fits in the line buffer.
+	 */
+	if (had_preedit != 0 && con->cursor_x >= HANGUL_W) {
+		con->cursor_x -= HANGUL_W;
+		fill_rect(con, con->cursor_x, con->cursor_y, HANGUL_W, FONT_H, color_bg);
+	}
+	if (error != 0) {
+		return;
+	}
+	while (offset < feed.committed_length) {
+		utf8_decode64(feed.committed + offset,
+			feed.committed_length - offset, &unicode, &length);
+		if (append_input(con, feed.committed + offset, (int) length) != 0) {
+			put_utf8_char(con, feed.committed + offset, (int) length);
+		}
+		offset += length;
+	}
+	if (feed.passthrough != '\0' && append_input(con, &feed.passthrough, 1) != 0) {
+		put_utf8_char(con, &feed.passthrough, 1);
+	}
+	if (con->composing.state != 0) {
+		if (con->cursor_x + HANGUL_W > con->width) {
+			newline(con);
+		}
+		con->cursor_x += HANGUL_W;
+		draw_composing(con);
+	}
 }
 
 static void flush_composing(struct CONSOLE64 *con)
 {
-	char utf8[4];
-	int len;
-
-	if (con->composing.state == 0) {
-		return;
+	if (con->composing.state != 0) {
+		/* Preserve raw's commit-only protocol for Enter/mode/control flush. */
+		apply_hangul_key64(con, '\0', 0);
 	}
-	len = hangul64_compose_utf8(utf8, &con->composing);
-	if (len > 0) {
-		append_input(con, utf8, len);
-	}
-	hangul64_init(&con->composing);
-}
-
-static void start_new_hangul(struct CONSOLE64 *con, int state, int cho, int jung, int jong)
-{
-	flush_composing(con);
-	if (con->raw_mode == 0 && con->cursor_x + HANGUL_W > con->width) {
-		newline(con);
-	}
-	con->composing.state = state;
-	con->composing.cho = cho;
-	con->composing.jung = jung;
-	con->composing.jong = jong;
-	if (con->raw_mode != 0) {
-		raw_emit_preedit(con);
-		return;
-	}
-	fill_rect(con, con->cursor_x, con->cursor_y, HANGUL_W, FONT_H, color_bg);
-	hangul64_draw_johab(con->vram, con->stride, con->cursor_x, con->cursor_y,
-		color_fg, hangul_font, hangul64_to_johab(&con->composing));
-	console_flush(con, con->cursor_x, con->cursor_y, HANGUL_W, FONT_H);
-	con->cursor_x += HANGUL_W;
-}
-
-static void update_composing(struct CONSOLE64 *con, int state, int cho, int jung, int jong)
-{
-	con->composing.state = state;
-	con->composing.cho = cho;
-	con->composing.jung = jung;
-	con->composing.jong = jong;
-	draw_composing(con);
 }
 
 static void not_korean(struct CONSOLE64 *con, char key)
 {
-	char s[1];
-
 	flush_composing(con);
-	s[0] = key;
-	if (append_input(con, s, 1) != 0) {
-		put_utf8_char(con, s, 1);
+	if (append_input(con, &key, 1) != 0) {
+		put_utf8_char(con, &key, 1);
 	}
-}
-
-/*
- * 받침이 될 수 없는 쌍자음: ㄸ(4), ㅃ(8), ㅉ(13). 이 셋은 앞 글자에 붙이지
- * 못하므로 새 글자를 열어야 한다.
- *
- * ㄲ(1)과 ㅆ(10)은 여기 들어가면 안 된다. 둘 다 멀쩡한 받침이라(종성 2번과
- * 20번), 쌍자음이라는 이유로 함께 막으면 있, 닦, 밖, 겪 같은 글자를 아예 칠
- * 수 없게 된다.
- */
-static int cho_cannot_be_jong(int cho)
-{
-	return cho == 4 || cho == 8 || cho == 13;
 }
 
 static void process_hangul_key(struct CONSOLE64 *con, char key)
 {
-	struct HANGUL64_FEED_RESULT feed;
-	unsigned int offset;
-	unsigned int unicode;
-	int length;
-	int cho;
-	int jung;
-	int jong;
-	int complex;
-	int next_cho;
-	int first_jong;
-	int second_jong;
-
-	/*
-	 * Raw TTY is the path used by applications such as nano.  Keep its
-	 * committed/preedit protocol, but drive it with the architecture-neutral
-	 * automaton also used by the AArch64 USB input path.
-	 */
-	if (con->raw_mode != 0) {
-		if (hangul64_feed(&con->composing, key, &feed) != 0) {
-			hangul64_init(&con->composing);
-			raw_emit_preedit(con);
-			return;
-		}
-		offset = 0;
-		while (offset < feed.committed_length) {
-			unicode = utf8_to_unicode64(feed.committed + offset, &length);
-			if (length <= 0 || offset + (unsigned int) length >
-					feed.committed_length) {
-				break;
-			}
-			raw_queue_push(con, TTY_KIND_CHAR, unicode);
-			offset += (unsigned int) length;
-		}
-		if (feed.passthrough != '\0') {
-			raw_queue_push(con, TTY_KIND_CHAR,
-				(unsigned char) feed.passthrough);
-		}
-		raw_emit_preedit(con);
-		return;
-	}
-
-	cho = hangul64_key_to_cho(key);
-	jung = hangul64_key_to_jung(key);
-	jong = hangul64_key_to_jong(key);
-	switch (con->composing.state) {
-	case 0:
-		if (cho != -1) {
-			start_new_hangul(con, 1, cho, -1, -1);
-		} else if (jung != -1) {
-			start_new_hangul(con, 1, -1, jung, -1);
-			flush_composing(con);
-		} else {
-			not_korean(con, key);
-		}
-		break;
-	case 1:
-		if (jung != -1 && con->composing.cho != -1) {
-			update_composing(con, 2, con->composing.cho, jung, -1);
-		} else if (cho != -1) {
-			start_new_hangul(con, 1, cho, -1, -1);
-		} else {
-			not_korean(con, key);
-		}
-		break;
-	case 2:
-		if (cho != -1 && cho_cannot_be_jong(cho) != 0) {
-			start_new_hangul(con, 1, cho, -1, -1);
-		} else if (jong != -1) {
-			update_composing(con, 3, con->composing.cho, con->composing.jung, jong);
-		} else if (jung != -1) {
-			complex = hangul64_composite_jung(con->composing.jung, jung);
-			if (complex != -1) {
-				update_composing(con, 2, con->composing.cho, complex, -1);
-			} else {
-				start_new_hangul(con, 1, -1, jung, -1);
-				flush_composing(con);
-			}
-		} else if (cho != -1) {
-			start_new_hangul(con, 1, cho, -1, -1);
-		} else {
-			not_korean(con, key);
-		}
-		break;
-	case 3:
-		if (jung != -1) {
-			next_cho = hangul64_jong_to_cho(con->composing.jong);
-			update_composing(con, 2, con->composing.cho, con->composing.jung, -1);
-			if (next_cho != -1) {
-				start_new_hangul(con, 2, next_cho, jung, -1);
-			}
-		} else if (cho != -1) {
-			complex = hangul64_composite_jong(con->composing.jong, cho);
-			if (complex != -1) {
-				update_composing(con, 4, con->composing.cho, con->composing.jung, complex);
-			} else {
-				start_new_hangul(con, 1, cho, -1, -1);
-			}
-		} else {
-			not_korean(con, key);
-		}
-		break;
-	case 4:
-		if (jung != -1) {
-			first_jong = hangul64_first_jong(con->composing.jong);
-			second_jong = hangul64_second_jong(con->composing.jong);
-			update_composing(con, 3, con->composing.cho, con->composing.jung, first_jong);
-			start_new_hangul(con, 2, second_jong, jung, -1);
-		} else if (cho != -1) {
-			start_new_hangul(con, 1, cho, -1, -1);
-		} else {
-			not_korean(con, key);
-		}
-		break;
-	default:
-		hangul64_init(&con->composing);
-		break;
-	}
+	apply_hangul_key64(con, key, 1);
 }
 
 static int delete_composing(struct CONSOLE64 *con)
 {
-	int prev_jung;
-
 	if (con->composing.state == 0) {
 		return 0;
 	}
-	if (con->composing.state == 1) {
-		hangul64_init(&con->composing);
-		if (con->raw_mode != 0) {
-			raw_emit_preedit(con);      /* payload 0 = 조합 취소 */
-		} else {
-			erase_prev_visual(con, HANGUL_W);
-		}
-	} else if (con->composing.state == 2) {
-		prev_jung = hangul64_split_composite_jung(con->composing.jung);
-		if (prev_jung != -1) {
-			update_composing(con, 2, con->composing.cho, prev_jung, -1);
-		} else {
-			update_composing(con, 1, con->composing.cho, -1, -1);
-		}
-	} else if (con->composing.state == 3) {
-		update_composing(con, 2, con->composing.cho, con->composing.jung, -1);
-	} else if (con->composing.state == 4) {
-		update_composing(con, 3, con->composing.cho, con->composing.jung,
-			hangul64_first_jong(con->composing.jong));
-	}
+	apply_hangul_key64(con, '\b', 1);
 	return 1;
 }
 
@@ -873,9 +761,10 @@ static void clear_screen(struct CONSOLE64 *con)
 static int run_program(struct CONSOLE64 *con, const char *cmdline)
 {
 	char elf_cmdline[CONSOLE_INPUT_MAX + 1];
+	char program[FD64_NAME_MAX];
 	size_t command_len;
 	size_t line_len;
-	size_t i;
+	size_t used;
 	int has_extension;
 	int status;
 
@@ -897,17 +786,18 @@ static int run_program(struct CONSOLE64 *con, const char *cmdline)
 		while (cmdline[line_len] != '\0') {
 			line_len++;
 		}
-		if (has_extension == 0 && command_len != 0 &&
-				line_len + 4 < sizeof(elf_cmdline)) {
-			for (i = 0; i < command_len; i++) {
-				elf_cmdline[i] = cmdline[i];
-			}
-			elf_cmdline[command_len + 0] = '.';
-			elf_cmdline[command_len + 1] = 'e';
-			elf_cmdline[command_len + 2] = 'l';
-			elf_cmdline[command_len + 3] = 'f';
-			for (i = command_len; i <= line_len; i++) {
-				elf_cmdline[i + 4] = cmdline[i];
+		if (has_extension == 0 && command_len != 0 && command_len < sizeof(program) &&
+				line_len < sizeof(elf_cmdline) - 4) {
+			/* A validated first token fits before constructing the fallback name. */
+			memcpy(program, cmdline, command_len);
+			program[command_len] = '\0';
+			used = 0;
+			elf_cmdline[0] = '\0';
+			if (str_append64(elf_cmdline, sizeof(elf_cmdline), &used, program) != 0 ||
+				str_append64(elf_cmdline, sizeof(elf_cmdline), &used, ".elf") != 0 ||
+				str_append64(elf_cmdline, sizeof(elf_cmdline), &used,
+					cmdline + command_len) != 0) {
+				return 0;
 			}
 			status = process64_exec_file(elf_cmdline, elf_cmdline, con);
 		}
@@ -1085,10 +975,18 @@ const uint8_t *console64_hangul_font(void)
 void console64_attach_sheet(struct CONSOLE64 *con, struct SHEET64 *sht,
 	uint16_t ox, uint16_t oy, uint16_t w, uint16_t h)
 {
+	if (con == NULL || sht == NULL || sht->buf == NULL ||
+		sht->bxsize <= 0 || sht->bysize <= 0 || w == 0 || h == 0 ||
+		(uint32_t) ox + w > (uint32_t) sht->bxsize ||
+		(uint32_t) oy + h > (uint32_t) sht->bysize) {
+		return;
+	}
 	con->sheet = sht;
 	con->ox = ox;
 	con->oy = oy;
-	con->vram = sht->buf + (uint32_t) oy * (uint32_t) sht->bxsize + ox;
+	con->vram = sht->buf + (size_t) oy * (size_t) sht->bxsize + ox;
+	con->vram_size = (size_t) (sht->bysize - oy - 1) * (size_t) sht->bxsize +
+		(size_t) sht->bxsize - ox;
 	con->stride = (uint32_t) sht->bxsize;
 	con->width = w;
 	con->height = h;
@@ -1117,6 +1015,7 @@ static void console64_init_with_sheet(const struct BOOTINFO64 *boot_info,
 	con->height = boot_info->scrny != 0 ? boot_info->scrny : 600;
 	con->stride = boot_info->bytes_per_scanline != 0 ?
 		boot_info->bytes_per_scanline : con->width;
+	con->vram_size = (size_t) con->stride * con->height;
 	con->cursor_x = 0;
 	con->cursor_y = 0;
 	con->input_len = 0;
@@ -1493,7 +1392,6 @@ struct CONSOLE64 *console64_create(void)
 	char title[sizeof(base) + 2];
 	struct CONSOLE64 *con;
 	int32_t slot;
-	uint32_t i;
 
 	con = NULL;
 	for (slot = 1; slot < CONSOLE64_MAX; slot++) {
@@ -1516,10 +1414,7 @@ struct CONSOLE64 *console64_create(void)
 	con->repl_queue_tail = 0;
 	hangul64_init(&con->composing);
 
-	for (i = 0; i < sizeof(base) - 1; i++) {
-		title[i] = base[i];
-	}
-	title[i] = '\0';
+	(void) str_copy64(title, sizeof(title), base);
 
 	if (gui64_open_console_window(con, title) != 0) {
 		return NULL;

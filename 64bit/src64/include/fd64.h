@@ -8,6 +8,9 @@
 /* VFAT은 UTF-16 255단위까지 허용하지만, 이 커널은 이름을 실어 나르는
    버퍼를 스택에 두려고 더 짧게 자른다. 이름을 받는 모든 경로가 두 한계를
    함께 지킨다. */
+/* Valid UTF-8 names round-trip as UTF-16; a surrogate pair counts as two units.
+ * Malformed UTF and names exceeding either limit are rejected before lookup.
+ */
 #define FD64_LFN_MAX_UNITS 52
 #define FD64_NAME_MAX 160
 

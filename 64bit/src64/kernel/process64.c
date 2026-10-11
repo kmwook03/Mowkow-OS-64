@@ -14,6 +14,7 @@
 #include <console64.h>
 #include <dsctbl64.h>
 #include <elf64_loader.h>
+#include <kstring64.h>
 #include <memory64.h>
 #include <mtask64.h>
 #include <process64.h>
@@ -174,15 +175,10 @@ static int parse_args64(const char *cmdline, struct PROCESS64_ARGS *args)
 		return PROCESS64_ERR_INVALID;
 	}
 	/* Snapshot once so validation and stack construction use identical input. */
-	for (len = 0; len < sizeof(args->line); len++) {
-		args->line[len] = cmdline[len];
-		if (args->line[len] == '\0') {
-			break;
-		}
-	}
-	if (len == sizeof(args->line)) {
+	if (str_copy64(args->line, sizeof(args->line), cmdline) != 0) {
 		return PROCESS64_ERR_ARGS;
 	}
+	len = strlen(args->line);
 	args->argc = 0;
 	pos = 0;
 	while (pos < len) {

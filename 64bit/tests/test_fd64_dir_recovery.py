@@ -31,6 +31,7 @@ class Fd64DirectoryRecoveryTest(unittest.TestCase):
                         / "tests"
                         / "fd64_dir_recovery_host.c"
                     ),
+                    str(ROOT / "64bit" / "src64" / "lib" / "utf864.c"),
                     "-Wl,--gc-sections",
                     "-o",
                     str(executable),

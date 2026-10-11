@@ -1,7 +1,8 @@
 #ifndef MOWKOW_APP64_MOWOS_H
 #define MOWKOW_APP64_MOWOS_H
 
-typedef unsigned long size_t;
+/* Share bounded string builders with the kernel; no syscall/app ABI change. */
+#include "../../../src64/include/string_copy64.h"
 
 #define O_CREAT 1
 #define O_TRUNC 2

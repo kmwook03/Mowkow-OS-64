@@ -21,11 +21,45 @@ C_LIKE_SUFFIXES = {".c", ".h"}
 BANNED_STRING_APIS = re.compile(
     r"\b(?:gets|sprintf|strcat|strcpy|vsprintf)\s*\("
 )
-BANNED_API_ALLOWLIST = {
-    Path("64bit/src64/include/kstring64.h"),
-    Path("64bit/src64/lib/kstring64.c"),
-    Path("64bit/src64/mpport/libc/stdio.h"),
+BANNED_STRING_IDENTIFIERS = re.compile(r"\b(?:gets|sprintf|strcat|strcpy|vsprintf)\b")
+# Retain libc ABI declarations/definitions, never a whole-file call exemption.
+BANNED_API_DECLARATIONS = {
+    Path("64bit/src64/include/kstring64.h"): re.compile(
+        r"char \*strcpy\(char \*dst, const char \*src\);"
+    ),
+    Path("64bit/src64/lib/kstring64.c"): re.compile(
+        r"char \*strcpy\(char \*dst, const char \*src\)"
+    ),
+    Path("64bit/src64/mpport/libc/stdio.h"): re.compile(
+        r"int sprintf\(char \*str, const char \*fmt, \.\.\.\);"
+    ),
 }
+C_NON_CODE = re.compile(
+    r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|/\*[\s\S]*?\*/|//[^\n]*'
+)
+
+
+def check_string_apis(relative: Path, source: str) -> list[tuple[int, str]]:
+    """Reject C calls, aliases and declarations except exact libc ABI stubs."""
+    if relative.suffix not in C_LIKE_SUFFIXES:
+        return [
+            (number, "unbounded string API is forbidden")
+            for number, line in enumerate(source.splitlines(), 1)
+            if BANNED_STRING_APIS.search(line)
+        ]
+    # Preserve positions so multiline calls and comments retain line numbers.
+    code = C_NON_CODE.sub(
+        lambda match: re.sub(r"[^\n]", " ", match.group()), source
+    )
+    lines = code.splitlines()
+    allowed = BANNED_API_DECLARATIONS.get(relative)
+    violations: list[tuple[int, str]] = []
+    for match in BANNED_STRING_IDENTIFIERS.finditer(code):
+        number = code.count("\n", 0, match.start()) + 1
+        if allowed is not None and allowed.fullmatch(lines[number - 1].strip()):
+            continue
+        violations.append((number, "unbounded string API is forbidden"))
+    return violations
 
 
 def source_files() -> list[Path]:
@@ -71,7 +105,8 @@ def check_header_guard(path: Path, lines: list[str]) -> list[str]:
 def check_path(path: Path) -> list[tuple[int, str]]:
     """Return line-oriented violations for one source file."""
     relative = path.resolve().relative_to(ROOT)
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    source = path.read_text(encoding="utf-8")
+    lines = source.splitlines(keepends=True)
     violations: list[tuple[int, str]] = []
 
     for number, raw_line in enumerate(lines, 1):
@@ -84,9 +119,7 @@ def check_path(path: Path) -> list[tuple[int, str]]:
             violations.append((number, "C indentation uses spaces instead of a tab"))
         if path.suffix == ".py" and line.startswith("\t"):
             violations.append((number, "Python indentation uses a tab"))
-        if (relative not in BANNED_API_ALLOWLIST and
-                BANNED_STRING_APIS.search(line)):
-            violations.append((number, "unbounded string API is forbidden"))
+    violations.extend(check_string_apis(relative, source))
 
     for message in check_header_guard(path, [line.rstrip("\r\n") for line in lines]):
         violations.append((1, message))

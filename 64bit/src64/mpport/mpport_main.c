@@ -24,6 +24,7 @@
 #include <console64.h>
 #include <fd64.h>
 #include <memory64.h>
+#include <string_copy64.h>
 #include <stdint.h>
 
 /*
@@ -81,16 +82,12 @@ static int mp_argv_set;
 
 void mpport_set_argv(const char *arg)
 {
-	size_t i;
-
 	if (arg == NULL) {
 		mp_argv_set = 0;
 		return;
 	}
-	for (i = 0; i + 1 < sizeof(mp_argv) && arg[i] != '\0'; i++) {
-		mp_argv[i] = arg[i];
-	}
-	mp_argv[i] = '\0';
+	/* Preserve the port's bounded-prefix argument convention. */
+	(void) str_copy64(mp_argv, sizeof(mp_argv), arg);
 	mp_argv_set = 1;
 }
 

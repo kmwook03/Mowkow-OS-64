@@ -35,50 +35,47 @@ void boxfill64(uint8_t *buf, int32_t xsize, uint8_t color,
 	}
 }
 
-static void draw_ascii64(uint8_t *buf, uint32_t stride, int32_t x, int32_t y,
+static void draw_ascii64(const struct SURFACE64 *surface, int32_t x, int32_t y,
 	uint8_t color, char c)
 {
 	const uint8_t *font;
-	uint8_t d;
-	int32_t row;
-	int32_t bit;
-	uint8_t *p;
 
 	font = hankaku64 + (uint8_t) c * 16;
-	for (row = 0; row < FONT64_H; row++) {
-		d = font[row];
-		p = buf + (uint32_t) (y + row) * stride + x;
-		for (bit = 0; bit < FONT64_W; bit++) {
-			if ((d & (0x80 >> bit)) != 0) {
-				p[bit] = color;
-			}
-		}
-	}
+	draw_glyph64(surface, x, y, color, font, FONT64_H, FONT64_W);
 }
 
-void putstr64(uint8_t *buf, uint32_t stride, int32_t x, int32_t y, uint8_t color,
+void putstr64(const struct SURFACE64 *surface, int32_t x, int32_t y, uint8_t color,
 	const char *s)
 {
 	const uint8_t *hangul_font = window_hangul_font;
 	unsigned int unicode;
 	int len;
+	int width;
 
+	if (!surface64_valid(surface) || s == NULL) {
+		return;
+	}
 	while (*s != '\0') {
-		len = utf8_byte_len64((unsigned char) *s);
-		if (len <= 1) {
-			draw_ascii64(buf, stride, x, y, color, *s);
-			x += FONT64_W;
-			s++;
-			continue;
-		}
+		width = 0;
 		unicode = utf8_to_unicode64(s, &len);
-		if (hangul_font != NULL &&
+		if (unicode == UTF64_REPLACEMENT) {
+			/* U+FFFD is unavailable in the bitmap font. */
+			draw_ascii64(surface, x, y, color, '?');
+			width = FONT64_W;
+		} else if (len == 1) {
+			draw_ascii64(surface, x, y, color, *s);
+			width = FONT64_W;
+		} else if (hangul_font != NULL &&
 				((unicode >= 0xac00 && unicode <= 0xd7a3) ||
 				 (unicode >= 0x3131 && unicode <= 0x3163))) {
-			hangul64_draw_unicode(buf, stride, (uint16_t) x, (uint16_t) y,
-				color, hangul_font, unicode);
-			x += HANGUL64_W;
+			hangul64_draw_unicode(surface, x, y, color, hangul_font,
+				HANGUL64_FONT_SIZE, unicode);
+			width = HANGUL64_W;
 		}
+		if (x > INT32_MAX - width) {
+			return;
+		}
+		x += width;
 		s += len;
 	}
 }
@@ -118,6 +115,11 @@ void make_wtitle64(uint8_t *buf, int32_t xsize, const char *title, int act)
 	int32_t x, y;
 	char c;
 	uint8_t tc, tbc;
+	struct SURFACE64 surface = {
+		buf, xsize > 0 ? (size_t) xsize * WINDOW64_TITLE_H : 0,
+		(uint32_t) xsize, xsize, WINDOW64_TITLE_H,
+		3, 3, xsize > 22 ? xsize - 22 : 3, WINDOW64_TITLE_H
+	};
 
 	if (act != 0) {
 		tc = COL64_FFFFFF;
@@ -128,7 +130,7 @@ void make_wtitle64(uint8_t *buf, int32_t xsize, const char *title, int act)
 	}
 
 	boxfill64(buf, xsize, tbc, 3, 3, xsize - 4, WINDOW64_TITLE_H - 1);
-	putstr64(buf, (uint32_t) xsize, 24, 4, tc, title);
+	putstr64(&surface, 24, 4, tc, title);
 
 	for (y = 0; y < 14; y++) {
 		for (x = 0; x < 16; x++) {

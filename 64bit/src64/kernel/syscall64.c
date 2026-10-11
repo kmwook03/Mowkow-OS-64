@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <syscall64.h>
 #include <timer64.h>
+#include <utf864.h>
 
 /* Return the copied length excluding NUL, or a negative errno. Never reread a
    user byte after copying it; parsing must use only the kernel snapshot. */
@@ -52,47 +53,18 @@ static int64_t copy_string_from_user64(char *dst, size_t capacity, const char *s
 	return error;
 }
 
-/* Validate the bounded snapshot before passing it to the legacy UTF-16
-   converter, which assumes every multibyte sequence is complete. */
+/* Filenames reject malformed UTF; display callers may use the replacement. */
 static int validate_filename_utf864(const char *name, size_t length)
 {
-	const uint8_t *bytes = (const uint8_t *) name;
 	size_t pos = 0;
-	size_t width;
-	size_t i;
-	uint8_t lead;
+	size_t consumed;
+	uint32_t unicode;
 
 	while (pos < length) {
-		lead = bytes[pos];
-		if (lead < 0x80) {
-			pos++;
-			continue;
-		}
-		if (lead >= 0xc2 && lead <= 0xdf) {
-			width = 2;
-		} else if (lead >= 0xe0 && lead <= 0xef) {
-			width = 3;
-		} else if (lead >= 0xf0 && lead <= 0xf4) {
-			width = 4;
-		} else {
+		if (utf8_decode64(name + pos, length - pos, &unicode, &consumed) != 0) {
 			return -22;
 		}
-		if (width > length - pos) {
-			return -22;
-		}
-		for (i = 1; i < width; i++) {
-			if ((bytes[pos + i] & 0xc0) != 0x80) {
-				return -22;
-			}
-		}
-		/* Reject overlong forms, surrogates, and values above U+10FFFF. */
-		if ((lead == 0xe0 && bytes[pos + 1] < 0xa0) ||
-			(lead == 0xed && bytes[pos + 1] >= 0xa0) ||
-			(lead == 0xf0 && bytes[pos + 1] < 0x90) ||
-			(lead == 0xf4 && bytes[pos + 1] >= 0x90)) {
-			return -22;
-		}
-		pos += width;
+		pos += consumed;
 	}
 	return 0;
 }
