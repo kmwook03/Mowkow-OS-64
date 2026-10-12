@@ -7,7 +7,7 @@ struct BOOTINFO64;
 struct FIFO64;
 struct SHEET64;
 
-/* 콘솔 인스턴스. 내부 구조는 console64.c만 안다. */
+/* 콘솔 인스턴스. 내부 구조는 kernel/console_internal64.h에만 둔다. */
 struct CONSOLE64;
 
 /* 부팅 콘솔. 컴포지터가 없을 때(LFB 직접 그리기)와 MicroPython처럼

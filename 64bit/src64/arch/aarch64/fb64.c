@@ -1,6 +1,7 @@
 /* Pi 5 mailbox framebuffer and the early M2 text console. */
 #include <arch/arch64.h>
 #include <bootinfo64.h>
+#include <framebuffer64.h>
 #include <hangul64.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -12,7 +13,6 @@
 #define FB_SCALE 2U
 #define FB_MARGIN_X 64U
 #define FB_MARGIN_Y 64U
-#define CACHE_LINE_SIZE 64U
 #define PROPERTY_CHANNEL 8U
 
 #define TAG_SET_PHYSICAL_SIZE 0x00048003U
@@ -28,6 +28,7 @@ extern const uint8_t hangul_font64[11520];
 
 static volatile uint32_t framebuffer_request[36] __attribute__((aligned(64)));
 static struct BOOTINFO64 framebuffer_info;
+static struct FRAMEBUFFER64 framebuffer64;
 static uint32_t framebuffer_pixel_order;
 static uint32_t cursor_x;
 static uint32_t cursor_y;
@@ -40,28 +41,6 @@ static uint32_t fb_color64(uint8_t red, uint8_t green, uint8_t blue)
 		return ((uint32_t) blue << 16) | ((uint32_t) green << 8) | red;
 	}
 	return ((uint32_t) red << 16) | ((uint32_t) green << 8) | blue;
-}
-
-static void framebuffer_flush64(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
-{
-	uintptr_t first;
-	uintptr_t last;
-	uintptr_t address;
-	uint32_t pitch;
-
-	if (width == 0 || height == 0) {
-		return;
-	}
-	pitch = framebuffer_info.bytes_per_scanline;
-	first = framebuffer_info.vram + (uintptr_t) y * pitch + (uintptr_t) x * 4;
-	last = framebuffer_info.vram + (uintptr_t) (y + height - 1) * pitch +
-		(uintptr_t) (x + width) * 4;
-	address = first & ~(uintptr_t) (CACHE_LINE_SIZE - 1);
-	while (address < last) {
-		__asm__ volatile ("dc cvac, %0" :: "r" (address) : "memory");
-		address += CACHE_LINE_SIZE;
-	}
-	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
 static void put_pixel64(uint32_t x, uint32_t y, uint32_t color)
@@ -88,7 +67,8 @@ static void fill64(uint32_t color)
 			row[x] = color;
 		}
 	}
-	framebuffer_flush64(0, 0, framebuffer_info.scrnx, framebuffer_info.scrny);
+	framebuffer_flush64(&framebuffer64, 0, 0,
+		framebuffer_info.scrnx, framebuffer_info.scrny);
 }
 
 static void draw_bitmap64(const uint8_t *bitmap, uint32_t bitmap_width,
@@ -101,6 +81,7 @@ static void draw_bitmap64(const uint8_t *bitmap, uint32_t bitmap_width,
 	uint32_t sx;
 	uint32_t sy;
 
+	if (x >= framebuffer_info.scrnx || y >= framebuffer_info.scrny) { return; }
 	foreground = fb_color64(0xff, 0xff, 0xff);
 	background = fb_color64(0x00, 0x34, 0x3b);
 	for (by = 0; by < 16; by++) {
@@ -115,7 +96,8 @@ static void draw_bitmap64(const uint8_t *bitmap, uint32_t bitmap_width,
 			}
 		}
 	}
-	framebuffer_flush64(x, y, bitmap_width * FB_SCALE, 16 * FB_SCALE);
+	framebuffer_flush64(&framebuffer64, x, y,
+		(int64_t) x + bitmap_width * FB_SCALE, (int64_t) y + 16 * FB_SCALE);
 }
 
 static void draw_ascii64(unsigned char character)
@@ -150,10 +132,59 @@ static void draw_hangul64(unsigned int unicode)
 	cursor_x += 16 * FB_SCALE;
 }
 
+/* Validate the fixed response layout before narrowing firmware values or
+ * publishing a writable mapping. The GUI backend uses RGB pixel order.
+ */
+static int framebuffer_response64(const volatile uint32_t *m,
+	struct BOOTINFO64 *info)
+{
+	static const uint32_t tags[][3] = {
+		{ 2, TAG_SET_PHYSICAL_SIZE, 8 },
+		{ 7, TAG_SET_VIRTUAL_SIZE, 8 },
+		{ 12, TAG_SET_VIRTUAL_OFFSET, 8 },
+		{ 17, TAG_SET_DEPTH, 4 },
+		{ 21, TAG_SET_PIXEL_ORDER, 4 },
+		{ 25, TAG_ALLOCATE_BUFFER, 8 },
+		{ 30, TAG_GET_PITCH, 4 }
+	};
+	struct BOOTINFO64 candidate = { 0 };
+	struct FRAMEBUFFER64 fb;
+	uintptr_t physical;
+
+	if (m == NULL || info == NULL || m[0] != 35U * 4U ||
+		m[1] != 0x80000000U || m[34] != 0) { return -22; }
+	for (size_t i = 0; i < sizeof(tags) / sizeof(tags[0]); i++) {
+		uint32_t index = tags[i][0];
+
+		if (m[index] != tags[i][1] || m[index + 1] != tags[i][2] ||
+			m[index + 2] != (0x80000000U | tags[i][2])) { return -22; }
+	}
+	if (m[20] != FB_DEPTH || m[24] != 1U || m[5] == 0 || m[6] == 0 ||
+		m[5] > UINT16_MAX || m[6] > UINT16_MAX || m[33] > UINT16_MAX ||
+		m[10] < m[5] || m[11] < m[6] || m[15] != 0 || m[16] != 0 ||
+		m[29] == 0) { return -22; }
+	physical = m[28] & 0x3fffffffU;
+	/* TTBR1 maps the first GiB of RAM. Reject alias-only or out-of-map buffers. */
+	if (physical == 0 || (physical & 4095U) != 0 ||
+		m[29] > (1U << 30) - physical) { return -22; }
+	candidate.scrnx = (uint16_t) m[5];
+	candidate.scrny = (uint16_t) m[6];
+	candidate.bytes_per_scanline = (uint16_t) m[33];
+	candidate.bpp = FB_DEPTH;
+	candidate.framebuffer_type = 1;
+	candidate.reserved2 = m[29];
+	candidate.vram = arch64_phys_to_virt(physical);
+	if (framebuffer_boot64(&fb, &candidate) != 0) { return -22; }
+	*info = candidate;
+	return 0;
+}
+
 int arch64_fb_probe(struct BOOTINFO64 *bootinfo)
 {
 	volatile uint32_t *m = framebuffer_request;
-	uint32_t framebuffer_address;
+	struct BOOTINFO64 candidate;
+
+	if (bootinfo == NULL) { return -22; }
 
 	m[0] = 35 * 4;
 	m[1] = 0;
@@ -173,24 +204,9 @@ int arch64_fb_probe(struct BOOTINFO64 *bootinfo)
 	if (aarch64_mailbox_call(PROPERTY_CHANNEL, m, m[0]) != 0) {
 		return -2;
 	}
-	if (m[1] != 0x80000000U || m[20] != FB_DEPTH || m[28] == 0 ||
-		m[29] == 0 || m[33] == 0 || m[5] == 0 || m[6] == 0 ||
-		m[5] > UINT16_MAX || m[6] > UINT16_MAX || m[33] > UINT16_MAX) {
-		return -3;
-	}
-
-	framebuffer_address = m[28] & 0x3fffffffU;
-	framebuffer_info.cyls = 0;
-	framebuffer_info.leds = 0;
-	framebuffer_info.vmode = 0;
-	framebuffer_info.reserve = 0;
-	framebuffer_info.scrnx = (uint16_t) m[5];
-	framebuffer_info.scrny = (uint16_t) m[6];
-	framebuffer_info.bytes_per_scanline = (uint16_t) m[33];
-	framebuffer_info.bpp = FB_DEPTH;
-	framebuffer_info.framebuffer_type = 1;
-	framebuffer_info.reserved2 = m[29];
-	framebuffer_info.vram = arch64_phys_to_virt((uintptr_t) framebuffer_address);
+	if (framebuffer_response64(m, &candidate) != 0 ||
+		framebuffer_boot64(&framebuffer64, &candidate) != 0) { return -3; }
+	framebuffer_info = candidate;
 	framebuffer_pixel_order = m[24];
 	active_hangul_font = hangul_font64;
 	*bootinfo = framebuffer_info;
@@ -210,7 +226,8 @@ void arch64_fb_set_hangul_font(const uint8_t *font)
 
 void arch64_dbg_puts(const char *s)
 {
-	if (framebuffer_ready == 0 || s == NULL) {
+	if (framebuffer_ready == 0 || s == NULL ||
+		framebuffer_info.scrnx <= 2U * FB_MARGIN_X + 16U * FB_SCALE) {
 		return;
 	}
 	while (*s != '\0') {

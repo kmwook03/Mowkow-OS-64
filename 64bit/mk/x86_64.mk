@@ -26,6 +26,8 @@ KERNEL64_MAX_BYTES := $(shell expr $(KERNEL64_SECTORS) \* 512)
 
 # -- 소스 찾기 --
 X64_PLATFORM_C_SRCS = \
+	$(SRC64_DIR)/arch/x86_64/boot_diag64.c \
+	$(SRC64_DIR)/arch/x86_64/boot_smoke64.c \
 	$(SRC64_DIR)/arch/x86_64/platform64.c \
 	$(SRC64_DIR)/drivers/ahci64.c \
 	$(SRC64_DIR)/drivers/ata64.c \

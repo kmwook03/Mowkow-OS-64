@@ -21,6 +21,31 @@ int surface64_valid(const struct SURFACE64 *surface)
 		required <= UINTPTR_MAX - (uintptr_t) surface->pixels;
 }
 
+void draw_rect64(const struct SURFACE64 *surface, uint8_t color,
+	int32_t x0, int32_t y0, int32_t x1, int32_t y1)
+{
+	int64_t left = x0, top = y0;
+	int64_t right = (int64_t) x1 + 1, bottom = (int64_t) y1 + 1;
+
+	if (!surface64_valid(surface) || x0 > x1 || y0 > y1) {
+		return;
+	}
+	if (left < 0) { left = 0; }
+	if (top < 0) { top = 0; }
+	if (left < surface->x0) { left = surface->x0; }
+	if (top < surface->y0) { top = surface->y0; }
+	if (right > surface->width) { right = surface->width; }
+	if (bottom > surface->height) { bottom = surface->height; }
+	if (right > surface->x1) { right = surface->x1; }
+	if (bottom > surface->y1) { bottom = surface->y1; }
+	if (left >= right || top >= bottom) { return; }
+	for (int64_t y = top; y < bottom; y++) {
+		for (int64_t x = left; x < right; x++) {
+			surface->pixels[(size_t) y * surface->stride + (size_t) x] = color;
+		}
+	}
+}
+
 void draw_glyph64(const struct SURFACE64 *surface, int32_t x, int32_t y,
 	uint8_t color, const uint8_t *glyph, size_t size, uint32_t width)
 {

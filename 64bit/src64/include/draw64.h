@@ -16,6 +16,9 @@ struct SURFACE64 {
 };
 
 int surface64_valid(const struct SURFACE64 *surface);
+/* Inclusive rectangle endpoints; reversed/empty rectangles are a no-op. */
+void draw_rect64(const struct SURFACE64 *surface, uint8_t color,
+	int32_t x0, int32_t y0, int32_t x1, int32_t y1);
 /* Packed MSB-first rows, one byte for 8 pixels or two for 16 pixels.
  * Invalid descriptors are a no-op. Coordinates may be negative.
  */

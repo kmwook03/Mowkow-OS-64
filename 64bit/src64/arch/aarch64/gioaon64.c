@@ -198,7 +198,8 @@ static int m7a_sheet32_smoke64(void)
 	m7a_smoke_buffer[5] = 9U;
 	m7a_smoke_buffer[6] = 14U;
 	m7a_smoke_buffer[7] = 16U;
-	ctl = shtctl64_init(&memman64, m7a_smoke_vram, M7A_SMOKE_WIDTH,
+	ctl = shtctl64_init(&memman64, m7a_smoke_vram, sizeof(m7a_smoke_vram),
+		M7A_SMOKE_WIDTH,
 		M7A_SMOKE_HEIGHT, M7A_SMOKE_STRIDE, 32U);
 	if (ctl == NULL) {
 		return -1;
@@ -207,7 +208,8 @@ static int m7a_sheet32_smoke64(void)
 	if (sheet == NULL) {
 		return -2;
 	}
-	sheet64_setbuf(sheet, m7a_smoke_buffer, M7A_SMOKE_WIDTH,
+	sheet64_setbuf(sheet, m7a_smoke_buffer, sizeof(m7a_smoke_buffer),
+		M7A_SMOKE_WIDTH, M7A_SMOKE_WIDTH,
 		M7A_SMOKE_HEIGHT, -1);
 	sheet->vx0 = 0;
 	sheet->vy0 = 0;
@@ -287,7 +289,9 @@ static int m7b_live_sheet64(const struct BOOTINFO64 *bootinfo)
 	y_offset = (uint32_t) bootinfo->scrny - M7B_STRIP_HEIGHT - 32U;
 	vram = (uint8_t *) bootinfo->vram +
 		(uintptr_t) y_offset * bootinfo->bytes_per_scanline + 64U * 4U;
-	ctl = shtctl64_init(&memman64, vram, M7B_STRIP_WIDTH,
+	ctl = shtctl64_init(&memman64, vram,
+		(size_t) (bootinfo->scrny - y_offset) * bootinfo->bytes_per_scanline -
+		(size_t) 64U * 4U, M7B_STRIP_WIDTH,
 		M7B_STRIP_HEIGHT, bootinfo->bytes_per_scanline, 32U);
 	if (ctl == NULL) {
 		return -2;
@@ -296,7 +300,8 @@ static int m7b_live_sheet64(const struct BOOTINFO64 *bootinfo)
 	if (sheet == NULL) {
 		return -3;
 	}
-	sheet64_setbuf(sheet, m7b_strip_buffer, M7B_STRIP_WIDTH,
+	sheet64_setbuf(sheet, m7b_strip_buffer, sizeof(m7b_strip_buffer),
+		M7B_STRIP_WIDTH, M7B_STRIP_WIDTH,
 		M7B_STRIP_HEIGHT, -1);
 	sheet->vx0 = 0;
 	sheet->vy0 = 0;
@@ -319,6 +324,7 @@ static int m7d_live_window64(const struct BOOTINFO64 *bootinfo)
 	volatile uint32_t *row1;
 	uint32_t x_offset;
 	uint32_t y_offset;
+	struct SURFACE64 surface;
 
 	if (bootinfo == NULL || bootinfo->bpp != 32U ||
 			bootinfo->scrnx < M7D_WINDOW_WIDTH + 32U ||
@@ -329,7 +335,9 @@ static int m7d_live_window64(const struct BOOTINFO64 *bootinfo)
 	y_offset = (uint32_t) bootinfo->scrny - M7D_WINDOW_HEIGHT - 64U;
 	vram = (uint8_t *) bootinfo->vram +
 		(uintptr_t) y_offset * bootinfo->bytes_per_scanline + x_offset * 4U;
-	ctl = shtctl64_init(&memman64, vram, M7D_WINDOW_WIDTH,
+	ctl = shtctl64_init(&memman64, vram,
+		(size_t) (bootinfo->scrny - y_offset) * bootinfo->bytes_per_scanline -
+		(size_t) x_offset * 4U, M7D_WINDOW_WIDTH,
 		M7D_WINDOW_HEIGHT, bootinfo->bytes_per_scanline, 32U);
 	if (ctl == NULL) {
 		return -2;
@@ -339,10 +347,11 @@ static int m7d_live_window64(const struct BOOTINFO64 *bootinfo)
 		return -3;
 	}
 	window64_set_hangul_font(disk_hangul_font);
-	make_window64(m7d_window_buffer, M7D_WINDOW_WIDTH, M7D_WINDOW_HEIGHT,
-		"머꼬 M7d", 1);
-	sheet64_setbuf(sheet, m7d_window_buffer, M7D_WINDOW_WIDTH,
+	sheet64_setbuf(sheet, m7d_window_buffer, sizeof(m7d_window_buffer),
+		M7D_WINDOW_WIDTH, M7D_WINDOW_WIDTH,
 		M7D_WINDOW_HEIGHT, -1);
+	surface = sheet64_surface(sheet);
+	make_window64(&surface, "머꼬 M7d", 1);
 	sheet->vx0 = 0;
 	sheet->vy0 = 0;
 	sheet64_updown(sheet, 0);

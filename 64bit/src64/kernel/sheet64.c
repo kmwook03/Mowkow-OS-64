@@ -8,10 +8,6 @@
  */
 
 #include <arch/platform64.h>
-#ifdef __aarch64__
-#include <arch/arch64.h>
-#endif
-#include <graphic64.h>
 #include <memory64.h>
 #include <sheet64.h>
 #include <stddef.h>
@@ -19,10 +15,10 @@
 
 #define SHEET64_USE 1
 
-static void sheet64_refreshmap(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
-	int32_t vx1, int32_t vy1, int32_t h0);
-static void sheet64_refreshsub(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
-	int32_t vx1, int32_t vy1, int32_t h0, int32_t h1);
+static void sheet64_refreshmap(struct SHTCTL64 *ctl, int64_t vx0, int64_t vy0,
+	int64_t vx1, int64_t vy1, int32_t h0);
+static void sheet64_refreshsub(struct SHTCTL64 *ctl, int64_t vx0, int64_t vy0,
+	int64_t vx1, int64_t vy1, int32_t h0, int32_t h1);
 
 static uint64_t sheet64_lock(void)
 {
@@ -34,76 +30,44 @@ static void sheet64_unlock(uint64_t state)
 	platform_irq_restore64(state);
 }
 
-static void sheet64_flush_vram(struct SHTCTL64 *ctl, int32_t x0, int32_t y0,
-	int32_t x1, int32_t y1)
-{
-#ifdef __aarch64__
-	uintptr_t address;
-	uintptr_t end;
-	int32_t y;
-
-	if (ctl->bpp != 32U) {
-		return;
-	}
-	for (y = y0; y < y1; y++) {
-		address = (uintptr_t) ctl->vram + (uintptr_t) y * ctl->stride +
-			(uintptr_t) x0 * 4U;
-		end = (uintptr_t) ctl->vram + (uintptr_t) y * ctl->stride +
-			(uintptr_t) x1 * 4U;
-		address &= ~(uintptr_t) 63U;
-		while (address < end) {
-			__asm__ volatile ("dc cvac, %0" :: "r" (address) : "memory");
-			address += 64U;
-		}
-	}
-	__asm__ volatile ("dsb sy" ::: "memory");
-#else
-	(void) ctl;
-	(void) x0;
-	(void) y0;
-	(void) x1;
-	(void) y1;
-#endif
-}
-
-struct SHTCTL64 *shtctl64_init(struct MEMMAN64 *man, uint8_t *vram,
+struct SHTCTL64 *shtctl64_init(struct MEMMAN64 *man, uint8_t *vram, size_t vram_size,
 	int32_t xsize, int32_t ysize, uint32_t stride, uint8_t bpp)
 {
 	struct SHTCTL64 *ctl;
 	uintptr_t ctl_addr;
 	uintptr_t map_addr;
 	int32_t i;
-	uint32_t bytes_per_pixel;
+	size_t map_size;
+	struct FRAMEBUFFER64 framebuffer;
 
-	if (man == NULL || vram == NULL || xsize <= 0 || ysize <= 0 ||
-			(bpp != 8U && bpp != 32U)) {
-		return NULL;
-	}
-	bytes_per_pixel = bpp / 8U;
-	if (stride < (uint32_t) xsize * bytes_per_pixel) {
-		return NULL;
-	}
+	if (man == NULL || framebuffer_init64(&framebuffer, vram, vram_size,
+		xsize, ysize, stride, bpp) != 0 ||
+		(size_t) xsize > SIZE_MAX / (size_t) ysize) { return NULL; }
+	map_size = (size_t) xsize * (size_t) ysize;
+	if (map_size > SIZE_MAX - 4095U) { return NULL; }
 
 	ctl_addr = memman64_alloc_4k(man, sizeof (struct SHTCTL64));
 	if (ctl_addr == 0) {
 		return NULL;
 	}
-	map_addr = memman64_alloc_4k(man, (size_t) xsize * (size_t) ysize);
+	map_addr = memman64_alloc_4k(man, map_size);
 	if (map_addr == 0) {
 		memman64_free_4k(man, ctl_addr, sizeof (struct SHTCTL64));
 		return NULL;
 	}
 
 	ctl = (struct SHTCTL64 *) ctl_addr;
+	ctl->framebuffer = framebuffer;
 	ctl->map = (uint8_t *) map_addr;
 	ctl->vram = vram;
+	ctl->vram_size = vram_size;
 	ctl->xsize = xsize;
 	ctl->ysize = ysize;
 	ctl->stride = stride;
 	ctl->bpp = bpp;
 	ctl->top = -1;
 	for (i = 0; i < MAX_SHEETS64; i++) {
-		ctl->sheets0[i].flags = 0;
+		ctl->sheets0[i] = (struct SHEET64) { 0 };
 		ctl->sheets0[i].ctl = ctl;
 		ctl->sheets0[i].task = NULL;
 	}
@@ -118,6 +82,7 @@ static struct SHEET64 *sheet64_alloc_nolock(struct SHTCTL64 *ctl)
 	for (i = 0; i < MAX_SHEETS64; i++) {
 		if (ctl->sheets0[i].flags == 0) {
 			sht = &ctl->sheets0[i];
+			*sht = (struct SHEET64) { .ctl = ctl };
 			sht->flags = SHEET64_USE;
 			sht->height = -1;
 			sht->task = NULL;
@@ -127,13 +92,15 @@ static struct SHEET64 *sheet64_alloc_nolock(struct SHTCTL64 *ctl)
 	return NULL;
 }
 
-static void sheet64_setbuf_nolock(struct SHEET64 *sht, uint8_t *buf, int32_t xsize, int32_t ysize,
-	int32_t col_inv)
+struct SURFACE64 sheet64_surface(const struct SHEET64 *sht)
 {
-	sht->buf = buf;
-	sht->bxsize = xsize;
-	sht->bysize = ysize;
-	sht->col_inv = col_inv;
+	if (sht == NULL) {
+		return (struct SURFACE64) { 0 };
+	}
+	return (struct SURFACE64) {
+		sht->buf, sht->buf_size, sht->stride, sht->bxsize, sht->bysize,
+		0, 0, sht->bxsize, sht->bysize
+	};
 }
 
 /*
@@ -142,10 +109,11 @@ static void sheet64_setbuf_nolock(struct SHEET64 *sht, uint8_t *buf, int32_t xsi
  * 겹침 처리에서 가장 미묘한 부분이라 먼저 정확하게 옮기는 쪽을 택했다.
  * 800x600 전체 갱신이 눈에 띄게 느려지면 그때 되살린다.
  */
-static void sheet64_refreshmap(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
-	int32_t vx1, int32_t vy1, int32_t h0)
+static void sheet64_refreshmap(struct SHTCTL64 *ctl, int64_t vx0, int64_t vy0,
+	int64_t vx1, int64_t vy1, int32_t h0)
 {
-	int32_t h, bx, by, vx, vy, bx0, by0, bx1, by1;
+	int32_t h, bx, by, vx, vy;
+	int64_t bx0, by0, bx1, by1;
 	uint8_t *buf;
 	uint8_t *map = ctl->map;
 	uint8_t sid;
@@ -155,6 +123,8 @@ static void sheet64_refreshmap(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
 	if (vy0 < 0) { vy0 = 0; }
 	if (vx1 > ctl->xsize) { vx1 = ctl->xsize; }
 	if (vy1 > ctl->ysize) { vy1 = ctl->ysize; }
+	if (vx0 >= vx1 || vy0 >= vy1) { return; }
+	if (h0 < 0) { h0 = 0; }
 
 	for (h = h0; h <= ctl->top; h++) {
 		sht = ctl->sheets[h];
@@ -169,25 +139,26 @@ static void sheet64_refreshmap(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
 		if (bx1 > sht->bxsize) { bx1 = sht->bxsize; }
 		if (by1 > sht->bysize) { by1 = sht->bysize; }
 
-		for (by = by0; by < by1; by++) {
-			vy = sht->vy0 + by;
-			for (bx = bx0; bx < bx1; bx++) {
-				vx = sht->vx0 + bx;
+		if (bx0 >= bx1 || by0 >= by1) { continue; }
+		for (by = (int32_t) by0; by < by1; by++) {
+			vy = (int32_t) ((int64_t) sht->vy0 + by);
+			for (bx = (int32_t) bx0; bx < bx1; bx++) {
+				vx = (int32_t) ((int64_t) sht->vx0 + bx);
 				if (sht->col_inv == -1 ||
-						buf[by * sht->bxsize + bx] != (uint8_t) sht->col_inv) {
-					map[vy * ctl->xsize + vx] = sid;
+						buf[(size_t) by * sht->stride + (size_t) bx] != (uint8_t) sht->col_inv) {
+					map[(size_t) vy * (size_t) ctl->xsize + (size_t) vx] = sid;
 				}
 			}
 		}
 	}
 }
 
-static void sheet64_refreshsub(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
-	int32_t vx1, int32_t vy1, int32_t h0, int32_t h1)
+static void sheet64_refreshsub(struct SHTCTL64 *ctl, int64_t vx0, int64_t vy0,
+	int64_t vx1, int64_t vy1, int32_t h0, int32_t h1)
 {
-	int32_t h, bx, by, vx, vy, bx0, by0, bx1, by1;
+	int32_t h, by, vx, vy;
+	int64_t bx0, by0, bx1, by1;
 	uint8_t *buf;
-	uint8_t *vram = ctl->vram;
 	uint8_t *map = ctl->map;
 	uint8_t sid;
 	struct SHEET64 *sht;
@@ -196,7 +167,10 @@ static void sheet64_refreshsub(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
 	if (vy0 < 0) { vy0 = 0; }
 	if (vx1 > ctl->xsize) { vx1 = ctl->xsize; }
 	if (vy1 > ctl->ysize) { vy1 = ctl->ysize; }
+	if (vx0 >= vx1 || vy0 >= vy1) { return; }
+	if (h0 < 0) { h0 = 0; }
 
+	if (h1 > ctl->top) { h1 = ctl->top; }
 	for (h = h0; h <= h1; h++) {
 		sht = ctl->sheets[h];
 		buf = sht->buf;
@@ -210,24 +184,17 @@ static void sheet64_refreshsub(struct SHTCTL64 *ctl, int32_t vx0, int32_t vy0,
 		if (bx1 > sht->bxsize) { bx1 = sht->bxsize; }
 		if (by1 > sht->bysize) { by1 = sht->bysize; }
 
-		for (by = by0; by < by1; by++) {
-			vy = sht->vy0 + by;
-			for (bx = bx0; bx < bx1; bx++) {
-				vx = sht->vx0 + bx;
-				if (map[vy * ctl->xsize + vx] == sid) {
-					if (ctl->bpp == 32U) {
-						uint32_t *row = (uint32_t *) (void *)
-							(vram + (uint32_t) vy * ctl->stride);
-						row[vx] = graphic64_rgb32(buf[by * sht->bxsize + bx]);
-					} else {
-						vram[(uint32_t) vy * ctl->stride + vx] =
-							buf[by * sht->bxsize + bx];
-					}
-				}
-			}
+		if (bx0 >= bx1 || by0 >= by1) { continue; }
+		for (by = (int32_t) by0; by < by1; by++) {
+			vy = (int32_t) ((int64_t) sht->vy0 + by);
+			vx = (int32_t) ((int64_t) sht->vx0 + bx0);
+			framebuffer_span64(&ctl->framebuffer, vx, vy,
+				buf + (size_t) by * sht->stride + (size_t) bx0,
+				map + (size_t) vy * (size_t) ctl->xsize + (size_t) vx,
+				sid, (int32_t) (bx1 - bx0));
 		}
 	}
-	sheet64_flush_vram(ctl, vx0, vy0, vx1, vy1);
+	framebuffer_flush64(&ctl->framebuffer, vx0, vy0, vx1, vy1);
 }
 
 static void sheet64_updown_nolock(struct SHEET64 *sht, int32_t height)
@@ -235,8 +202,11 @@ static void sheet64_updown_nolock(struct SHEET64 *sht, int32_t height)
 	struct SHTCTL64 *ctl = sht->ctl;
 	int32_t h, old = sht->height;
 
-	if (height > ctl->top + 1) {
-		height = ctl->top + 1;
+	/* A visible sheet cannot occupy the unused top+1 slot. */
+	int32_t maximum = old >= 0 ? ctl->top : ctl->top + 1;
+
+	if (height > maximum) {
+		height = maximum;
 	}
 	if (height < -1) {
 		height = -1;
@@ -251,9 +221,9 @@ static void sheet64_updown_nolock(struct SHEET64 *sht, int32_t height)
 			}
 			ctl->sheets[height] = sht;
 			sheet64_refreshmap(ctl, sht->vx0, sht->vy0,
-				sht->vx0 + sht->bxsize, sht->vy0 + sht->bysize, height + 1);
+				(int64_t) sht->vx0 + sht->bxsize, (int64_t) sht->vy0 + sht->bysize, height + 1);
 			sheet64_refreshsub(ctl, sht->vx0, sht->vy0,
-				sht->vx0 + sht->bxsize, sht->vy0 + sht->bysize, height + 1, old);
+				(int64_t) sht->vx0 + sht->bxsize, (int64_t) sht->vy0 + sht->bysize, height + 1, old);
 		} else {
 			if (ctl->top > old) {
 				for (h = old; h < ctl->top; h++) {
@@ -263,9 +233,9 @@ static void sheet64_updown_nolock(struct SHEET64 *sht, int32_t height)
 			}
 			ctl->top--;
 			sheet64_refreshmap(ctl, sht->vx0, sht->vy0,
-				sht->vx0 + sht->bxsize, sht->vy0 + sht->bysize, 0);
+				(int64_t) sht->vx0 + sht->bxsize, (int64_t) sht->vy0 + sht->bysize, 0);
 			sheet64_refreshsub(ctl, sht->vx0, sht->vy0,
-				sht->vx0 + sht->bxsize, sht->vy0 + sht->bysize, 0, old - 1);
+				(int64_t) sht->vx0 + sht->bxsize, (int64_t) sht->vy0 + sht->bysize, 0, old - 1);
 		}
 	} else if (old < height) {
 		if (old >= 0) {
@@ -283,18 +253,23 @@ static void sheet64_updown_nolock(struct SHEET64 *sht, int32_t height)
 			ctl->top++;
 		}
 		sheet64_refreshmap(ctl, sht->vx0, sht->vy0,
-			sht->vx0 + sht->bxsize, sht->vy0 + sht->bysize, height);
+			(int64_t) sht->vx0 + sht->bxsize, (int64_t) sht->vy0 + sht->bysize, height);
 		sheet64_refreshsub(ctl, sht->vx0, sht->vy0,
-			sht->vx0 + sht->bxsize, sht->vy0 + sht->bysize, height, height);
+			(int64_t) sht->vx0 + sht->bxsize, (int64_t) sht->vy0 + sht->bysize, height, height);
 	}
 }
 
 static void sheet64_refresh_nolock(struct SHEET64 *sht, int32_t bx0,
 	int32_t by0, int32_t bx1, int32_t by1)
 {
+	if (bx0 < 0) { bx0 = 0; }
+	if (by0 < 0) { by0 = 0; }
+	if (bx1 > sht->bxsize) { bx1 = sht->bxsize; }
+	if (by1 > sht->bysize) { by1 = sht->bysize; }
+	if (bx0 >= bx1 || by0 >= by1) { return; }
 	if (sht->height >= 0) {
-		sheet64_refreshsub(sht->ctl, sht->vx0 + bx0, sht->vy0 + by0,
-			sht->vx0 + bx1, sht->vy0 + by1, sht->height, sht->height);
+		sheet64_refreshsub(sht->ctl, (int64_t) sht->vx0 + bx0, (int64_t) sht->vy0 + by0,
+			(int64_t) sht->vx0 + bx1, (int64_t) sht->vy0 + by1, sht->height, sht->height);
 	}
 }
 
@@ -307,13 +282,13 @@ static void sheet64_slide_nolock(struct SHEET64 *sht, int32_t vx0, int32_t vy0)
 	sht->vy0 = vy0;
 	if (sht->height >= 0) {
 		sheet64_refreshmap(ctl, old_vx0, old_vy0,
-			old_vx0 + sht->bxsize, old_vy0 + sht->bysize, 0);
+			(int64_t) old_vx0 + sht->bxsize, (int64_t) old_vy0 + sht->bysize, 0);
 		sheet64_refreshmap(ctl, vx0, vy0,
-			vx0 + sht->bxsize, vy0 + sht->bysize, sht->height);
+			(int64_t) vx0 + sht->bxsize, (int64_t) vy0 + sht->bysize, sht->height);
 		sheet64_refreshsub(ctl, old_vx0, old_vy0,
-			old_vx0 + sht->bxsize, old_vy0 + sht->bysize, 0, sht->height - 1);
+			(int64_t) old_vx0 + sht->bxsize, (int64_t) old_vy0 + sht->bysize, 0, sht->height - 1);
 		sheet64_refreshsub(ctl, vx0, vy0,
-			vx0 + sht->bxsize, vy0 + sht->bysize, sht->height, sht->height);
+			(int64_t) vx0 + sht->bxsize, (int64_t) vy0 + sht->bysize, sht->height, sht->height);
 	}
 }
 
@@ -349,26 +324,42 @@ struct SHEET64 *sheet64_alloc(struct SHTCTL64 *ctl)
 	uint64_t flags;
 	struct SHEET64 *sht;
 
+	if (ctl == NULL) { return NULL; }
 	flags = sheet64_lock();
 	sht = sheet64_alloc_nolock(ctl);
 	sheet64_unlock(flags);
 	return sht;
 }
 
-void sheet64_setbuf(struct SHEET64 *sht, uint8_t *buf, int32_t xsize, int32_t ysize,
-	int32_t col_inv)
+int sheet64_setbuf(struct SHEET64 *sht, uint8_t *buf, size_t size, uint32_t stride,
+	int32_t xsize, int32_t ysize, int32_t col_inv)
 {
+	struct SURFACE64 surface = {
+		buf, size, stride, xsize, ysize, 0, 0, xsize, ysize
+	};
 	uint64_t flags;
 
+	if (sht == NULL || sht->ctl == NULL || sht->flags == 0 ||
+		col_inv < -1 || col_inv > 255 || !surface64_valid(&surface)) {
+		return -22;
+	}
 	flags = sheet64_lock();
-	sheet64_setbuf_nolock(sht, buf, xsize, ysize, col_inv);
+	sht->buf = buf;
+	sht->buf_size = size;
+	sht->stride = stride;
+	sht->bxsize = xsize;
+	sht->bysize = ysize;
+	sht->col_inv = col_inv;
 	sheet64_unlock(flags);
+	return 0;
 }
 
 void sheet64_updown(struct SHEET64 *sht, int32_t height)
 {
 	uint64_t flags;
 
+	if (sht == NULL || sht->flags == 0 || sht->ctl == NULL) { return; }
+	if (sht->buf == NULL) { return; }
 	flags = sheet64_lock();
 	sheet64_updown_nolock(sht, height);
 	sheet64_unlock(flags);
@@ -378,6 +369,8 @@ void sheet64_refresh(struct SHEET64 *sht, int32_t bx0, int32_t by0, int32_t bx1,
 {
 	uint64_t flags;
 
+	if (sht == NULL || sht->flags == 0 || sht->ctl == NULL) { return; }
+	if (sht->buf == NULL) { return; }
 	flags = sheet64_lock();
 	sheet64_refresh_nolock(sht, bx0, by0, bx1, by1);
 	sheet64_unlock(flags);
@@ -387,6 +380,8 @@ void sheet64_slide(struct SHEET64 *sht, int32_t vx0, int32_t vy0)
 {
 	uint64_t flags;
 
+	if (sht == NULL || sht->flags == 0 || sht->ctl == NULL) { return; }
+	if (sht->buf == NULL) { return; }
 	flags = sheet64_lock();
 	sheet64_slide_nolock(sht, vx0, vy0);
 	sheet64_unlock(flags);
@@ -396,6 +391,7 @@ void sheet64_refresh_all(struct SHTCTL64 *ctl)
 {
 	uint64_t flags;
 
+	if (ctl == NULL) { return; }
 	flags = sheet64_lock();
 	sheet64_refresh_all_nolock(ctl);
 	sheet64_unlock(flags);
@@ -405,6 +401,7 @@ void sheet64_free(struct SHEET64 *sht)
 {
 	uint64_t flags;
 
+	if (sht == NULL || sht->flags == 0 || sht->ctl == NULL) { return; }
 	flags = sheet64_lock();
 	sheet64_free_nolock(sht);
 	sheet64_unlock(flags);

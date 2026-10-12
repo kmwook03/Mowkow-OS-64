@@ -78,3 +78,13 @@ void platform_task_switch64(struct CONTEXT64 *old_context,
 {
 	context_switch64(old_context, new_context);
 }
+
+void platform_framebuffer_flush64(uintptr_t address, size_t bytes)
+{
+	(void) address;
+	(void) bytes;
+}
+
+void platform_framebuffer_sync64(void)
+{
+}

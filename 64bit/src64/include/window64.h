@@ -30,12 +30,12 @@
 
 /* font is NULL or a complete HANGUL64_FONT_SIZE-byte H04 font. */
 void window64_set_hangul_font(const uint8_t *font);
-void boxfill64(uint8_t *buf, int32_t xsize, uint8_t color,
+void boxfill64(const struct SURFACE64 *surface, uint8_t color,
 	int32_t x0, int32_t y0, int32_t x1, int32_t y1);
 void putstr64(const struct SURFACE64 *surface, int32_t x, int32_t y, uint8_t color,
 	const char *s);
-void make_window64(uint8_t *buf, int32_t xsize, int32_t ysize, const char *title, int act);
-void make_wtitle64(uint8_t *buf, int32_t xsize, const char *title, int act);
+void make_window64(const struct SURFACE64 *surface, const char *title, int act);
+void make_wtitle64(const struct SURFACE64 *surface, const char *title, int act);
 void change_wtitle64(struct SHEET64 *sht, int act);
 
 #endif

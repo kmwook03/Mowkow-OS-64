@@ -1,10 +1,21 @@
 #define _GNU_SOURCE
 #include <stdio.h>
+#include <assert.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include "../src64/kernel/console64.c"
+#include "../src64/kernel/console_render64.c"
+#include "../src64/kernel/console_queue64.c"
+#include "../src64/kernel/console_editor64.c"
+
+static uint64_t irq_depth64;
+uint64_t platform_irq_save64(void) { return irq_depth64++; }
+void platform_irq_restore64(uint64_t state)
+{
+	assert(irq_depth64 == state + 1);
+	irq_depth64--;
+}
 
 #define CHECK64(condition) do { \
 	if (!(condition)) { \
@@ -282,11 +293,11 @@ static int bounds_and_display64(void)
 				(n == strlen(sequences[i]) ? 0 : -84));
 			con.cursor_x = 0;
 			serial_length64 = 0;
-			put_bytes(&con, input, n);
+			put_bytes64(&con, input, n);
 			CHECK64(con.cursor_x == (n == strlen(sequences[i]) ? 8 : n * 8));
 			con.raw_mode = 1;
-			CHECK64(append_input(&con, input, (int) n) == 0);
-			CHECK64(raw_queue_pop(&con, &event) == 1);
+			CHECK64(append_input64(&con, input, (int) n) == 0);
+			CHECK64(console_raw_pop64(&con, &event) == 1);
 			CHECK64((uint32_t) event == unicode);
 			con.raw_mode = 0;
 			/* A NUL at the final readable byte bounds the compatibility path. */
@@ -298,14 +309,14 @@ static int bounds_and_display64(void)
 			CHECK64(utf8_to_utf16_64(input, units, 2) ==
 				(n == strlen(sequences[i]) ? (i == 2 ? 2 : 1) : -1));
 			con.cursor_x = 0;
-			puts_con(&con, input);
+			console_puts_con64(&con, input);
 			putstr64(&surface, 0, 0, 7, input);
 		}
 	}
 	con.cursor_x = 0;
 	serial_length64 = 0;
 	memset(pixels, 0, sizeof(pixels));
-	put_bytes(&con, "\xc2" "A", 2);
+	put_bytes64(&con, "\xc2" "A", 2);
 	CHECK64(con.cursor_x == 16 && pixels[0] == 7 && pixels[9] == 7);
 	CHECK64(serial_length64 == 4 && memcmp(serial64, "\xef\xbf\xbd" "A", 4) == 0);
 	memset(pixels, 0, sizeof(pixels));

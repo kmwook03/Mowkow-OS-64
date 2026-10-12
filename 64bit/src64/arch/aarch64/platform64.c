@@ -1,4 +1,5 @@
 #include <arch/arch64.h>
+#include <arch/cache_range64.h>
 #include <arch/platform64.h>
 #include <mtask64.h>
 
@@ -65,4 +66,27 @@ void platform_task_switch64(struct CONTEXT64 *old_context,
 	/* AArch64 switches frames while returning from the timer exception. */
 	(void) old_context;
 	(void) new_context;
+}
+
+void platform_framebuffer_flush64(uintptr_t address, size_t bytes)
+{
+	uint64_t ctr;
+	uintptr_t line_size;
+	struct CACHE_RANGE64 range;
+
+	__asm__ volatile ("mrs %0, ctr_el0" : "=r" (ctr));
+	line_size = (uintptr_t) 4U << ((ctr >> 16) & 15U);
+	if (cache_range_init64(&range, address, bytes, line_size) != 0) { return; }
+	address = range.first;
+	for (;;) {
+		__asm__ volatile ("dc cvac, %0" :: "r" (address) : "memory");
+		/* Stop at the last line before advancing can wrap. */
+		if (address == range.last) { break; }
+		address += line_size;
+	}
+}
+
+void platform_framebuffer_sync64(void)
+{
+	__asm__ volatile ("dsb sy" ::: "memory");
 }
