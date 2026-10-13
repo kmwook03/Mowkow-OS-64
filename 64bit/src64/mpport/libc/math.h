@@ -4,13 +4,11 @@
 #define INFINITY (__builtin_inf())
 #define NAN      (__builtin_nan(""))
 
-/*
- * sqrt/fabs/floor/fmod/isnan/isinf/signbit/copysign/nearbyint/pow/nan:
- * 실제 몸체는 math.c에 있다(Stage 4). 대부분 __builtin_*을 거쳐 진짜
- * SSE2/x87 명령(sqrtsd, andpd, fprem, ...)으로 내려간다. pow와 nan만은
- * 대응하는 명령이 없어 직접 구현해야 한다. 그 둘의 __builtin_* 형태는
- * 같은 이름의 libm 함수 호출로 바뀌는데, 그러면 우리 자신을 다시 부르게
- * 된다.
+/* x86_64 math.c and AArch64 math_aarch64.c supply the active core operations.
+ * Instruction-backed wrappers avoid external calls back to the same symbol.
+ * The additional declarations support disabled vendor features; they are not
+ * a promise of a hosted libm implementation. Enabling those features must also
+ * provide their implementations or the link will fail.
  */
 double sqrt(double x);
 double pow(double x, double y);

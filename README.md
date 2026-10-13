@@ -148,8 +148,17 @@ make x86_64         # img64/mowkow64.img 만들기
 make run64          # IDE로 실행 (ATA PIO 경로)
 make run64-ahci     # q35 + AHCI로 실행 (AHCI 경로)
 make parity64       # 머꼬 병행 검사 (호스트 CPython과 견주기)
+make test64-qemu    # 복제 이미지에서 머꼬 + ktest/mtest/wtest IDE 회귀 검사
+make test64-qemu-ahci # 같은 회귀 검사를 q35 + AHCI로 실행
 make clean64        # build64/, img64/ 지우기(rm)
 ```
+
+QEMU 회귀 검사는 원본 이미지를 임시 복제하고 검사 종료 후 복제를 정리합니다.
+`ktest --auto`의 키 입력과 raw 종료 후 cooked 복귀, `mtest` 재실행,
+`wtest HUGE`의 쓰기·읽기와 재부팅 후 `wtest --verify-huge`의 전체 내용·크기를
+고정 출력과 종료 코드로 판정합니다. COM1 로그는
+`/tmp/mowkow-regression-{ide,ahci}-{parity,apps,reboot}.log`에 남습니다.
+Pi 5 실행이나 모든 앱·저장장치 실패 경로를 검증하는 검사는 아닙니다.
 
 일반 빌드는 부팅 중 FAT32에 테스트 파일을 쓰지 않습니다. 저장장치 쓰기
 smoke test가 필요한 폐기 가능한 이미지나 SD 카드에서만 clean build로
@@ -713,5 +722,5 @@ common/mk/config.mk        디렉터리, 도구, 컴파일 옵션 (공통)
 | AHCI 포트 하나, NCQ 없음 | `ahci64.c` | 사용 가능한 첫 포트만. 폴링으로 한 번에 명령 하나 |
 | ATA PIO는 명령당 1섹터 | `ata64.c` | 느림. 어디서나 부팅되는 것이 목적 |
 | MicroPython 단일 인스턴스 | `mpport/` | GC 힙과 상태가 전역 하나. 콘솔마다 파이썬이나 머꼬를 돌릴 수 없고, 두 번째 요청은 거절됨 |
-| 자동 테스트가 머꼬에만 있음 | 양쪽 트리 | `make parity64`가 머꼬를 호스트 CPython과 견줍니다. 커널 쪽은 부팅 시 COM1 자체 점검과 QEMU 수동 확인이 전부 |
+| 자동 검사 범위 제한 | 양쪽 트리 | 64비트는 `make test64-host`와 IDE/AHCI의 머꼬·ktest/mtest/wtest 회귀 검사가 있습니다. 모든 앱·장치나 Pi 5 실행을 포괄하지는 않습니다. 32비트는 수동 검사입니다. |
 | 머꼬가 느림 | `64bit/py64/` | 파이썬으로 쓴 트리 워커를 바이트코드 VM 위에서 돌림. 대화형으로는 괜찮지만 긴 스크립트는 눈에 띄게 느려짐 |

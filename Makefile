@@ -86,6 +86,8 @@ test64-host :
 
 check64 : style64 test64-host x86_64 aarch64
 
-test64-qemu : parity64
+test64-qemu : $(IMG64_FILE)
+	$(PYTHON) $(TOOL64PATH)/app_regression64.py --image $(IMG64_FILE)
 
-test64-qemu-ahci : parity64-ahci
+test64-qemu-ahci : $(IMG64_FILE)
+	$(PYTHON) $(TOOL64PATH)/app_regression64.py --image $(IMG64_FILE) --ahci

@@ -46,8 +46,8 @@
 #define MICROPY_HAL_HAS_VT100 (0)
 
 /*
- * 아직 파일 시스템을 쓰는 reader가 없다. 스크립트 실행은 업스트림 코드 대신
- * fd64로 읽어 오는 자체 mp_reader를 쓴다.
+ * POSIX/VFS reader 대신 mpport_file64.c가 fd64로 소스를 읽고 GC memory
+ * reader로 연결한다. 같은 경로가 스크립트 실행과 import를 지원한다.
  */
 #define MICROPY_READER_POSIX (0)
 #define MICROPY_READER_VFS   (0)

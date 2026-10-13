@@ -17,7 +17,7 @@ A64_IMAGE = $(A64_BUILD_DIR)/kernel_2712.img
 A64_APP_BUILD_DIR = $(BUILD64_DIR)/aarch64-app
 A64_APP_TARGETS = $(foreach app,$(APP64_NAMES),$(A64_APP_BUILD_DIR)/$(app).elf)
 A64_APP_CRT_OBJS = $(A64_APP_BUILD_DIR)/crt0.o \
-	$(A64_APP_BUILD_DIR)/syscall.o $(A64_APP_BUILD_DIR)/string.o
+	$(addprefix $(A64_APP_BUILD_DIR)/,$(addsuffix .o,$(APP64_CRT_COMMON_NAMES)))
 A64_APP_EXTRA_OBJS_mtest = $(A64_APP_BUILD_DIR)/malloc.o
 A64_APP_EXTRA_OBJS_나노 = $(A64_APP_BUILD_DIR)/malloc.o
 A64_BOOT_DIR = $(BUILD64_DIR)/aarch64-boot
@@ -112,11 +112,8 @@ $(A64_APP_BUILD_DIR)/crt0.o : $(APP64_DIR)/crt/crt0_aarch64.S
 	@$(MKDIR) $(dir $@)
 	$(A64_CC) $(A64_APP_CFLAGS) -c $< -o $@
 
-$(A64_APP_BUILD_DIR)/syscall.o : $(APP64_DIR)/crt/syscall.c
-	@$(MKDIR) $(dir $@)
-	$(A64_CC) $(A64_APP_CFLAGS) -c $< -o $@
-
-$(A64_APP_BUILD_DIR)/string.o : $(APP64_DIR)/crt/string.c
+$(addprefix $(A64_APP_BUILD_DIR)/,$(addsuffix .o,$(APP64_CRT_COMMON_NAMES))) : \
+	$(A64_APP_BUILD_DIR)/%.o : $(APP64_DIR)/crt/%.c
 	@$(MKDIR) $(dir $@)
 	$(A64_CC) $(A64_APP_CFLAGS) -c $< -o $@
 

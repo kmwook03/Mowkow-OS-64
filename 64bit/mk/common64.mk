@@ -39,3 +39,6 @@ COMMON64_C_SRCS = \
 # application whose primary source and output use the directory name.
 APP64_DIRS = $(wildcard $(APP64_DIR)/*/)
 APP64_NAMES = $(filter-out crt,$(notdir $(patsubst %/,%,$(APP64_DIRS))))
+
+# Native gates and wrappers are linked by both app architectures.
+APP64_CRT_COMMON_NAMES = syscall syscall_arch64 string

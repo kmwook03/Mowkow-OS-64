@@ -42,6 +42,8 @@ MPY_QSTR_SRCS = $(filter-out $(MPY_PY_DIR)/nlr%.c, $(MPY_CORE_SRCS)) \
 	$(MPY_DIR)/shared/readline/readline.c \
 	$(SRC64_DIR)/mpport/modmowio.c
 
+# mpport_headers64.c directly audits config/libc/HAL/private headers under the
+# strict port policy, even when vendor system headers would suppress them.
 MPY_PORT_SRCS = $(wildcard $(SRC64_DIR)/mpport/*.c) $(wildcard $(SRC64_DIR)/mpport/libc/*.c)
 
 MPY_GEN_DIR = $(BUILD64_DIR)/mpgen

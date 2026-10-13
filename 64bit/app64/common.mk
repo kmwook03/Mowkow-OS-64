@@ -8,10 +8,12 @@ APP64_CFLAGS ?= -ffreestanding -fno-pic -fno-pie -mno-red-zone \
 	-I$(APP64_ROOT)/crt/include
 APP64_LDFLAGS ?= -nostdlib -static -T $(APP64_ROOT)/app64.ld
 
+include $(APP64_ROOT)/../mk/common64.mk
+
 APP_OBJ = $(BUILD64_DIR)/app/$(APP)/$(APP).o
 APP_ELF = $(BUILD64_DIR)/app/$(APP)/$(APP).elf
 CRT_OBJS = $(BUILD64_DIR)/app/crt/crt0.o \
-	$(BUILD64_DIR)/app/crt/syscall.o $(BUILD64_DIR)/app/crt/string.o \
+	$(addprefix $(BUILD64_DIR)/app/crt/,$(addsuffix .o,$(APP64_CRT_COMMON_NAMES))) \
 	$(BUILD64_DIR)/app/crt/malloc.o
 
 all: $(APP_ELF)

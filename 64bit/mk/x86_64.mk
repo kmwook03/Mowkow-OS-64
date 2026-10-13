@@ -60,8 +60,9 @@ PY64_FILES = $(wildcard $(PY64_DIR)/*.PY) $(wildcard $(PY64_DIR)/*.SCM) \
 	$(wildcard $(PY64_DIR)/머꼬/*.mk)
 
 APP64_TARGETS = $(foreach app, $(APP64_NAMES), $(BUILD64_DIR)/app/$(app)/$(app).elf)
-APP64_CRT_OBJS = $(BUILD64_DIR)/app/crt/crt0.o $(BUILD64_DIR)/app/crt/syscall.o \
-	$(BUILD64_DIR)/app/crt/string.o $(BUILD64_DIR)/app/crt/malloc.o
+APP64_CRT_OBJS = $(BUILD64_DIR)/app/crt/crt0.o \
+	$(addprefix $(BUILD64_DIR)/app/crt/,$(addsuffix .o,$(APP64_CRT_COMMON_NAMES))) \
+	$(BUILD64_DIR)/app/crt/malloc.o
 
 # -- 부트로더 (1단계 부트 섹터, 2단계 로더) --
 # 두 단계 모두 flat binary라 BPB와 커널 LBA를 -D로 심어 준다.

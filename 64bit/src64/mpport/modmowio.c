@@ -6,6 +6,7 @@
  */
 #include "py/mperrno.h"
 #include "py/runtime.h"
+#include "mpport_file_internal64.h"
 
 #include <console64.h>
 #include <mpport64.h>
@@ -53,14 +54,8 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(mowio_readline_obj, 0, 1, mowio_readl
 static mp_obj_t mowio_readfile(mp_obj_t path_in)
 {
 	const char *path = mp_obj_str_get_str(path_in);
-	uint8_t *buf;
-	size_t size;
 
-	buf = mpport_load_file(path, &size);
-	if (buf == NULL) {
-		mp_raise_OSError(MP_ENOENT);
-	}
-	return mp_obj_new_str((const char *) buf, size);
+	return mpport_file_text64(path);
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(mowio_readfile_obj, mowio_readfile);
 
