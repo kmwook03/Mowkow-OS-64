@@ -8,6 +8,7 @@
 #include <block64.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <timer64.h>
 
 #define ATA_DATA      0x1f0
 #define ATA_SECCOUNT  0x1f2
@@ -20,22 +21,33 @@
 
 #define ATA_STATUS_ERR 0x01
 #define ATA_STATUS_DRQ 0x08
+#define ATA_STATUS_DF  0x20
 #define ATA_STATUS_BSY 0x80
 #define ATA_CMD_READ     0x20
 #define ATA_CMD_WRITE    0x30
 #define ATA_CMD_IDENTIFY 0xec
 #define ATA_CMD_FLUSH    0xe7
+#define ATA_LBA28_MAX 0x0fffffffULL
+#define ATA_TIMEOUT_MS 5000U
+#define ATA_POLL_LIMIT 10000000U
 
 static uint64_t sector_count;
 static int identified;
 
 static int ata_wait_not_busy(void)
 {
-	uint32_t timeout;
+	uint64_t deadline;
+	uint32_t polls;
+	uint8_t status;
 
-	for (timeout = 0; timeout < 1000000; timeout++) {
-		if ((io_in8(ATA_STATUS) & ATA_STATUS_BSY) == 0) {
-			return 0;
+	deadline = poll_deadline64(ATA_TIMEOUT_MS);
+	for (polls = 0; polls < ATA_POLL_LIMIT; polls++) {
+		status = io_in8(ATA_STATUS);
+		if ((status & ATA_STATUS_BSY) == 0) {
+			return (status & (ATA_STATUS_ERR | ATA_STATUS_DF)) == 0 ? 0 : -1;
+		}
+		if (poll_deadline_expired64(deadline) != 0) {
+			break;
 		}
 	}
 	return -1;
@@ -43,16 +55,21 @@ static int ata_wait_not_busy(void)
 
 static int ata_wait_drq(void)
 {
-	uint32_t timeout;
+	uint64_t deadline;
+	uint32_t polls;
 	uint8_t status;
 
-	for (timeout = 0; timeout < 1000000; timeout++) {
+	deadline = poll_deadline64(ATA_TIMEOUT_MS);
+	for (polls = 0; polls < ATA_POLL_LIMIT; polls++) {
 		status = io_in8(ATA_STATUS);
-		if ((status & ATA_STATUS_ERR) != 0) {
+		if ((status & (ATA_STATUS_ERR | ATA_STATUS_DF)) != 0) {
 			return -1;
 		}
-		if ((status & ATA_STATUS_DRQ) != 0) {
+		if ((status & (ATA_STATUS_BSY | ATA_STATUS_DRQ)) == ATA_STATUS_DRQ) {
 			return 0;
+		}
+		if (poll_deadline_expired64(deadline) != 0) {
+			break;
 		}
 	}
 	return -1;
@@ -98,7 +115,7 @@ static int ata_read_sector(uint32_t lba, uint8_t *dst)
 		dst[i * 2] = (uint8_t) word;
 		dst[i * 2 + 1] = (uint8_t) (word >> 8);
 	}
-	return 0;
+	return ata_wait_not_busy();
 }
 
 static int ata_write_sector(uint32_t lba, const uint8_t *src)
@@ -152,13 +169,17 @@ static int ata64_read(uint64_t lba, uint32_t count, void *dst)
 	uint8_t *out;
 	uint32_t i;
 
-	if (dst == NULL) {
+	if (count == 0) {
+		return 0;
+	}
+	if (dst == NULL || lba > ATA_LBA28_MAX ||
+			(uint64_t) count - 1 > ATA_LBA28_MAX - lba) {
 		return -1;
 	}
 	out = (uint8_t *) dst;
 	for (i = 0; i < count; i++) {
 		if (ata_read_sector((uint32_t) (lba + i),
-				out + i * BLOCK64_SECTOR_SIZE) != 0) {
+				out + (size_t) i * BLOCK64_SECTOR_SIZE) != 0) {
 			return -1;
 		}
 	}
@@ -170,13 +191,17 @@ static int ata64_write(uint64_t lba, uint32_t count, const void *src)
 	const uint8_t *in;
 	uint32_t i;
 
-	if (src == NULL) {
+	if (count == 0) {
+		return 0;
+	}
+	if (src == NULL || lba > ATA_LBA28_MAX ||
+			(uint64_t) count - 1 > ATA_LBA28_MAX - lba) {
 		return -1;
 	}
 	in = (const uint8_t *) src;
 	for (i = 0; i < count; i++) {
 		if (ata_write_sector((uint32_t) (lba + i),
-				in + i * BLOCK64_SECTOR_SIZE) != 0) {
+				in + (size_t) i * BLOCK64_SECTOR_SIZE) != 0) {
 			return -1;
 		}
 	}

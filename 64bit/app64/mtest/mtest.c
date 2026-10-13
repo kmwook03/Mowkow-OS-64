@@ -29,8 +29,9 @@ static void put_dec(unsigned long v)
 
 static void check(const char *name, int ok)
 {
-	write(1, ok ? "ok   " : "FAIL ", 5);
-	puts(name);
+	if (write(1, ok ? "ok   " : "FAIL ", 5) != 5 || puts(name) < 0) {
+		failures++;
+	}
 	if (ok == 0) {
 		failures++;
 	}
@@ -209,18 +210,18 @@ int main(int argc, char **argv)
 {
 	(void) argc;
 	(void) argv;
-	puts("mtest: app64/crt free-list allocator");
+	if (puts("mtest: app64/crt free-list allocator") < 0) { return 1; }
 	test_basic();
 	test_churn();
 	test_coalesce();
 	test_split();
 	test_interleaved();
 	if (failures == 0) {
-		puts("mtest: all passed");
-		return 0;
+		return puts("mtest: PASS") < 0 ? 1 : 0;
 	}
 	write(1, "mtest: ", 7);
 	put_dec((unsigned long) failures);
 	puts(" failed");
+	puts("mtest: FAIL");
 	return 1;
 }

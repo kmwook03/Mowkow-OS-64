@@ -67,7 +67,7 @@ extern process64_current_exit_rsp
 extern process64_current_exit_status
 
 section .text
-; copy_kernel(loader64.asm)은 디스크에서 늘 KERNEL_SECTORS*512바이트를 통째로 옮긴다. 
+; copy_kernel(loader64.asm)은 디스크에서 늘 KERNEL_SECTORS*512바이트를 통째로 옮긴다.
 ; 그 범위가 .bss의 적재 주소를 넘어서기 때문에, .bss 자리에 0이 아니라
 ; 디스크에 있던 파일 내용이 들어온다. C 코드가 전역 변수를 건드리기 전에
 ; 여기서 직접 0으로 채운다.
@@ -272,8 +272,19 @@ exception_common:
 	push r14
 	push r15
 
+	mov ax, KERNEL_DATA_SEL
+	mov ds, ax
+	mov es, ax
+
+	; 커널 예외는 임의의 명령 경계에서 들어오므로 C ABI 정렬을 다시 맞춘다.
+	; rbx 원래 값은 이미 프레임에 저장했고 C 호출 규약도 rbx를 보존한다.
 	mov rdi, rsp
+	mov rbx, rsp
+	and rsp, -16
 	call exception_handler64
+	mov rsp, rbx
+	cmp rax, 1
+	je syscall_exit_to_kernel
 
 	pop r15
 	pop r14

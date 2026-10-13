@@ -70,3 +70,11 @@ SECTIONS
 
 ASSERT(__image_phys_end < 0x800000,
 	"AArch64 image overlaps the early allocator area")
+ASSERT(__image_start - KERNEL_VA_BASE == KERNEL_PHYS_BASE,
+	"AArch64 image must start at the firmware load address")
+ASSERT((ADDR(.vectors) & 2047) == 0,
+	"AArch64 exception vectors must be 2 KiB aligned")
+ASSERT((__stack_bottom & 15) == 0 && (__stack_top & 15) == 0,
+	"AArch64 kernel stack must be 16-byte aligned")
+ASSERT(__stack_top - __stack_bottom == 64K,
+	"AArch64 kernel stack size changed unexpectedly")

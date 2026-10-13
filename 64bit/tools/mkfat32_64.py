@@ -40,17 +40,76 @@ KERNEL_LBA = 32
 VOLUME_ID = 0x646B776D
 VOLUME_LABEL = b"MOWKOW64   "
 
-DATA_LBA = RESERVED_SECTORS + FAT_COUNT * SECTORS_PER_FAT
-CLUSTER_COUNT = (TOTAL_SECTORS - DATA_LBA) // SECTORS_PER_CLUSTER
-KERNEL_MAX_SECTORS = RESERVED_SECTORS - KERNEL_LBA
 FAT32_EOC = 0x0FFFFFFF
+FAT_FILE_SIZE_MAX = 0xFFFFFFFF
+FD64_LFN_MAX_UNITS = 52
+FD64_NAME_MAX = 160
+VFAT_FORBIDDEN = set('"*/:<>?\\|')
 # no RTC in the image builder or the kernel: same fixed stamp both sides
 FIXED_DATE = ((2026 - 1980) << 9) | (1 << 5) | 1
 FIXED_TIME = 0
 
-# FAT32 needs at least 65525 clusters or host tools read the volume as FAT16.
-assert CLUSTER_COUNT >= 65525, CLUSTER_COUNT
-assert (CLUSTER_COUNT + 2) * 4 <= SECTORS_PER_FAT * SECTOR_SIZE
+
+def validate_layout(
+    *,
+    sector_size: int = SECTOR_SIZE,
+    total_sectors: int = TOTAL_SECTORS,
+    reserved_sectors: int = RESERVED_SECTORS,
+    fat_count: int = FAT_COUNT,
+    sectors_per_fat: int = SECTORS_PER_FAT,
+    sectors_per_cluster: int = SECTORS_PER_CLUSTER,
+    root_cluster: int = ROOT_CLUSTER,
+    fsinfo_lba: int = FSINFO_LBA,
+    backup_boot_lba: int = BACKUP_BOOT_LBA,
+    backup_fsinfo_lba: int = BACKUP_FSINFO_LBA,
+    stage2_lba: int = STAGE2_LBA,
+    stage2_sectors: int = STAGE2_SECTORS,
+    kernel_lba: int = KERNEL_LBA,
+) -> None:
+    """Reject a layout that the BPB, boot stages, or FAT cannot represent."""
+    if sector_size != 512:
+        raise ValueError("the boot stages require 512-byte sectors")
+    if total_sectors <= 0 or total_sectors > 0xFFFFFFFF:
+        raise ValueError("total sector count does not fit the FAT32 BPB")
+    if reserved_sectors <= 0 or reserved_sectors > 0xFFFF:
+        raise ValueError("reserved sector count does not fit the FAT32 BPB")
+    if fat_count <= 0 or fat_count > 0xFF or sectors_per_fat <= 0:
+        raise ValueError("invalid FAT geometry")
+    if (sectors_per_cluster <= 0 or
+            sectors_per_cluster & (sectors_per_cluster - 1)):
+        raise ValueError("sectors per cluster must be a power of two")
+    metadata_lbas = {0, fsinfo_lba, backup_boot_lba, backup_fsinfo_lba}
+    if len(metadata_lbas) != 4 or min(metadata_lbas) < 0:
+        raise ValueError("FAT32 boot metadata sectors overlap")
+    if backup_fsinfo_lba != backup_boot_lba + fsinfo_lba:
+        raise ValueError("backup FSInfo offset does not match the primary")
+    if max(metadata_lbas) >= reserved_sectors:
+        raise ValueError("FAT32 boot metadata lies outside the reserved area")
+    if stage2_sectors <= 0 or stage2_lba <= max(metadata_lbas):
+        raise ValueError("stage 2 overlaps FAT32 boot metadata")
+    if stage2_lba + stage2_sectors > kernel_lba:
+        raise ValueError("stage 2 overlaps the kernel reserved area")
+    if kernel_lba < 0 or kernel_lba >= reserved_sectors:
+        raise ValueError("kernel lies outside the reserved area")
+
+    data_lba = reserved_sectors + fat_count * sectors_per_fat
+    if data_lba >= total_sectors:
+        raise ValueError("FAT copies leave no data area")
+    cluster_count = (total_sectors - data_lba) // sectors_per_cluster
+    # FAT32 needs at least 65525 clusters or host tools treat it as FAT16.
+    if cluster_count < 65525:
+        raise ValueError("data area is too small for FAT32")
+    if root_cluster < 2 or root_cluster >= cluster_count + 2:
+        raise ValueError("root cluster lies outside the data area")
+    if (cluster_count + 2) * 4 > sectors_per_fat * sector_size:
+        raise ValueError("FAT is too small for the data area")
+
+
+validate_layout()
+
+DATA_LBA = RESERVED_SECTORS + FAT_COUNT * SECTORS_PER_FAT
+CLUSTER_COUNT = (TOTAL_SECTORS - DATA_LBA) // SECTORS_PER_CLUSTER
+KERNEL_MAX_SECTORS = RESERVED_SECTORS - KERNEL_LBA
 
 MAKE_VARS = {
     "FAT32_64_TOTAL_SECTORS": TOTAL_SECTORS,
@@ -60,6 +119,7 @@ MAKE_VARS = {
     "FAT32_64_ROOT_CLUSTER": ROOT_CLUSTER,
     "FAT32_64_FSINFO_LBA": FSINFO_LBA,
     "FAT32_64_BACKUP_BOOT_LBA": BACKUP_BOOT_LBA,
+    "FAT32_64_BACKUP_FSINFO_LBA": BACKUP_FSINFO_LBA,
     "FAT32_64_VOLUME_ID": VOLUME_ID,
     "STAGE2_64_LBA": STAGE2_LBA,
     "STAGE2_64_SECTORS": STAGE2_SECTORS,
@@ -73,6 +133,39 @@ LFN_LAST = 0x40
 LFN_UNITS_PER_ENTRY = 13
 NT_LOWER_BASE = 0x08
 NT_LOWER_EXT = 0x10
+
+
+def utf16_name_units(name: str) -> list[int]:
+    """Preserve Unicode scalars as UTF-16LE, rejecting unpaired surrogates."""
+    try:
+        encoded = name.encode("utf-16-le")
+    except UnicodeEncodeError as error:
+        raise SystemExit("잘못된 Unicode 파일명입니다") from error
+    return [int.from_bytes(encoded[i:i + 2], "little")
+            for i in range(0, len(encoded), 2)]
+
+
+def validate_file_name(name: str) -> None:
+    """Reject names that the kernel cannot represent or VFAT must alter."""
+    units = utf16_name_units(name)
+    encoded = name.encode("utf-8")
+    if not encoded or len(encoded) >= FD64_NAME_MAX:
+        raise SystemExit(f"이름의 UTF-8 길이가 범위를 벗어납니다: {name}")
+    if len(units) > FD64_LFN_MAX_UNITS:
+        raise SystemExit(f"이름의 UTF-16 길이가 범위를 벗어납니다: {name}")
+    if name in (".", "..") or name[-1] in (" ", "."):
+        raise SystemExit(f"VFAT에서 허용되지 않는 이름입니다: {name}")
+    if any(ord(c) < 0x20 or c in VFAT_FORBIDDEN for c in name):
+        raise SystemExit(f"VFAT에서 허용되지 않는 문자가 있습니다: {name}")
+
+
+def validate_file_size(size: int) -> None:
+    if size < 0 or size > FAT_FILE_SIZE_MAX:
+        raise SystemExit("파일 크기가 FAT32의 4 GiB 제한을 넘습니다")
+
+
+def ascii_fold(name: str) -> str:
+    return "".join(c.lower() if "A" <= c <= "Z" else c for c in name)
 
 
 def short_char(c):
@@ -139,12 +232,12 @@ def short_checksum(name11):
     return sum_
 
 
-def lfn_entries(name, name11):
+def lfn_entries(name: str, name11: bytes) -> list[bytes]:
     """긴 이름 엔트리들. 8.3 엔트리 앞에, 역순으로 놓인다."""
-    units = [ord(c) if ord(c) <= 0xFFFF else ord("_") for c in name]
+    units = utf16_name_units(name)
     total = len(units)
     count = (total + LFN_UNITS_PER_ENTRY - 1) // LFN_UNITS_PER_ENTRY
-    if count > 20:
+    if count > FD64_LFN_MAX_UNITS // LFN_UNITS_PER_ENTRY:
         raise SystemExit(f"이름이 너무 깁니다: {name}")
     checksum = short_checksum(name11)
     out = []
@@ -169,11 +262,13 @@ def lfn_entries(name, name11):
 
 def name_entries(name, cluster, size):
     """이 파일의 디렉터리 엔트리 전부 (필요하면 긴 이름 + 8.3)."""
+    validate_file_name(name)
+    validate_file_size(size)
     name11, lossy = make_shortname(name)
     flags = case_flags(name)
     if not lossy and short_name_text(name11, flags) == name:
         return [dir_entry(name11, 0x20, cluster, size, flags)]
-    # ~1: 이미지 안에서 이름은 유일하므로 번호는 1로 충분하다
+    # build 전에 요청 이름과 이 별칭의 유일성을 함께 검사한다.
     base = name11[:8].rstrip()[:6].ljust(6, b" ")
     name11 = (base[:6] + b"~1")[:8] + name11[8:]
     return lfn_entries(name, name11) + [dir_entry(name11, 0x20, cluster, size, 0)]
@@ -229,6 +324,7 @@ class Volume:
             self.image[lba * SECTOR_SIZE:lba * SECTOR_SIZE + len(chunk)] = chunk
 
     def add_file(self, name, data):
+        validate_file_size(len(data))
         clusters = max(1, math.ceil(len(data) / SECTOR_SIZE))
         first = self.alloc_chain(clusters)
         self.write_cluster_data(first, data)
@@ -243,6 +339,25 @@ class Volume:
         packed = packed.ljust(SECTORS_PER_FAT * SECTOR_SIZE, b"\0")
         for copy in range(FAT_COUNT):
             self.put_sectors(RESERVED_SECTORS + copy * SECTORS_PER_FAT, packed)
+
+
+def validate_files(files: list[tuple[str, bytes]]) -> None:
+    seen_names = set()
+    seen_aliases = set()
+    for name, data in files:
+        validate_file_name(name)
+        validate_file_size(len(data))
+        folded = ascii_fold(name)
+        if folded in seen_names:
+            raise SystemExit(
+                f"중복되거나 대소문자만 다른 이름입니다: {name}"
+            )
+        seen_names.add(folded)
+        entries = name_entries(name, 2, len(data))
+        alias = entries[-1][:11]
+        if alias in seen_aliases:
+            raise SystemExit(f"8.3 별칭이 충돌합니다: {name}")
+        seen_aliases.add(alias)
 
 
 def build(image_path, boot, loader, kernel, h04, app_specs):
@@ -273,10 +388,10 @@ def build(image_path, boot, loader, kernel, h04, app_specs):
             raise SystemExit(f"bad app spec: {spec}")
         with open(path, "rb") as f:
             files.append((name, f.read()))
+    validate_files(files)
 
     # the root directory is itself a cluster chain, so reserve it first and let
     # the files follow; the kernel grows the chain when it runs out of slots
-    entries_per_cluster = SECTOR_SIZE * SECTORS_PER_CLUSTER // 32
     # a long name costs extra entries, so size the root by bytes, not by files
     root_bytes = 32 + sum(len(b"".join(name_entries(n, 2, 0))) for n, _ in files)
     root_clusters = max(1, math.ceil(root_bytes / (SECTOR_SIZE * SECTORS_PER_CLUSTER)))

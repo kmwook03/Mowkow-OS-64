@@ -16,6 +16,7 @@ QEMU를 화면 없이 띄우고, QMP send-key로 콘솔에 명령을 쳐 넣고,
   - 장치 쪽에 되울린 입력 줄은 순서대로 하나씩 버린다 (호스트는 되울리지 않는다)
 그 나머지 -- 값과 오류의 차례 -- 가 같아야 한다.
 """
+from __future__ import annotations
 
 import argparse
 import json
@@ -254,19 +255,19 @@ CASES = [
 ]
 
 
-def main():
+def main(argv: list[str] | None = None, console_factory: type[Console] = Console) -> int:
     parser = argparse.ArgumentParser(description="머꼬 병행 검사")
     parser.add_argument("--image", default=DEFAULT_IMAGE)
     parser.add_argument("--ahci", action="store_true", help="q35 + AHCI로 부팅")
     parser.add_argument("--case", help="이 검사 하나만")
     parser.add_argument("--log", default="/tmp/mowkow-parity.log")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     cases = [c for c in CASES if args.case in (None, c[0])]
     if not cases:
         parser.error("그런 검사가 없다: %s" % args.case)
 
-    console = Console(args.image, args.ahci, args.log)
+    console = console_factory(args.image, args.ahci, args.log)
     failures = []
     try:
         smoke = console.run("py smoke.py")

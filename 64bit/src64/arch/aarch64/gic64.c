@@ -23,8 +23,6 @@
 #define TIMER_INTID 30U
 #define SPURIOUS_INTID 1023U
 
-extern uintptr_t arch64_timer_handle_irq(uintptr_t frame);
-
 static volatile uint32_t *gicd_reg64(uint32_t offset)
 {
 	return (volatile uint32_t *) arch64_phys_to_virt(

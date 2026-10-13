@@ -8,6 +8,9 @@
 /* VFAT은 UTF-16 255단위까지 허용하지만, 이 커널은 이름을 실어 나르는
    버퍼를 스택에 두려고 더 짧게 자른다. 이름을 받는 모든 경로가 두 한계를
    함께 지킨다. */
+/* Valid UTF-8 names round-trip as UTF-16; a surrogate pair counts as two units.
+ * Malformed UTF and names exceeding either limit are rejected before lookup.
+ */
 #define FD64_LFN_MAX_UNITS 52
 #define FD64_NAME_MAX 160
 
@@ -22,6 +25,17 @@ struct FDINFO64 {
 	uint16_t clustno;
 	uint32_t size;
 } __attribute__((packed));
+
+_Static_assert(offsetof(struct FDINFO64, type) == 11,
+	"FAT directory attribute offset mismatch");
+_Static_assert(offsetof(struct FDINFO64, clustno_hi) == 20,
+	"FAT32 high cluster offset mismatch");
+_Static_assert(offsetof(struct FDINFO64, clustno) == 26,
+	"FAT32 low cluster offset mismatch");
+_Static_assert(offsetof(struct FDINFO64, size) == 28,
+	"FAT directory size offset mismatch");
+_Static_assert(sizeof(struct FDINFO64) == 32,
+	"FAT directory entry must be 32 bytes");
 
 /* 디렉터리 항목이 어디 있는지. FAT32의 루트는 클러스터 사슬이라 고정 배열
    번호로는 자리를 짚을 수 없다. cluster == 0은 "항목 없음", 즉 닫힌
@@ -40,6 +54,8 @@ struct FDHANDLE64 {
 	uint32_t cluster;
 };
 
+/* All public operations are task-context only and may sleep on the filesystem
+   mutex. They must not be called from IRQ handlers. */
 int fd64_init(void);
 uint32_t fd64_file_count(void);
 /* `index`번째 항목을 *out에, 그 이름을 `name`에 복사한다. 이름은 긴 이름이

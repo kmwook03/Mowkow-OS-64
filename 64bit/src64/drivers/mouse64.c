@@ -9,49 +9,117 @@
 #include <fifo64.h>
 #include <int64.h>
 #include <mouse64.h>
+#include <stddef.h>
+#include <timer64.h>
 
 #define PORT_KEYDAT 0x0060
 #define PORT_KEYSTA 0x0064
 #define PORT_KEYCMD 0x0064
 #define KEYSTA_SEND_NOTREADY 0x02
+#define KEYSTA_TIMEOUT_ERROR 0x40
+#define KEYSTA_PARITY_ERROR  0x80
 #define KEYCMD_SENDTO_MOUSE  0xd4
 #define MOUSECMD_ENABLE      0xf4
+#define KBC_TIMEOUT_MS 200U
+#define KBC_POLL_LIMIT 1000000U
 
 static struct FIFO64 *mousefifo64;
 
-static void wait_kbc_sendready64(void)
+static int wait_kbc_sendready64(void)
 {
-	while ((io_in8(PORT_KEYSTA) & KEYSTA_SEND_NOTREADY) != 0) {
+	uint64_t deadline;
+	uint32_t polls;
+	uint8_t status;
+
+	deadline = poll_deadline64(KBC_TIMEOUT_MS);
+	for (polls = 0; polls < KBC_POLL_LIMIT; polls++) {
+		status = io_in8(PORT_KEYSTA);
+		if ((status & (KEYSTA_TIMEOUT_ERROR | KEYSTA_PARITY_ERROR)) != 0) {
+			return -1;
+		}
+		if ((status & KEYSTA_SEND_NOTREADY) == 0) {
+			return 0;
+		}
+		if (poll_deadline_expired64(deadline) != 0) {
+			break;
+		}
 	}
+	return -1;
 }
 
-void init_mouse64(struct FIFO64 *fifo, struct MOUSE_DEC64 *mdec)
+int init_mouse64(struct FIFO64 *fifo, struct MOUSE_DEC64 *mdec)
 {
+	if (fifo == NULL || mdec == NULL) {
+		return -1;
+	}
 	mousefifo64 = fifo;
-	wait_kbc_sendready64();
+	if (wait_kbc_sendready64() != 0) {
+		return -1;
+	}
 	io_out8(PORT_KEYCMD, KEYCMD_SENDTO_MOUSE);
-	wait_kbc_sendready64();
+	if (wait_kbc_sendready64() != 0) {
+		return -1;
+	}
 	io_out8(PORT_KEYDAT, MOUSECMD_ENABLE);
 	mdec->phase = 0;        /* ACK(0xfa) 대기 */
 	mdec->x = 0;
 	mdec->y = 0;
 	mdec->btn = 0;
+	mdec->discard = 0;
+	return 0;
 }
 
 void inthandler2c_64(void)
 {
 	struct EVENT64 event;
+	uint8_t status;
+	uint8_t byte;
 
 	/* 슬레이브 먼저, 그다음 마스터 (캐스케이드 IRQ2). */
 	io_out8(PIC1_OCW2, 0x64);
 	io_out8(PIC0_OCW2, 0x62);
 	event.type = EVENT64_MOUSE;
-	event.data = io_in8(PORT_KEYDAT);
+	status = io_in8(PORT_KEYSTA);
+	byte = io_in8(PORT_KEYDAT);
+	event.data = status & (KEYSTA_TIMEOUT_ERROR | KEYSTA_PARITY_ERROR) ?
+		MOUSE64_DATA_ERROR : byte;
 	fifo64_put(mousefifo64, event);
+}
+
+void mouse64_decode_reset(struct MOUSE_DEC64 *mdec)
+{
+	if (mdec != NULL) {
+		mdec->phase = 1;
+		mdec->discard = 0;
+	}
+}
+
+void mouse64_decode_error(struct MOUSE_DEC64 *mdec)
+{
+	if (mdec == NULL) {
+		return;
+	}
+	if (mdec->discard != 0 && mdec->discard <= 2) {
+		mdec->discard--;
+		return;
+	}
+	mdec->discard = mdec->phase >= 1 && mdec->phase <= 3 ?
+		(uint8_t) (3 - mdec->phase) : 0;
+	mdec->phase = 1;
 }
 
 int mouse64_decode(struct MOUSE_DEC64 *mdec, uint8_t dat)
 {
+	if (mdec == NULL) {
+		return 0;
+	}
+	if (mdec->phase < 0 || mdec->phase > 3 || mdec->discard > 2) {
+		mouse64_decode_reset(mdec);
+	}
+	if (mdec->discard != 0) {
+		mdec->discard--;
+		return 0;
+	}
 	if (mdec->phase == 0) {
 		if (dat == 0xfa) {
 			mdec->phase = 1;
@@ -59,7 +127,7 @@ int mouse64_decode(struct MOUSE_DEC64 *mdec, uint8_t dat)
 		return 0;
 	}
 	if (mdec->phase == 1) {
-		if ((dat & 0xc8) == 0x08) {
+		if ((dat & 0x08) != 0) {
 			mdec->buf[0] = dat;
 			mdec->phase = 2;
 		}
@@ -73,6 +141,10 @@ int mouse64_decode(struct MOUSE_DEC64 *mdec, uint8_t dat)
 	if (mdec->phase == 3) {
 		mdec->buf[2] = dat;
 		mdec->phase = 1;
+		/* Consume all three bytes of an overflow packet before resyncing. */
+		if ((mdec->buf[0] & 0xc8) != 0x08) {
+			return 0;
+		}
 		mdec->btn = mdec->buf[0] & 0x07;
 		mdec->x = mdec->buf[1];
 		mdec->y = mdec->buf[2];

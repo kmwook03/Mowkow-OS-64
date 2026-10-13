@@ -20,6 +20,7 @@ struct CACHE64_BLOCK {
 	uint8_t valid;
 	uint8_t dirty;
 	uint8_t meta;
+	uint8_t sectors;
 };
 
 static struct CACHE64_BLOCK blocks[CACHE64_BLOCKS];
@@ -30,18 +31,56 @@ static uint8_t *block_data(uint32_t index)
 	return cache_data + (size_t) index * BLOCK_BYTES;
 }
 
+static int mode_valid(int mode)
+{
+	return mode == CACHE64_READ || mode == CACHE64_WRITE ||
+		mode == CACHE64_WRITE_META;
+}
+
+static uint32_t block_sectors(uint32_t tag)
+{
+	uint64_t first_lba;
+	uint64_t remaining;
+	uint64_t total;
+
+	first_lba = (uint64_t) tag * CACHE64_BLOCK_SECTORS;
+	total = block64_sector_count();
+	if (total == 0) {
+		return CACHE64_BLOCK_SECTORS;
+	}
+	if (first_lba >= total) {
+		return 0;
+	}
+	remaining = total - first_lba;
+	return remaining < CACHE64_BLOCK_SECTORS ? (uint32_t) remaining :
+		CACHE64_BLOCK_SECTORS;
+}
+
+static void clear_bytes(uint8_t *buffer, size_t bytes)
+{
+	size_t i;
+
+	for (i = 0; i < bytes; i++) {
+		buffer[i] = 0;
+	}
+}
+
 /* 내보낸 섹터 수를 돌려준다. 할 일이 없으면 0, 입출력 오류면 -1. */
 static int write_back(uint32_t index)
 {
 	if (blocks[index].valid == 0 || blocks[index].dirty == 0) {
 		return 0;
 	}
+	if (blocks[index].sectors == 0 ||
+			blocks[index].sectors > CACHE64_BLOCK_SECTORS) {
+		return -1;
+	}
 	if (block64_write((uint64_t) blocks[index].tag * CACHE64_BLOCK_SECTORS,
-			CACHE64_BLOCK_SECTORS, block_data(index)) != 0) {
+			blocks[index].sectors, block_data(index)) != 0) {
 		return -1;
 	}
 	blocks[index].dirty = 0;
-	return CACHE64_BLOCK_SECTORS;
+	return blocks[index].sectors;
 }
 
 int cache64_init(void)
@@ -60,6 +99,7 @@ int cache64_init(void)
 		blocks[i].valid = 0;
 		blocks[i].dirty = 0;
 		blocks[i].meta = 0;
+		blocks[i].sectors = 0;
 	}
 	return 0;
 }
@@ -68,25 +108,40 @@ uint8_t *cache64_get(uint32_t lba, int mode)
 {
 	uint32_t tag;
 	uint32_t index;
+	uint32_t sectors;
+	size_t valid_bytes;
 
-	if (cache_data == NULL) {
+	if (cache_data == NULL || mode_valid(mode) == 0) {
 		return NULL;
 	}
 	tag = lba / CACHE64_BLOCK_SECTORS;
 	index = tag % CACHE64_BLOCKS;
 	if (blocks[index].valid == 0 || blocks[index].tag != tag) {
+		sectors = block_sectors(tag);
+		if (sectors == 0 || lba % CACHE64_BLOCK_SECTORS >= sectors) {
+			return NULL;
+		}
 		if (write_back(index) < 0) {
 			return NULL;
 		}
 		blocks[index].valid = 0;
+		blocks[index].dirty = 0;
+		blocks[index].meta = 0;
+		blocks[index].sectors = 0;
 		if (block64_read((uint64_t) tag * CACHE64_BLOCK_SECTORS,
-				CACHE64_BLOCK_SECTORS, block_data(index)) != 0) {
+				sectors, block_data(index)) != 0) {
 			return NULL;
 		}
+		valid_bytes = (size_t) sectors * BLOCK64_SECTOR_SIZE;
+		clear_bytes(block_data(index) + valid_bytes,
+			BLOCK_BYTES - valid_bytes);
 		blocks[index].tag = tag;
 		blocks[index].valid = 1;
 		blocks[index].dirty = 0;
 		blocks[index].meta = 0;
+		blocks[index].sectors = (uint8_t) sectors;
+	} else if (lba % CACHE64_BLOCK_SECTORS >= blocks[index].sectors) {
+		return NULL;
 	}
 	if (mode != CACHE64_READ) {
 		blocks[index].dirty = 1;
@@ -106,6 +161,9 @@ int cache64_flush(uint32_t start, uint32_t end, int meta)
 	int written;
 	int n;
 
+	if (cache_data == NULL || start > end || (meta != 0 && meta != 1)) {
+		return -1;
+	}
 	written = 0;
 	for (i = 0; i < CACHE64_BLOCKS; i++) {
 		if (blocks[i].valid == 0 || blocks[i].dirty == 0) {
@@ -132,7 +190,11 @@ void cache64_discard_dirty(void)
 	uint32_t i;
 
 	for (i = 0; i < CACHE64_BLOCKS; i++) {
-		blocks[i].dirty = 0;
-		blocks[i].meta = 0;
+		if (blocks[i].dirty != 0) {
+			blocks[i].valid = 0;
+			blocks[i].dirty = 0;
+			blocks[i].meta = 0;
+			blocks[i].sectors = 0;
+		}
 	}
 }

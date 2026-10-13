@@ -7,7 +7,7 @@
  */
 #include "py/mphal.h"
 
-#include <asmfunc64.h>
+#include <arch/platform64.h>
 #ifdef __aarch64__
 #include <arch/arch64.h>
 #endif
@@ -39,7 +39,7 @@ mp_uint_t mp_hal_stdout_tx_strn(const char *str, size_t len)
 void mp_hal_stdout_tx_strn_cooked(const char *str, size_t len)
 {
 	/* console64_write가 줄바꿈 변환을 이미 해 준다. ports/unix가 cooked와
-		 * uncooked를 같은 함수로 넘기는 것과 같은 이유다. */
+	 * uncooked를 같은 함수로 넘기는 것과 같은 이유다. */
 	mp_hal_stdout_tx_strn(str, len);
 }
 
@@ -57,18 +57,10 @@ void mp_hal_delay_ms(mp_uint_t ms)
 {
 	uint64_t target;
 
-
-#ifdef __aarch64__
 	target = mpport_ticks_100hz() + (ms + 9) / 10;
 	while (mpport_ticks_100hz() < target) {
-		arch64_halt_with_irq();
+		platform_wait_for_interrupt64();
 	}
-#else
-	target = mpport_ticks_100hz() + (ms + 9) / 10;
-	while (mpport_ticks_100hz() < target) {
-		io_hlt();
-	}
-#endif
 }
 
 /*

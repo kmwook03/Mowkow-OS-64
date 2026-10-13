@@ -1,11 +1,15 @@
 #ifndef MOWKOW_APP64_MOWOS_H
 #define MOWKOW_APP64_MOWOS_H
 
-typedef unsigned long size_t;
+/* Share bounded string builders with the kernel; no syscall/app ABI change. */
+#include "../../../src64/include/string_copy64.h"
 
 #define O_CREAT 1
 #define O_TRUNC 2
 
+/* One syscall: preserve negative errors, zero/EOF and partial byte counts.
+ * Callers own retries and advancement; these wrappers do not consume the rest.
+ */
 long write(int fd, const void *buf, size_t len);
 long read(int fd, void *buf, size_t len);
 int open(const char *path, int flags);
@@ -14,6 +18,11 @@ long seek(int fd, long offset, int whence);
 void exit(int status) __attribute__((noreturn));
 void *alloc(size_t size);
 void free_alloc(void *ptr, size_t size);
+/* Single-context CRT heap: 16-byte alignment, malloc(0)/failure returns NULL.
+ * free(NULL), foreign/interior pointers and already-free blocks are ignored.
+ * Detected header corruption freezes allocator mutation until process exit.
+ * A stale pointer to an address reallocated since free cannot be distinguished.
+ */
 void *malloc(size_t size);
 void free(void *ptr);
 unsigned long ticks(void);
@@ -65,6 +74,10 @@ int strncmp(const char *a, const char *b, size_t size);
 void *memcpy(void *dst, const void *src, size_t size);
 void *memset(void *dst, int value, size_t size);
 int memcmp(const void *a, const void *b, size_t size);
+/* Write the whole string and newline; return their byte count or a negative
+ * error. Partial writes retry; zero/oversized progress is -5. NULL is -22,
+ * a count/error beyond int is -75. Failure may follow already-written bytes.
+ */
 int puts(const char *s);
 
 #endif

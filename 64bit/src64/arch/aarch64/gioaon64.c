@@ -23,7 +23,7 @@
 #define GIO_IODIR_OFFSET 0x08
 #define ACT_LED_PIN 9
 #define ACT_LED_MASK (1U << ACT_LED_PIN)
-#define HANGUL_FONT_SIZE 11520U
+#define HANGUL_FONT_SIZE HANGUL64_FONT_SIZE
 
 static uint8_t disk_hangul_font[HANGUL_FONT_SIZE];
 
@@ -113,6 +113,7 @@ static void delay_ms64(uint32_t milliseconds)
 	}
 }
 
+#if MOWKOW64_BOOT_TESTS
 static int m4_write_smoke64(void)
 {
 	static const char payload[] = "Mowkow OS M4 SDHCI write smoke\n";
@@ -154,6 +155,7 @@ static int m4_write_smoke64(void)
 	}
 	return 0;
 }
+#endif
 
 static int m4_load_hangul_font64(void)
 {
@@ -196,7 +198,8 @@ static int m7a_sheet32_smoke64(void)
 	m7a_smoke_buffer[5] = 9U;
 	m7a_smoke_buffer[6] = 14U;
 	m7a_smoke_buffer[7] = 16U;
-	ctl = shtctl64_init(&memman64, m7a_smoke_vram, M7A_SMOKE_WIDTH,
+	ctl = shtctl64_init(&memman64, m7a_smoke_vram, sizeof(m7a_smoke_vram),
+		M7A_SMOKE_WIDTH,
 		M7A_SMOKE_HEIGHT, M7A_SMOKE_STRIDE, 32U);
 	if (ctl == NULL) {
 		return -1;
@@ -205,7 +208,8 @@ static int m7a_sheet32_smoke64(void)
 	if (sheet == NULL) {
 		return -2;
 	}
-	sheet64_setbuf(sheet, m7a_smoke_buffer, M7A_SMOKE_WIDTH,
+	sheet64_setbuf(sheet, m7a_smoke_buffer, sizeof(m7a_smoke_buffer),
+		M7A_SMOKE_WIDTH, M7A_SMOKE_WIDTH,
 		M7A_SMOKE_HEIGHT, -1);
 	sheet->vx0 = 0;
 	sheet->vy0 = 0;
@@ -285,7 +289,9 @@ static int m7b_live_sheet64(const struct BOOTINFO64 *bootinfo)
 	y_offset = (uint32_t) bootinfo->scrny - M7B_STRIP_HEIGHT - 32U;
 	vram = (uint8_t *) bootinfo->vram +
 		(uintptr_t) y_offset * bootinfo->bytes_per_scanline + 64U * 4U;
-	ctl = shtctl64_init(&memman64, vram, M7B_STRIP_WIDTH,
+	ctl = shtctl64_init(&memman64, vram,
+		(size_t) (bootinfo->scrny - y_offset) * bootinfo->bytes_per_scanline -
+		(size_t) 64U * 4U, M7B_STRIP_WIDTH,
 		M7B_STRIP_HEIGHT, bootinfo->bytes_per_scanline, 32U);
 	if (ctl == NULL) {
 		return -2;
@@ -294,7 +300,8 @@ static int m7b_live_sheet64(const struct BOOTINFO64 *bootinfo)
 	if (sheet == NULL) {
 		return -3;
 	}
-	sheet64_setbuf(sheet, m7b_strip_buffer, M7B_STRIP_WIDTH,
+	sheet64_setbuf(sheet, m7b_strip_buffer, sizeof(m7b_strip_buffer),
+		M7B_STRIP_WIDTH, M7B_STRIP_WIDTH,
 		M7B_STRIP_HEIGHT, -1);
 	sheet->vx0 = 0;
 	sheet->vy0 = 0;
@@ -317,6 +324,7 @@ static int m7d_live_window64(const struct BOOTINFO64 *bootinfo)
 	volatile uint32_t *row1;
 	uint32_t x_offset;
 	uint32_t y_offset;
+	struct SURFACE64 surface;
 
 	if (bootinfo == NULL || bootinfo->bpp != 32U ||
 			bootinfo->scrnx < M7D_WINDOW_WIDTH + 32U ||
@@ -327,7 +335,9 @@ static int m7d_live_window64(const struct BOOTINFO64 *bootinfo)
 	y_offset = (uint32_t) bootinfo->scrny - M7D_WINDOW_HEIGHT - 64U;
 	vram = (uint8_t *) bootinfo->vram +
 		(uintptr_t) y_offset * bootinfo->bytes_per_scanline + x_offset * 4U;
-	ctl = shtctl64_init(&memman64, vram, M7D_WINDOW_WIDTH,
+	ctl = shtctl64_init(&memman64, vram,
+		(size_t) (bootinfo->scrny - y_offset) * bootinfo->bytes_per_scanline -
+		(size_t) x_offset * 4U, M7D_WINDOW_WIDTH,
 		M7D_WINDOW_HEIGHT, bootinfo->bytes_per_scanline, 32U);
 	if (ctl == NULL) {
 		return -2;
@@ -337,10 +347,11 @@ static int m7d_live_window64(const struct BOOTINFO64 *bootinfo)
 		return -3;
 	}
 	window64_set_hangul_font(disk_hangul_font);
-	make_window64(m7d_window_buffer, M7D_WINDOW_WIDTH, M7D_WINDOW_HEIGHT,
-		"머꼬 M7d", 1);
-	sheet64_setbuf(sheet, m7d_window_buffer, M7D_WINDOW_WIDTH,
+	sheet64_setbuf(sheet, m7d_window_buffer, sizeof(m7d_window_buffer),
+		M7D_WINDOW_WIDTH, M7D_WINDOW_WIDTH,
 		M7D_WINDOW_HEIGHT, -1);
+	surface = sheet64_surface(sheet);
+	make_window64(&surface, "머꼬 M7d", 1);
 	sheet->vx0 = 0;
 	sheet->vy0 = 0;
 	sheet64_updown(sheet, 0);
@@ -361,6 +372,7 @@ static int m7e_gui_stack64(const struct BOOTINFO64 *bootinfo)
 	uint32_t x;
 	uint32_t y;
 	int found;
+	struct SURFACE64 surface;
 
 	console_sheet = gui64_init(bootinfo);
 	if (console_sheet == NULL || console_sheet->buf == NULL ||
@@ -370,8 +382,13 @@ static int m7e_gui_stack64(const struct BOOTINFO64 *bootinfo)
 	}
 	m7e_console_sheet = console_sheet;
 	window64_set_hangul_font(disk_hangul_font);
-	putstr64(console_sheet->buf, (uint32_t) console_sheet->bxsize,
-		64, 64, COL64_FFFFFF, label);
+	surface = (struct SURFACE64) {
+		console_sheet->buf, (size_t) console_sheet->bxsize * console_sheet->bysize,
+		(uint32_t) console_sheet->bxsize, console_sheet->bxsize, console_sheet->bysize,
+		0, 0, console_sheet->bxsize, console_sheet->bysize
+	};
+
+	putstr64(&surface, 64, 64, COL64_FFFFFF, label);
 	sheet64_refresh(console_sheet, 64, 64, 400, 80);
 	found = 0;
 	for (y = 64U; y < 80U && found == 0; y++) {
@@ -533,12 +550,15 @@ void aarch64_high_main(void)
 	struct FIFO64 hid_fifo;
 	struct EVENT64 hid_event_buffer[32];
 	struct EVENT64 hid_event;
+	uint64_t keyboard_test_deadline;
 	uint64_t heartbeat_frequency;
 	uint64_t heartbeat_deadline;
 	uint64_t heartbeat_half_period;
 	int heartbeat_led_on;
 	int fp_test_reported;
 	uintptr_t rp1_base;
+	int mouse_available;
+	int keyboard_available = 1;
 	int mouse_status;
 	int status;
 
@@ -546,6 +566,9 @@ void aarch64_high_main(void)
 	arch64_cpu_init();
 	status = arch64_fb_probe(&bootinfo);
 	if (status != 0) {
+		arch64_dbg_puts("PANIC: framebuffer init failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
 		arch64_panic_blink(status == -2 ? 2 : 3);
 	}
 	init_palette64();
@@ -562,17 +585,35 @@ void aarch64_high_main(void)
 	   초기화한다. scheduler 뒤에 다시 초기화하면 이미 할당한 스택이
 	   free list에 재등록되어 예외 복귀 frame이 파일 데이터에 덮어쓰인다. */
 	init_memory64();
-	arch64_scheduler_init();
+	if (memman64_total(&memman64) < MEMMAN64_PAGE_SIZE) {
+		arch64_dbg_puts("PANIC: memory init found no usable pages\n");
+		arch64_panic_blink(4);
+	}
+	status = arch64_scheduler_init();
+	if (status != 0) {
+		arch64_dbg_puts("M3: scheduler init failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
+		arch64_panic_blink(4);
+	}
 	arch64_timer_init(NULL);
 	arch64_dbg_puts("M3: exceptions + scheduler + high-half paging OK\n");
-	if (block64_init() != 0) {
-		arch64_dbg_puts("M4a: SDHCI init failed\n");
+	status = block64_init();
+	if (status != 0) {
+		arch64_dbg_puts("M4a: SDHCI init failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
 		arch64_panic_blink(6);
 	}
-	if (fd64_init() != 0) {
-		arch64_dbg_puts("M4a: FAT32 mount failed\n");
+	status = fd64_init();
+	if (status != 0) {
+		arch64_dbg_puts("M4a: FAT32 mount failed, status=");
+		dbg_hex32((uint32_t) status);
+		arch64_dbg_puts("\n");
 		arch64_panic_blink(7);
 	}
+#if MOWKOW64_BOOT_TESTS
+	arch64_dbg_puts("destructive boot tests=enabled\n");
 	status = m4_write_smoke64();
 	if (status == -2) {
 		arch64_dbg_puts("M4b: existing write smoke is corrupt\n");
@@ -581,11 +622,12 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("M4b: write smoke failed\n");
 		arch64_panic_blink(8);
 	}
+#endif
 	if (m4_load_hangul_font64() != 0) {
 		arch64_dbg_puts("M4c: H04.FNT load failed\n");
 		arch64_panic_blink(10);
 	}
-	arch64_dbg_puts("M4: SDHCI + FAT32 + write + Hangul font OK\n");
+	arch64_dbg_puts("M4: SDHCI + FAT32 + Hangul font OK\n");
 	rp1_vendor_device = 0;
 	rp1_class_revision = 0;
 	rp1_bar0 = 0;
@@ -886,7 +928,7 @@ void aarch64_high_main(void)
 		arch64_dbg_puts(" ptr-lo=");
 		dbg_hex32(xhci_descriptor.trb_pointer_low);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(22);
+		goto keyboard_degraded64;
 	}
 	xhci_hid.vendor_product = 0;
 	xhci_hid.configuration_value = 0;
@@ -917,7 +959,7 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("/");
 		dbg_hex32(xhci_hid.event_control);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(23);
+		goto keyboard_degraded64;
 	}
 	xhci_configure.endpoint_id = 0;
 	xhci_configure.endpoint_state = 0;
@@ -944,7 +986,7 @@ void aarch64_high_main(void)
 		arch64_dbg_puts(" ptr-lo=");
 		dbg_hex32(xhci_configure.command_pointer_low);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(24);
+		goto keyboard_degraded64;
 	}
 	xhci_key.modifier = 0;
 	xhci_key.keycode = 0;
@@ -958,7 +1000,17 @@ void aarch64_high_main(void)
 		status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid);
 	}
 	arch64_dbg_puts("M6 keyboard test: press and release one letter key\n");
+	__asm__ volatile ("mrs %0, cntfrq_el0" : "=r" (heartbeat_frequency));
+	if (heartbeat_frequency == 0 || heartbeat_frequency > (uint64_t) INT64_MAX / 30U) {
+		arch64_dbg_puts("M6k: USB keyboard test clock frequency invalid\n");
+		goto keyboard_degraded64;
+	}
+	keyboard_test_deadline = counter64() + heartbeat_frequency * 30U;
 	while (status == 0 && xhci_key.keycode == 0) {
+		if ((int64_t) (counter64() - keyboard_test_deadline) >= 0) {
+			status = -110;
+			break;
+		}
 		status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
 			&xhci_hid, hid_report);
 		if (status == 0) {
@@ -968,9 +1020,13 @@ void aarch64_high_main(void)
 		if (status < 0) {
 			break;
 		}
+		if (usbhid64_keyboard_report_valid(hid_report, (size_t) status) != 0) {
+			status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid);
+			continue;
+		}
 		xhci_key.modifier = hid_report[0];
 		for (hid_index = 2U; hid_index < 8U; hid_index++) {
-			if (hid_report[hid_index] != 0) {
+			if (usbhid64_key_transition(hid_report[hid_index], 1, &key_make) == 0) {
 				xhci_key.keycode = hid_report[hid_index];
 				break;
 			}
@@ -998,14 +1054,19 @@ void aarch64_high_main(void)
 		arch64_dbg_puts(" ptr-lo=");
 		dbg_hex32(xhci_key.trb_pointer_low);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(25);
+		goto keyboard_degraded64;
 	}
 	key_make = 0;
 	key_break = 0;
+	keyboard_test_deadline = counter64() + heartbeat_frequency * 30U;
 	status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid);
 	while (status == 0) {
 		int key_still_pressed = 0;
 
+		if ((int64_t) (counter64() - keyboard_test_deadline) >= 0) {
+			status = -110;
+			break;
+		}
 		status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
 			&xhci_hid, hid_report);
 		if (status == 0) {
@@ -1020,6 +1081,9 @@ void aarch64_high_main(void)
 				key_still_pressed = 1;
 				break;
 			}
+		}
+		if (usbhid64_keyboard_report_valid(hid_report, (size_t) status) != 0) {
+			key_still_pressed = 1;
 		}
 		if (key_still_pressed == 0) {
 			status = 0;
@@ -1044,13 +1108,15 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("/");
 		dbg_hex32(0);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(26);
+		goto keyboard_degraded64;
 	}
 	hid_event.type = 0;
 	hid_event.data = 0;
-	fifo64_init(&hid_fifo, 2U, hid_event_buffer, NULL);
-	status = usbhid64_emit_transition(&hid_fifo,
-		(uint8_t) xhci_key.keycode, 1);
+	status = fifo64_init(&hid_fifo, 2U, hid_event_buffer, NULL);
+	if (status == 0) {
+		status = usbhid64_emit_transition(&hid_fifo,
+			(uint8_t) xhci_key.keycode, 1);
+	}
 	if (status == 0) {
 		status = usbhid64_emit_transition(&hid_fifo,
 			(uint8_t) xhci_key.keycode, 0);
@@ -1078,6 +1144,11 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(27);
 	}
+	goto keyboard_done64;
+keyboard_degraded64:
+	keyboard_available = 0;
+	arch64_dbg_puts("DEGRADED: USB keyboard rejected; continuing without keyboard\n");
+keyboard_done64:
 	status = m8a_mouse_report_smoke64();
 	if (status != 0) {
 		arch64_dbg_puts("M8a: USB HID mouse report decode failed, status=");
@@ -1092,6 +1163,7 @@ void aarch64_high_main(void)
 	mouse_descriptor = (struct XHCI64_DESCRIPTOR_RESULT) { 0 };
 	mouse_hid = (struct XHCI64_HID_RESULT) { 0 };
 	mouse_configure = (struct XHCI64_CONFIGURE_RESULT) { 0 };
+	mouse_available = 0;
 	mouse_stage = 1U;
 	status = xhci64_start_controller(rp1_base, 0U, &mouse_start);
 	if (status == 0) {
@@ -1130,7 +1202,7 @@ void aarch64_high_main(void)
 			mouse_slot.slot_id, &mouse_hid);
 	}
 	if (status != 0) {
-		arch64_dbg_puts("M8c: USB boot mouse init failed, stage/status=");
+		arch64_dbg_puts("DEGRADED: USB mouse init failed, stage/status=");
 		dbg_hex32(mouse_stage);
 		arch64_dbg_puts("/");
 		dbg_hex32((uint32_t) status);
@@ -1151,9 +1223,11 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("/");
 		dbg_hex32(mouse_hid.endpoint_max_packet);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(41);
+	} else {
+		mouse_available = 1;
 	}
 	if (xhci64_select_controller(1U) != 0) {
+		arch64_dbg_puts("PANIC: USB keyboard controller unavailable\n");
 		arch64_panic_blink(41);
 	}
 	status = m7a_sheet32_smoke64();
@@ -1192,21 +1266,27 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("\n");
 		arch64_panic_blink(36);
 	}
-	fifo64_init(&hid_fifo, 32U, hid_event_buffer, NULL);
+	status = fifo64_init(&hid_fifo, 32U, hid_event_buffer, NULL);
+	if (status != 0) {
+		arch64_dbg_puts("PANIC: live USB keyboard FIFO init failed\n");
+		arch64_panic_blink(29);
+	}
 	usbhid64_state_init(&hid_state);
-	status = xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid);
+	status = keyboard_available ?
+		xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid) : 0;
 	if (status != 0) {
 		arch64_dbg_puts("M6o: live USB keyboard arm failed, status=");
 		dbg_hex32((uint32_t) status);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(29);
+		keyboard_available = 0;
 	}
-	if (xhci64_select_controller(0U) != 0 ||
-			xhci64_hid_arm(rp1_base, mouse_slot.slot_id, &mouse_hid) != 0) {
-		arch64_dbg_puts("M8c: live USB mouse arm failed\n");
-		arch64_panic_blink(42);
+	if (mouse_available != 0 && (xhci64_select_controller(0U) != 0 ||
+			xhci64_hid_arm(rp1_base, mouse_slot.slot_id, &mouse_hid) != 0)) {
+		arch64_dbg_puts("DEGRADED: live USB mouse arm failed\n");
+		mouse_available = 0;
 	}
 	if (xhci64_select_controller(1U) != 0) {
+		arch64_dbg_puts("PANIC: USB keyboard controller restore failed\n");
 		arch64_panic_blink(42);
 	}
 	__asm__ volatile ("mrs %0, cntfrq_el0" : "=r" (heartbeat_frequency));
@@ -1222,55 +1302,69 @@ void aarch64_high_main(void)
 
 	/* Keep the M1 heartbeat as an independent liveness signal. */
 	for (;;) {
-		xhci64_select_controller(1U);
-		status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
-			&xhci_hid, hid_report);
-		if (status < 0) {
-			arch64_dbg_puts("\nM6o: live USB keyboard poll failed, status=");
-			dbg_hex32((uint32_t) status);
-			arch64_dbg_puts("\n");
-			arch64_panic_blink(29);
-		}
-		if (status > 0) {
-			status = usbhid64_process_report(&hid_fifo, &hid_state,
-				hid_report);
-			if (status < 0 || xhci64_keyboard_arm(rp1_base,
-					xhci_slot.slot_id, &xhci_hid) != 0) {
-				arch64_dbg_puts("\nM6o: live USB keyboard rearm failed\n");
-				arch64_panic_blink(29);
+		if (keyboard_available) {
+			status = xhci64_select_controller(1U);
+			if (status == 0) {
+				status = xhci64_keyboard_poll(rp1_base, xhci_slot.slot_id,
+					&xhci_hid, hid_report);
 			}
-			while (fifo64_get(&hid_fifo, &hid_event) == 0) {
-				focused_console = gui64_focused_console();
-				if (focused_console != NULL &&
+			if (status < 0) {
+				arch64_dbg_puts("DEGRADED: USB keyboard poll failed, status=");
+				dbg_hex32((uint32_t) status);
+				arch64_dbg_puts("\n");
+				keyboard_available = 0;
+			} else if (status > 0) {
+				status = usbhid64_process_report_n(&hid_fifo, &hid_state,
+					hid_report, (size_t) status);
+				if (status < 0) {
+					arch64_dbg_puts("USB keyboard report/FIFO error, status=");
+					dbg_hex32((uint32_t) status);
+					arch64_dbg_puts("\n");
+				}
+				while (fifo64_get(&hid_fifo, &hid_event) == 0) {
+					focused_console = gui64_focused_console();
+					if (focused_console != NULL &&
 						console64_post_input_key(focused_console,
-						(uint16_t) hid_event.data) != 0) {
-					arch64_dbg_puts("M7j: console task FIFO failed\n");
-					arch64_panic_blink(38);
+							(uint16_t) hid_event.data) != 0) {
+						arch64_dbg_puts("M7j: console task FIFO failed\n");
+						arch64_panic_blink(38);
+					}
+				}
+				if (xhci64_keyboard_arm(rp1_base, xhci_slot.slot_id, &xhci_hid) != 0) {
+					arch64_dbg_puts("DEGRADED: USB keyboard rearm failed\n");
+					keyboard_available = 0;
 				}
 			}
 		}
-		xhci64_select_controller(0U);
-		mouse_status = xhci64_hid_poll(rp1_base, mouse_slot.slot_id,
-			&mouse_hid, mouse_report, sizeof(mouse_report));
-		if (mouse_status < 0) {
-			arch64_dbg_puts("\nM8c: live USB mouse poll failed, status=");
-			dbg_hex32((uint32_t) mouse_status);
-			arch64_dbg_puts("\n");
-			arch64_panic_blink(42);
-		}
-		if (mouse_status > 0) {
-			status = usbhid64_decode_mouse_report(mouse_report,
-				(size_t) mouse_status, &mouse_decoded);
-			if (status != 0) {
-				arch64_dbg_puts("\nM8c: live USB mouse decode failed\n");
-				arch64_panic_blink(42);
+		if (mouse_available != 0) {
+			status = xhci64_select_controller(0U);
+			if (status == 0) {
+				mouse_status = xhci64_hid_poll(rp1_base,
+					mouse_slot.slot_id, &mouse_hid, mouse_report,
+					sizeof(mouse_report));
+			} else {
+				mouse_status = status;
 			}
-			gui64_mouse_event(mouse_decoded.dx, mouse_decoded.dy,
-				(int32_t) mouse_decoded.buttons);
-			if (xhci64_hid_arm(rp1_base, mouse_slot.slot_id,
-					&mouse_hid) != 0) {
-				arch64_dbg_puts("\nM8c: live USB mouse rearm failed\n");
-				arch64_panic_blink(42);
+			if (mouse_status < 0) {
+				arch64_dbg_puts("\nDEGRADED: USB mouse poll failed, status=");
+				dbg_hex32((uint32_t) mouse_status);
+				arch64_dbg_puts("\n");
+				mouse_available = 0;
+			} else if (mouse_status > 0) {
+				status = usbhid64_decode_mouse_report(mouse_report,
+					(size_t) mouse_status, &mouse_decoded);
+				if (status != 0) {
+					arch64_dbg_puts("\nDEGRADED: USB mouse decode failed\n");
+					mouse_available = 0;
+				} else {
+					gui64_mouse_event(mouse_decoded.dx, mouse_decoded.dy,
+						(int32_t) mouse_decoded.buttons);
+					if (xhci64_hid_arm(rp1_base, mouse_slot.slot_id,
+							&mouse_hid) != 0) {
+						arch64_dbg_puts("\nDEGRADED: USB mouse rearm failed\n");
+						mouse_available = 0;
+					}
+				}
 			}
 		}
 		/* 닫기 요청을 처리하고 잠든 console task와 window를 회수한다. */

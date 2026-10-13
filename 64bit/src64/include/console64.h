@@ -7,13 +7,14 @@ struct BOOTINFO64;
 struct FIFO64;
 struct SHEET64;
 
-/* 콘솔 인스턴스. 내부 구조는 console64.c만 안다. */
+/* 콘솔 인스턴스. 내부 구조는 kernel/console_internal64.h에만 둔다. */
 struct CONSOLE64;
 
 /* 부팅 콘솔. 컴포지터가 없을 때(LFB 직접 그리기)와 MicroPython처럼
    인스턴스를 모르는 호출자를 위한 것이다. */
 struct CONSOLE64 *console64_active(void);
 
+/* font is NULL or a complete HANGUL64_FONT_SIZE-byte H04 font. */
 void console64_set_hangul_font(const uint8_t *font);
 const uint8_t *console64_hangul_font(void);
 void console64_attach_sheet(struct CONSOLE64 *con, struct SHEET64 *sht,
@@ -34,6 +35,8 @@ void console64_process_input_key(struct CONSOLE64 *con, uint16_t key);
 /* raw 모드: 줄 편집과 에코를 끄고 키를 앱에게 그대로 넘긴다 (나노 등).
    모두 부르는 태스크의 콘솔에 걸린다. */
 void console64_set_raw(int on);
+/* Explicit target for process cleanup; NULL is a no-op, with no fallback. */
+void console64_set_raw_con(struct CONSOLE64 *con, int on);
 int console64_is_raw(void);
 uint64_t console64_read_key(void);
 uint64_t console64_size(void);

@@ -1,6 +1,6 @@
 #ifndef MOWKOW64_MPPORT_ASSERT_FAIL_H
 #define MOWKOW64_MPPORT_ASSERT_FAIL_H
-static inline void __mowkow64_assert_fail(void)
+static inline void mpport_assert_fail64(void)
 {
 	for (;;) {
 	}
@@ -15,5 +15,5 @@ static inline void __mowkow64_assert_fail(void)
 #ifdef NDEBUG
 #define assert(expr) ((void) 0)
 #else
-#define assert(expr) ((expr) ? (void) 0 : __mowkow64_assert_fail())
+#define assert(expr) ((expr) ? (void) 0 : mpport_assert_fail64())
 #endif

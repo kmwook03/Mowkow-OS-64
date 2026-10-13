@@ -101,7 +101,7 @@ int rp164_probe_uart0(uint32_t bar1, uint32_t root_memory_base,
 	static const uint32_t offsets[5] = {
 		UARTFR, UARTIBRD, UARTFBRD, UARTLCR_H, UARTCR
 	};
-	volatile uint8_t *uart;
+	uintptr_t uart;
 	uint64_t physical;
 	unsigned int i;
 
@@ -109,8 +109,7 @@ int rp164_probe_uart0(uint32_t bar1, uint32_t root_memory_base,
 			bar1_physical64(bar1, root_memory_base, &physical) != 0) {
 		return -1;
 	}
-	uart = (volatile uint8_t *) arch64_phys_to_virt(
-		(uintptr_t) (physical + RP1_UART0_BASE));
+	uart = arch64_phys_to_virt((uintptr_t) (physical + RP1_UART0_BASE));
 	for (i = 0; i < 5; i++) {
 		registers[i] = *(volatile uint32_t *) (uart + offsets[i]);
 		if (registers[i] == 0xdeaddeadU || registers[i] == 0xffffffffU) {
@@ -123,7 +122,7 @@ int rp164_probe_uart0(uint32_t bar1, uint32_t root_memory_base,
 int rp164_uart0_loopback(uint32_t bar1, uint32_t root_memory_base,
 	uint32_t *echoed)
 {
-	volatile uint8_t *uart;
+	uintptr_t uart;
 	uint64_t physical;
 	uint32_t old_ibrd;
 	uint32_t old_fbrd;
@@ -137,8 +136,7 @@ int rp164_uart0_loopback(uint32_t bar1, uint32_t root_memory_base,
 			bar1_physical64(bar1, root_memory_base, &physical) != 0) {
 		return -1;
 	}
-	uart = (volatile uint8_t *) arch64_phys_to_virt(
-		(uintptr_t) (physical + RP1_UART0_BASE));
+	uart = arch64_phys_to_virt((uintptr_t) (physical + RP1_UART0_BASE));
 	old_ibrd = *(volatile uint32_t *) (uart + UARTIBRD);
 	old_fbrd = *(volatile uint32_t *) (uart + UARTFBRD);
 	old_lcrh = *(volatile uint32_t *) (uart + UARTLCR_H);

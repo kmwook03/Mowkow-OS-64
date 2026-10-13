@@ -2,16 +2,17 @@
  * 나노 - GNU nano와 같은 키 배치를 쓰는 편집기 (roadmap64.md Phase 4 결정 8).
  * 업스트림 nano 소스가 아니라 여기서 쓴 코드다.
  *
- * 이 단계(step 5)는 편집 엔진과 화면이다: 파일 읽기, 줄 편집, 커서 이동,
- * 스크롤, 제목/상태/도움말 줄. 저장(^O)과 수정 확인 후 종료는 step 6이다.
- * 지금 ^X는 묻지 않고 그냥 나간다.
- *
  * 한글은 커널이 조합해서 준다(결정 11). 앱은 완성된 글자를 CHAR로 받고,
  * 조합 중인 음절은 PREEDIT로 받아 커서 자리에 직접 그린다.
  */
 #include <mowos.h>
+#include <stdint.h>
 
-#define MAX_FILE   (64 * 1024)      /* step 7에서 실측 후 조정 */
+#define MAX_FILE   (64 * 1024)
+/* Leave room for status decorations and one-based cursor positions. */
+#define COUNT_MAX  (__INT_MAX__ - 4)
+#define LOAD_IO    (-5)
+#define LOAD_LARGE (-7)
 #define LINE_MIN   32
 #define STATUS_MAX 96
 
@@ -41,40 +42,57 @@ static char status[STATUS_MAX];
 
 /* ---------------------------------------------------------------- UTF-8 */
 
-static int utf8_seq_len(unsigned char c)
+/* Malformed bytes consume one byte; callers retain the original file bytes. */
+static unsigned int utf8_decode(const char *s, int available, int *len)
 {
-	if (c < 0x80) {
-		return 1;
-	}
-	if ((c & 0xe0) == 0xc0) {
-		return 2;
-	}
-	if ((c & 0xf0) == 0xe0) {
-		return 3;
-	}
-	return 1;
-}
+	const unsigned char *bytes = (const unsigned char *) s;
+	unsigned int cp;
+	unsigned int minimum;
+	int width;
+	int i;
 
-static unsigned int utf8_decode(const char *s, int *len)
-{
-	unsigned char a = (unsigned char) s[0];
-	unsigned char b;
-	unsigned char c;
-
-	*len = utf8_seq_len(a);
-	if (*len == 1) {
-		return a;
+	*len = 0;
+	if (available <= 0) {
+		return 0xfffdU;
 	}
-	b = (unsigned char) s[1];
-	if (*len == 2) {
-		return (unsigned int) ((a & 0x1f) << 6) | (b & 0x3f);
+	*len = 1;
+	if (bytes[0] < 0x80) {
+		return bytes[0];
 	}
-	c = (unsigned char) s[2];
-	return (unsigned int) ((a & 0x0f) << 12) | ((b & 0x3f) << 6) | (c & 0x3f);
+	if (bytes[0] >= 0xc2 && bytes[0] <= 0xdf) {
+		width = 2;
+		minimum = 0x80;
+	} else if (bytes[0] >= 0xe0 && bytes[0] <= 0xef) {
+		width = 3;
+		minimum = 0x800;
+	} else if (bytes[0] >= 0xf0 && bytes[0] <= 0xf4) {
+		width = 4;
+		minimum = 0x10000;
+	} else {
+		return 0xfffdU;
+	}
+	if (width > available) {
+		return 0xfffdU;
+	}
+	cp = bytes[0] & (0x7fU >> width);
+	for (i = 1; i < width; i++) {
+		if ((bytes[i] & 0xc0) != 0x80) {
+			return 0xfffdU;
+		}
+		cp = (cp << 6) | (bytes[i] & 0x3f);
+	}
+	if (cp < minimum || (cp >= 0xd800 && cp <= 0xdfff) || cp > 0x10ffff) {
+		return 0xfffdU;
+	}
+	*len = width;
+	return cp;
 }
 
 static int utf8_encode(char *dst, unsigned int cp)
 {
+	if ((cp >= 0xd800 && cp <= 0xdfff) || cp > 0x10ffff) {
+		return 0;
+	}
 	if (cp < 0x80) {
 		dst[0] = (char) cp;
 		return 1;
@@ -84,10 +102,32 @@ static int utf8_encode(char *dst, unsigned int cp)
 		dst[1] = (char) (0x80 | (cp & 0x3f));
 		return 2;
 	}
-	dst[0] = (char) (0xe0 | (cp >> 12));
-	dst[1] = (char) (0x80 | ((cp >> 6) & 0x3f));
-	dst[2] = (char) (0x80 | (cp & 0x3f));
-	return 3;
+	if (cp < 0x10000) {
+		dst[0] = (char) (0xe0 | (cp >> 12));
+		dst[1] = (char) (0x80 | ((cp >> 6) & 0x3f));
+		dst[2] = (char) (0x80 | (cp & 0x3f));
+		return 3;
+	}
+	dst[0] = (char) (0xf0 | (cp >> 18));
+	dst[1] = (char) (0x80 | ((cp >> 12) & 0x3f));
+	dst[2] = (char) (0x80 | ((cp >> 6) & 0x3f));
+	dst[3] = (char) (0x80 | (cp & 0x3f));
+	return 4;
+}
+
+/* Control bytes must occupy one visible cell instead of driving the terminal. */
+static void put_cp(unsigned int cp)
+{
+	char buf[4];
+	int length;
+
+	if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) {
+		cp = 0xfffdU;
+	}
+	length = utf8_encode(buf, cp);
+	if (length > 0) {
+		write(1, buf, (size_t) length);
+	}
 }
 
 /* 콘솔이 쓰는 폭과 반드시 같아야 한다 (console64.c의 put_utf8_char:
@@ -102,18 +142,54 @@ static int cp_width(unsigned int cp)
 
 /* ------------------------------------------------------------ 줄 저장소 */
 
+static int count_add(int a, int b, int *sum)
+{
+	if (a < 0 || b < 0 || a > COUNT_MAX || b > COUNT_MAX - a) {
+		return 0;
+	}
+	*sum = a + b;
+	return 1;
+}
+
+static int grow_capacity(int current, int need, int minimum, size_t item_size,
+	int *result)
+{
+	int cap;
+
+	if (current < 0 || current > COUNT_MAX || need < 0 || need > COUNT_MAX ||
+		minimum <= 0 || minimum > COUNT_MAX || item_size == 0) {
+		return 0;
+	}
+	cap = current != 0 ? current : minimum;
+	while (cap < need) {
+		if (cap > COUNT_MAX / 2) {
+			cap = need;
+			break;
+		}
+		cap *= 2;
+	}
+	if ((size_t) cap > SIZE_MAX / item_size) {
+		return 0;
+	}
+	*result = cap;
+	return 1;
+}
+
 static int line_reserve(struct LINE *ln, int need)
 {
 	char *bigger;
 	int cap;
 	int i;
 
+	if (ln == 0 || ln->len < 0 || ln->len > ln->cap || need < 0 ||
+		need > COUNT_MAX) {
+		return 0;
+	}
 	if (need <= ln->cap) {
 		return 1;
 	}
-	cap = ln->cap != 0 ? ln->cap : LINE_MIN;
-	while (cap < need) {
-		cap *= 2;
+	if (grow_capacity(ln->cap, need, LINE_MIN, 1, &cap) == 0) {
+		return 0;
 	}
 	bigger = malloc((size_t) cap);
 	if (bigger == 0) {
@@ -134,12 +210,14 @@ static int lines_reserve(int need)
 	int cap;
 	int i;
 
+	if (need < 0 || need > COUNT_MAX) {
+		return 0;
+	}
 	if (need <= lines_cap) {
 		return 1;
 	}
-	cap = lines_cap != 0 ? lines_cap : 64;
-	while (cap < need) {
-		cap *= 2;
+	if (grow_capacity(lines_cap, need, 64, sizeof(*bigger), &cap) == 0) {
+		return 0;
 	}
 	bigger = malloc((size_t) cap * sizeof(struct LINE));
 	if (bigger == 0) {
@@ -158,8 +236,10 @@ static int lines_reserve(int need)
 static int line_insert(int idx)
 {
 	int i;
+	int need;
 
-	if (lines_reserve(nlines + 1) == 0) {
+	if (idx < 0 || idx > nlines || count_add(nlines, 1, &need) == 0 ||
+		lines_reserve(need) == 0) {
 		return 0;
 	}
 	for (i = nlines; i > idx; i--) {
@@ -176,6 +256,9 @@ static void line_remove(int idx)
 {
 	int i;
 
+	if (idx < 0 || idx >= nlines) {
+		return;
+	}
 	free(lines[idx].text);
 	for (i = idx; i < nlines - 1; i++) {
 		lines[i] = lines[i + 1];
@@ -186,14 +269,16 @@ static void line_remove(int idx)
 static int line_append(struct LINE *ln, const char *src, int n)
 {
 	int i;
+	int need;
 
-	if (line_reserve(ln, ln->len + n) == 0) {
+	if (ln == 0 || (src == 0 && n != 0) || count_add(ln->len, n, &need) == 0 ||
+		line_reserve(ln, need) == 0) {
 		return 0;
 	}
 	for (i = 0; i < n; i++) {
 		ln->text[ln->len + i] = src[i];
 	}
-	ln->len += n;
+	ln->len = need;
 	return 1;
 }
 
@@ -201,8 +286,10 @@ static int line_append(struct LINE *ln, const char *src, int n)
 static int line_insert_bytes(struct LINE *ln, int at, const char *src, int n)
 {
 	int i;
+	int need;
 
-	if (line_reserve(ln, ln->len + n) == 0) {
+	if (ln == 0 || at < 0 || at > ln->len || (src == 0 && n != 0) ||
+		count_add(ln->len, n, &need) == 0 || line_reserve(ln, need) == 0) {
 		return 0;
 	}
 	for (i = ln->len - 1; i >= at; i--) {
@@ -211,7 +298,7 @@ static int line_insert_bytes(struct LINE *ln, int at, const char *src, int n)
 	for (i = 0; i < n; i++) {
 		ln->text[at + i] = src[i];
 	}
-	ln->len += n;
+	ln->len = need;
 	return 1;
 }
 
@@ -219,7 +306,10 @@ static void line_delete_bytes(struct LINE *ln, int at, int n)
 {
 	int i;
 
-	for (i = at; i + n < ln->len; i++) {
+	if (ln == 0 || at < 0 || at > ln->len || n < 0 || n > ln->len - at) {
+		return;
+	}
+	for (i = at; i < ln->len - n; i++) {
 		ln->text[i] = ln->text[i + n];
 	}
 	ln->len -= n;
@@ -229,31 +319,59 @@ static void line_delete_bytes(struct LINE *ln, int at, int n)
 
 static char load_buf[MAX_FILE];
 
+static void clear_lines(void)
+{
+	while (nlines > 0) {
+		line_remove(nlines - 1);
+	}
+	free(lines);
+	lines = 0;
+	lines_cap = 0;
+}
+
+/* Read failures never become a successfully loaded partial document. */
 static int load_file(const char *path)
 {
 	int fd;
 	long n;
-	int total;
+	int total = 0;
 	int start;
 	int i;
+	int result = 1;
+	char extra;
 
+	if (path[0] == '\0') {
+		return line_insert(0);
+	}
 	fd = open(path, 0);
 	if (fd < 0) {
-		return line_insert(0);          /* 없는 파일이면 새로 만든다 */
+		return fd == -2 ? line_insert(0) : LOAD_IO;
 	}
-	total = 0;
 	for (;;) {
-		n = read(fd, load_buf + total, (size_t) (MAX_FILE - total));
-		if (n <= 0) {
+		int remaining = MAX_FILE - total;
+
+		n = read(fd, remaining != 0 ? load_buf + total : &extra,
+			remaining != 0 ? (size_t) remaining : 1);
+		if (n < 0 || n > (remaining != 0 ? remaining : 1)) {
+			result = LOAD_IO;
 			break;
 		}
-		total += (int) n;
-		if (total >= MAX_FILE) {
-			close(fd);
-			return -1;                  /* 너무 크다 */
+		if (n == 0) {
+			break;
 		}
+		if (remaining == 0) {
+			result = LOAD_LARGE;
+			break;
+		}
+		/* The validated count fits within the remaining fixed buffer. */
+		total += (int) n;
 	}
-	close(fd);
+	if (close(fd) < 0 && result == 1) {
+		result = LOAD_IO;
+	}
+	if (result != 1) {
+		return result;
+	}
 
 	start = 0;
 	for (i = 0; i <= total; i++) {
@@ -261,16 +379,15 @@ static int load_file(const char *path)
 			int len = i - start;
 
 			if (len > 0 && load_buf[start + len - 1] == '\r') {
-				len--;                  /* CRLF 줄바꿈 */
+				len--;
 			}
 			if (i == total && len == 0 && nlines > 0) {
-				break;                  /* 끝의 개행 하나는 줄이 아니다 */
+				break;
 			}
-			if (line_insert(nlines) == 0) {
-				return 0;
-			}
-			if (len > 0 && line_append(&lines[nlines - 1],
-					load_buf + start, len) == 0) {
+			if (line_insert(nlines) == 0 ||
+				(len > 0 && line_append(&lines[nlines - 1],
+					load_buf + start, len) == 0)) {
+				clear_lines();
 				return 0;
 			}
 			start = i + 1;
@@ -294,7 +411,11 @@ static int col_of_byte(const struct LINE *ln, int byte)
 	col = 0;
 	i = 0;
 	while (i < byte && i < ln->len) {
-		col += cp_width(utf8_decode(ln->text + i, &len));
+		int w = cp_width(utf8_decode(ln->text + i, ln->len - i, &len));
+
+		if (count_add(col, w, &col) == 0) {
+			return COUNT_MAX;
+		}
 		i += len;
 	}
 	return col;
@@ -309,10 +430,13 @@ static int byte_of_col(const struct LINE *ln, int want)
 
 	col = 0;
 	i = 0;
+	if (want < 0) {
+		return 0;
+	}
 	while (i < ln->len) {
-		int w = cp_width(utf8_decode(ln->text + i, &len));
+		int w = cp_width(utf8_decode(ln->text + i, ln->len - i, &len));
 
-		if (col + w > want) {
+		if (w > want - col) {
 			break;
 		}
 		col += w;
@@ -323,19 +447,29 @@ static int byte_of_col(const struct LINE *ln, int want)
 
 static int prev_char_start(const struct LINE *ln, int byte)
 {
-	int i = byte - 1;
+	int i;
+	int len;
 
-	while (i > 0 && ((unsigned char) ln->text[i] & 0xc0) == 0x80) {
-		i--;
+	if (byte <= 0 || byte > ln->len) {
+		return 0;
 	}
-	return i < 0 ? 0 : i;
+	/* A scalar has at most four bytes. Invalid bytes are individual boundaries,
+	 * matching right/delete without walking an entire long line on every key.
+	 */
+	for (i = byte > 4 ? byte - 4 : 0; i < byte; i++) {
+		utf8_decode(ln->text + i, ln->len - i, &len);
+		if (len == byte - i) {
+			return i;
+		}
+	}
+	return byte - 1;
 }
 
 /* --------------------------------------------------------------- 화면 */
 
 static int text_rows(void)
 {
-	return rows - 4;                    /* 제목 1 + 상태 1 + 도움말 2 */
+	return rows >= 6 ? rows - 4 : 0;                    /* 제목 1 + 상태 1 + 도움말 2 */
 }
 
 static void put(const char *s)
@@ -343,71 +477,74 @@ static void put(const char *s)
 	write(1, s, strlen(s));
 }
 
-static int append_str(char *buf, int at, const char *s)
-{
-	int i;
-
-	for (i = 0; s[i] != '\0'; i++) {
-		buf[at + i] = s[i];
-	}
-	return at + i;
-}
-
-static int append_dec(char *buf, int at, int v)
+static int append_dec(char *buf, size_t capacity, size_t *used, int v)
 {
 	char tmp[12];
+	char text[12];
+	unsigned int value;
+	size_t length = 0;
 	int i;
 
-	if (v == 0) {
-		buf[at] = '0';
-		return at + 1;
+	if (v < 0) {
+		text[length++] = '-';
+		value = (unsigned int) (-(v + 1)) + 1U;
+	} else {
+		value = (unsigned int) v;
 	}
 	i = 0;
-	while (v != 0 && i < 12) {
-		tmp[i++] = (char) ('0' + v % 10);
-		v /= 10;
-	}
+	do {
+		tmp[i++] = (char) ('0' + value % 10U);
+		value /= 10U;
+	} while (value != 0);
 	while (i > 0) {
-		buf[at++] = tmp[--i];
+		text[length++] = tmp[--i];
 	}
-	return at;
+	text[length] = '\0';
+	return str_append64(buf, capacity, used, text);
 }
 
 /* 화면 칸 수. 가운데 맞추기에 필요하다. */
 static int str_cols(const char *s)
 {
-	int i;
-	int w;
+	size_t i = 0;
+	size_t size = strlen(s);
+	int width = 0;
 	int len;
 
-	i = 0;
-	w = 0;
-	while (s[i] != '\0') {
-		w += cp_width(utf8_decode(s + i, &len));
-		i += len;
+	while (i < size) {
+		int w = cp_width(utf8_decode(s + i,
+			(int) (size - i > 4 ? 4 : size - i), &len));
+
+		if (count_add(width, w, &width) == 0) {
+			return COUNT_MAX;
+		}
+		i += (size_t) len;
 	}
-	return w;
+	return width;
 }
 
-/* 칸 수로 잘라서 쓴다. 상태 줄이 화면보다 길면 줄이 넘어가면서 화면 전체가
-   밀려 올라가므로, 넘칠 바에는 자른다. 쓴 칸 수를 돌려준다. */
+/* Clip by complete display cells, including replacement characters. */
 static int put_clipped(const char *s, int max_cols)
 {
-	int i;
-	int used;
+	size_t i = 0;
+	size_t size = strlen(s);
+	int used = 0;
 	int len;
 
-	i = 0;
-	used = 0;
-	while (s[i] != '\0') {
-		int w = cp_width(utf8_decode(s + i, &len));
+	if (max_cols <= 0) {
+		return 0;
+	}
+	while (i < size) {
+		unsigned int cp = utf8_decode(s + i,
+			(int) (size - i > 4 ? 4 : size - i), &len);
+		int w = cp_width(cp);
 
-		if (used + w > max_cols) {
+		if (w > max_cols - used) {
 			break;
 		}
-		write(1, s + i, (size_t) len);
+		put_cp(cp);
 		used += w;
-		i += len;
+		i += (size_t) len;
 	}
 	return used;
 }
@@ -431,7 +568,7 @@ static void draw_line(int screen_row, int idx)
 	int len;
 
 	tty_move(screen_row, 0);
-	if (idx >= nlines) {
+	if (idx < 0 || idx >= nlines) {
 		return;
 	}
 	ln = &lines[idx];
@@ -439,24 +576,28 @@ static void draw_line(int screen_row, int idx)
 	drawn = 0;
 	i = 0;
 	while (i < ln->len && drawn < cols) {
-		unsigned int cp = utf8_decode(ln->text + i, &len);
+		unsigned int cp = utf8_decode(ln->text + i, ln->len - i, &len);
 		int w = cp_width(cp);
+		int next_col;
 
-		if (col + w <= left_col) {
-			col += w;
+		if (count_add(col, w, &next_col) == 0) {
+			return;
+		}
+		if (next_col <= left_col) {
+			col = next_col;
 			i += len;
 			continue;
 		}
-		if (col < left_col || drawn + w > cols) {
+		if (col < left_col || w > cols - drawn) {
 			put(" ");                   /* 잘린 두 칸짜리 글자 자리 */
 			drawn++;
-			col += w;
+			col = next_col;
 			i += len;
 			continue;
 		}
-		write(1, ln->text + i, (size_t) len);
+		put_cp(cp);
 		drawn += w;
-		col += w;
+		col = next_col;
 		i += len;
 	}
 }
@@ -502,7 +643,7 @@ static void draw_status(void)
 {
 	char buf[STATUS_MAX];
 	const char *msg;
-	int at;
+	size_t used = 0;
 	int start;
 
 	tty_attr(7, 0);
@@ -510,15 +651,18 @@ static void draw_status(void)
 	if (status[0] != '\0') {
 		msg = status;
 	} else {
-		at = append_str(buf, 0, "줄 ");
-		at = append_dec(buf, at, cur_line + 1);
-		at = append_str(buf, at, "/");
-		at = append_dec(buf, at, nlines);
-		at = append_str(buf, at, ", 칸 ");
-		at = append_dec(buf, at,
-			col_of_byte(&lines[cur_line], cur_byte) + 1);
-		buf[at] = '\0';
-		msg = buf;
+		buf[0] = '\0';
+		if (str_append64(buf, sizeof(buf), &used, "줄 ") != 0 ||
+			append_dec(buf, sizeof(buf), &used, cur_line + 1) != 0 ||
+			str_append64(buf, sizeof(buf), &used, "/") != 0 ||
+			append_dec(buf, sizeof(buf), &used, nlines) != 0 ||
+			str_append64(buf, sizeof(buf), &used, ", 칸 ") != 0 ||
+			append_dec(buf, sizeof(buf), &used,
+				col_of_byte(&lines[cur_line], cur_byte) + 1) != 0) {
+			msg = "상태를 표시할 수 없습니다";
+		} else {
+			msg = buf;
+		}
 	}
 
 	start = (cols - (str_cols(msg) + 4)) / 2;
@@ -575,7 +719,7 @@ static void scroll_into_view(void)
 	if (cur_line < top_line) {
 		top_line = cur_line;
 	}
-	if (cur_line >= top_line + text_rows()) {
+	if (cur_line - top_line >= text_rows()) {
 		top_line = cur_line - text_rows() + 1;
 	}
 	if (top_line < 0) {
@@ -585,7 +729,7 @@ static void scroll_into_view(void)
 	if (col < left_col) {
 		left_col = col;
 	}
-	if (col >= left_col + cols - 1) {
+	if (col - left_col >= cols - 1) {
 		left_col = col - cols + 2;
 	}
 	if (left_col < 0) {
@@ -597,6 +741,9 @@ static void draw_all(void)
 {
 	int r;
 
+	if (rows < 6 || cols < 20) {
+		return;
+	}
 	scroll_into_view();
 	/* ponytail: 키마다 화면 전체를 다시 그린다. 100x37이면 한 번에 3700칸이라
 	   느려지면 바뀐 줄만 그리도록 좁히면 된다. 지금은 단순함이 먼저다. */
@@ -604,7 +751,9 @@ static void draw_all(void)
 	tty_clear(0, 0, rows, cols);
 	draw_title();
 	for (r = 0; r < text_rows(); r++) {
-		draw_line(r + 1, top_line + r);
+		if (r < nlines - top_line) {
+			draw_line(r + 1, top_line + r);
+		}
 	}
 	draw_status();
 	draw_help();
@@ -627,12 +776,10 @@ static void draw_all(void)
 
 static void set_status(const char *s)
 {
-	int i;
-
-	for (i = 0; i < STATUS_MAX - 1 && s[i] != '\0'; i++) {
-		status[i] = s[i];
+	if (str_copy64(status, sizeof(status), s) != 0) {
+		/* Keep the full message readable instead of a truncated UTF-8 prefix. */
+		(void) str_copy64(status, sizeof(status), "상태 메시지가 너무 깁니다");
 	}
-	status[i] = '\0';
 }
 
 static void insert_cp(unsigned int cp)
@@ -641,6 +788,9 @@ static void insert_cp(unsigned int cp)
 	int n;
 
 	n = utf8_encode(buf, cp);
+	if (n == 0) {
+		return;
+	}
 	if (line_insert_bytes(&lines[cur_line], cur_byte, buf, n) == 0) {
 		set_status("메모리가 부족합니다");
 		return;
@@ -663,6 +813,7 @@ static void insert_newline(void)
 	tail = ln->len - cur_byte;
 	if (tail > 0) {
 		if (line_append(&lines[cur_line + 1], ln->text + cur_byte, tail) == 0) {
+			line_remove(cur_line + 1);
 			set_status("메모리가 부족합니다");
 			return;
 		}
@@ -707,7 +858,7 @@ static void do_delete(void)
 
 	ln = &lines[cur_line];
 	if (cur_byte < ln->len) {
-		utf8_decode(ln->text + cur_byte, &len);
+		utf8_decode(ln->text + cur_byte, ln->len - cur_byte, &len);
 		line_delete_bytes(ln, cur_byte, len);
 		modified = 1;
 	} else if (cur_line + 1 < nlines) {
@@ -731,12 +882,12 @@ static void move_vertical(int delta)
 		goal_col = col_of_byte(&lines[cur_line], cur_byte);
 	}
 	want = goal_col;
-	cur_line += delta;
-	if (cur_line < 0) {
+	if (delta < -cur_line) {
 		cur_line = 0;
-	}
-	if (cur_line >= nlines) {
+	} else if (delta > nlines - 1 - cur_line) {
 		cur_line = nlines - 1;
+	} else {
+		cur_line += delta;
 	}
 	cur_byte = byte_of_col(&lines[cur_line], want);
 }
@@ -757,7 +908,8 @@ static void move_right(void)
 	int len;
 
 	if (cur_byte < lines[cur_line].len) {
-		utf8_decode(lines[cur_line].text + cur_byte, &len);
+		utf8_decode(lines[cur_line].text + cur_byte,
+			lines[cur_line].len - cur_byte, &len);
 		cur_byte += len;
 	} else if (cur_line + 1 < nlines) {
 		cur_line++;
@@ -775,7 +927,8 @@ static void refresh_size(void);
  * fd64에는 rename도 unlink도 없어서 임시 파일 방식을 쓸 수 없다. 쓰는 도중에
  * 죽으면 원본이 사라진다는 뜻이고, 이 단계에서는 그 값을 치르기로 했다.
  *
- * 줄마다 write하지 않고 통째로 모아 한 번에 쓴다. 커널의 fd64_write는 호출
+ * 줄마다 write하지 않고 통째로 모아 쓴다. 부분 쓰기는 남은 범위로 재시도한다.
+ * 커널의 fd64_write는 호출
  * 끝에서 매번 fd64_sync를 돌리므로(fd64.c), 줄 단위로 쓰면 줄 수만큼 디스크
  * 동기화가 일어난다.
  */
@@ -783,8 +936,10 @@ static int save_file(void)
 {
 	int fd;
 	int total;
+	int written;
 	int i;
 	int j;
+	int failed = 0;
 	long n;
 
 	if (has_name == 0) {
@@ -793,7 +948,7 @@ static int save_file(void)
 	}
 	total = 0;
 	for (i = 0; i < nlines; i++) {
-		if (total + lines[i].len + 1 > MAX_FILE) {
+		if (lines[i].len < 0 || lines[i].len >= MAX_FILE - total) {
 			set_status("너무 커서 저장할 수 없습니다");
 			return 0;
 		}
@@ -808,9 +963,19 @@ static int save_file(void)
 		set_status("파일을 열 수 없습니다");
 		return 0;
 	}
-	n = write(fd, load_buf, (size_t) total);
-	close(fd);
-	if (n != (long) total) {
+	written = 0;
+	while (written < total) {
+		n = write(fd, load_buf + written, (size_t) (total - written));
+		if (n <= 0 || n > total - written) {
+			failed = 1;
+			break;
+		}
+		written += (int) n;
+	}
+	if (close(fd) < 0) {
+		failed = 1;
+	}
+	if (failed != 0) {
 		set_status("쓰기에 실패했습니다");
 		return 0;
 	}
@@ -876,7 +1041,8 @@ int main(int argc, char **argv)
 	}
 	loaded = load_file(argc >= 2 ? argv[1] : "");
 	if (loaded < 0) {
-		puts("나노: 파일이 너무 큽니다 (최대 64 KiB)");
+		puts(loaded == LOAD_LARGE ? "나노: 파일이 너무 큽니다 (최대 64 KiB)" :
+			"나노: 파일을 읽을 수 없습니다");
 		return 1;
 	}
 	if (loaded == 0 || nlines == 0) {
@@ -887,15 +1053,20 @@ int main(int argc, char **argv)
 	refresh_size();
 	if (rows < 6 || cols < 20) {
 		puts("나노: 화면이 너무 작습니다");
+		clear_lines();
 		return 1;
 	}
 	if (has_name != 0) {                /* nano의 "Read N lines" */
 		char buf[STATUS_MAX];
-		int at = append_dec(buf, 0, nlines);
+		size_t used = 0;
 
-		at = append_str(buf, at, "줄을 읽었습니다");
-		buf[at] = '\0';
-		set_status(buf);
+		buf[0] = '\0';
+		if (append_dec(buf, sizeof(buf), &used, nlines) != 0 ||
+			str_append64(buf, sizeof(buf), &used, "줄을 읽었습니다") != 0) {
+			set_status("상태를 표시할 수 없습니다");
+		} else {
+			set_status(buf);
+		}
 	}
 
 	tty_raw(1);
@@ -982,6 +1153,7 @@ int main(int argc, char **argv)
 		draw_all();
 	}
 
+	clear_lines();
 	/* raw 모드 해제와 화면 정리는 커널이 한다 (console64_set_raw). */
 	return 0;
 }

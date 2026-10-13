@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+struct CONTEXT64;
+
 void io_hlt(void);
 void io_cli(void);
 void io_sti(void);
@@ -11,6 +13,8 @@ void io_out8(uint16_t port, uint8_t data);
 uint8_t io_in8(uint16_t port);
 uint64_t io_load_rflags(void);
 void io_store_rflags(uint64_t rflags);
+void context_switch64(struct CONTEXT64 *old_context,
+	struct CONTEXT64 *new_context);
 void load_gdtr64(uint16_t limit, uintptr_t addr);
 void load_idtr64(uint16_t limit, uintptr_t addr);
 void load_tr64(uint16_t selector);

@@ -148,7 +148,25 @@ make x86_64         # img64/mowkow64.img 만들기
 make run64          # IDE로 실행 (ATA PIO 경로)
 make run64-ahci     # q35 + AHCI로 실행 (AHCI 경로)
 make parity64       # 머꼬 병행 검사 (호스트 CPython과 견주기)
+make test64-qemu    # 복제 이미지에서 머꼬 + ktest/mtest/wtest IDE 회귀 검사
+make test64-qemu-ahci # 같은 회귀 검사를 q35 + AHCI로 실행
 make clean64        # build64/, img64/ 지우기(rm)
+```
+
+QEMU 회귀 검사는 원본 이미지를 임시 복제하고 검사 종료 후 복제를 정리합니다.
+`ktest --auto`의 키 입력과 raw 종료 후 cooked 복귀, `mtest` 재실행,
+`wtest HUGE`의 쓰기·읽기와 재부팅 후 `wtest --verify-huge`의 전체 내용·크기를
+고정 출력과 종료 코드로 판정합니다. COM1 로그는
+`/tmp/mowkow-regression-{ide,ahci}-{parity,apps,reboot}.log`에 남습니다.
+Pi 5 실행이나 모든 앱·저장장치 실패 경로를 검증하는 검사는 아닙니다.
+
+일반 빌드는 부팅 중 FAT32에 테스트 파일을 쓰지 않습니다. 저장장치 쓰기
+smoke test가 필요한 폐기 가능한 이미지나 SD 카드에서만 clean build로
+명시적으로 켭니다.
+
+```bash
+make clean64
+make BOOT_TEST64=1 x86_64 aarch64
 ```
 
 `make help`를 치면 32bit와 64bit 명령이 함께 출력됩니다.
@@ -166,17 +184,16 @@ Mowkow OS x86_64 kernel64_main
 fpu smoke=2
 disk transport=ata part-base=0
 fat32 files=8
-fat32 write=18 sectors=0
-fat32 chain=ok
-fat32 lfn=ok
 sheet64 smoke=ok
 keyboard64 smoke=ok
 hangul64 smoke=ok
 hangul font=loaded
 ```
 
-위 출력은 부팅마다 수행되는 자체 점검입니다.
-멈춘 위치가 깨진 위치입니다. `sectors=0`은 오류가 아니라, 이미 디스크에 쓰기가 끝나서 내보낼 것이 없다는 뜻입니다.
+위 출력은 읽기 전용 자체 점검입니다. `BOOT_TEST64=1` 빌드는
+`destructive boot tests=enabled` 뒤에 `fat32 write`, `fat32 chain`,
+`fat32 lfn` 결과도 출력하고 테스트 파일을 생성하거나 갱신합니다.
+멈춘 위치가 깨진 위치입니다.
 
 ## 3. Raspberry Pi 5 이미지 빌드 및 부팅 방법
 
@@ -334,6 +351,101 @@ GUI 모드에서는 마우스로 제목 표시줄을 끌어 창을 옮기거나,
 ```
 
 ## 5. 64bit 시스템 구조
+
+### 아키텍처 개요
+
+64bit 트리는 사용자 영역, 시스템 콜 인터페이스, 공용 커널, HAL로 계층을
+나눕니다. ELF64 앱은 사용자 모드에서 시스템 콜로 커널에 진입하지만,
+MicroPython은 커널에 링크되어 Python과 머꼬 스크립트를 커널 모드에서
+실행합니다.
+
+```mermaid
+flowchart TB
+    subgraph userSpace ["사용자 영역"]
+        direction LR
+        elfApps["정적 ELF64 앱: Ring 3 또는 EL0"]
+        userCrt["CRT · libc shim · syscall 스텁"]
+        scriptFiles["Python · 머꼬 스크립트 파일: 인터프리터 입력"]
+    end
+
+    subgraph syscallInterface ["인터페이스: syscall ABI"]
+        direction LR
+        syscallAbi["호출 번호 · 레지스터 인자 · 음수 오류 반환"]
+        trapEntry["x86_64 int 0x80 · AArch64 svc #0"]
+    end
+
+    subgraph kernelSpace ["커널 영역: Ring 0 또는 EL1"]
+        direction TB
+
+        subgraph executionCore ["실행 관리"]
+            direction LR
+            syscallHandler["공용 syscall_handler64"]
+            process["프로세스 관리"]
+            elfLoader["ELF64 로더"]
+            mpRuntime["커널 내장 MicroPython · mpport · mowio"]
+        end
+
+        subgraph kernelServices ["공용 커널 서비스"]
+            direction LR
+            console["콘솔 · 명령 처리 · 한글/UTF-8"]
+            gui["GUI · window · sheet"]
+            memory["메모리 관리자"]
+            scheduler["태스크 · 스케줄러"]
+            eventQueue["FIFO · 이벤트 큐"]
+        end
+
+        subgraph storageStack ["저장 장치 계층"]
+            direction LR
+            filesystem["FAT32 · VFAT"]
+            cache["Write-Back 섹터 캐시"]
+            block["block64 전송 계층"]
+        end
+    end
+
+    subgraph hal ["HAL과 아키텍처별 백엔드"]
+        direction LR
+        platformHal["플랫폼 인터페이스: IRQ · 타이머 · 문맥 · 화면 · 입력"]
+        blockOps["BLOCK64_OPS: 블록 장치 I/O"]
+        x86["x86_64: BIOS 부팅 · 롱 모드 · VBE · PIC/PIT · PS/2 · AHCI/ATA"]
+        arm["Raspberry Pi 5: 펌웨어 부팅 · EL1/MMU · Mailbox · GIC/Generic Timer · SDHCI · RP1/xHCI/HID"]
+    end
+
+    elfApps -->|"런타임 호출"| userCrt
+    userCrt -->|"ABI 준수"| syscallAbi
+    syscallAbi -->|"특권 전환"| trapEntry
+    trapEntry -->|"프레임 변환과 전달"| syscallHandler
+    scriptFiles -->|"커널 인터프리터의 입력"| mpRuntime
+    syscallHandler -->|"현재 프로세스"| process
+    syscallHandler -->|"TTY"| console
+    syscallHandler -->|"파일 I/O"| filesystem
+    process -->|"이미지 적재"| elfLoader
+    process -->|"주소 공간 할당"| memory
+    process -->|"현재 태스크 연결"| scheduler
+    elfLoader -->|"실행 파일 읽기"| filesystem
+    mpRuntime -->|"콘솔 입출력"| console
+    mpRuntime -->|"파일 접근"| filesystem
+    console -->|"화면 출력"| gui
+    console -->|"키 이벤트 수신"| eventQueue
+    eventQueue -->|"대기 태스크 깨우기"| scheduler
+    filesystem --> cache
+    cache --> block
+    scheduler -->|"타이머와 문맥 전환"| platformHal
+    gui -->|"화면과 입력 장치"| platformHal
+    block -->|"블록 전송"| blockOps
+    platformHal -->|"x86_64 구현"| x86
+    platformHal -->|"AArch64 구현"| arm
+    blockOps -->|"AHCI 또는 ATA PIO"| x86
+    blockOps -->|"SDHCI"| arm
+```
+
+화살표는 상위 계층이 하위 계층을 호출하거나 의존하는 방향을 나타냅니다.
+스크립트 파일은 사용자 영역에서 제공되지만 독립 프로세스가 아닙니다. 커널에
+내장된 MicroPython이 직접 해석하므로 ELF64 앱과 달리 syscall ABI를 거치지
+않습니다. 커널 안에서도 메모리 관리, 태스크 스케줄링, 이벤트 큐와
+FAT32·캐시·블록 전송은 각각 독립된 책임과 인터페이스를 가집니다. HAL에서는
+플랫폼 인터페이스와 `BLOCK64_OPS`가 x86_64와 AArch64의 인터럽트, 문맥 전환,
+화면·입력 및 저장 장치 구현 차이를 감춥니다.
+
 ### 5-1. 부트 시퀀스
 부트 섹터 512바이트 안에 FAT32 BPB와 롱 모드 진입 코드를 함께 넣을 수 없어 1단계는 BPB와 디스크 읽기만 담고 나머지를 2단계로 넘겼습니다.
 
@@ -610,5 +722,5 @@ common/mk/config.mk        디렉터리, 도구, 컴파일 옵션 (공통)
 | AHCI 포트 하나, NCQ 없음 | `ahci64.c` | 사용 가능한 첫 포트만. 폴링으로 한 번에 명령 하나 |
 | ATA PIO는 명령당 1섹터 | `ata64.c` | 느림. 어디서나 부팅되는 것이 목적 |
 | MicroPython 단일 인스턴스 | `mpport/` | GC 힙과 상태가 전역 하나. 콘솔마다 파이썬이나 머꼬를 돌릴 수 없고, 두 번째 요청은 거절됨 |
-| 자동 테스트가 머꼬에만 있음 | 양쪽 트리 | `make parity64`가 머꼬를 호스트 CPython과 견줍니다. 커널 쪽은 부팅 시 COM1 자체 점검과 QEMU 수동 확인이 전부 |
+| 자동 검사 범위 제한 | 양쪽 트리 | 64비트는 `make test64-host`와 IDE/AHCI의 머꼬·ktest/mtest/wtest 회귀 검사가 있습니다. 모든 앱·장치나 Pi 5 실행을 포괄하지는 않습니다. 32비트는 수동 검사입니다. |
 | 머꼬가 느림 | `64bit/py64/` | 파이썬으로 쓴 트리 워커를 바이트코드 VM 위에서 돌림. 대화형으로는 괜찮지만 긴 스크립트는 눈에 띄게 느려짐 |

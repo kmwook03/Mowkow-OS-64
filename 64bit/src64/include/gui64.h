@@ -12,6 +12,7 @@ struct CONSOLE64;
 /* 컴포지터를 세우고 바탕화면 + 콘솔 시트를 만든다.
    콘솔 시트를 돌려주며, 실패하면 NULL (호출자는 LFB 직접 그리기로 되돌아간다). */
 struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info);
+int gui64_available(void);
 
 /* 콘솔 창을 전체 화면 <-> 바탕화면 위의 창 모드로 전환한다. */
 void gui64_toggle_window(void);

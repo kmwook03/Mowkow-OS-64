@@ -125,13 +125,47 @@ static void draw(unsigned long ev, unsigned int preedit)
 	tty_flush();
 }
 
+/* QEMU sends CHAR a, KEY left, then Ctrl-X after READY. Leave raw enabled
+ * on both success and failure so process teardown must restore cooked input.
+ */
+static int test_auto(void)
+{
+	static const unsigned int kinds[] = { TTY_KIND_CHAR, TTY_KIND_KEY, TTY_KIND_CHAR };
+	static const unsigned int payloads[] = { 'a', KEY_LEFT, 24 };
+	unsigned long size = tty_size();
+	unsigned int step;
+
+	if (TTY_SIZE_COLS(size) < 32 || TTY_SIZE_ROWS(size) < 6) {
+		puts("ktest: FAIL geometry");
+		return 1;
+	}
+	tty_raw(1);
+	draw(0, 0);
+	if (puts("\nktest: READY") < 0) { return 1; }
+	tty_flush();
+	for (step = 0; step < 3; step++) {
+		unsigned long event = tty_readkey();
+
+		if (TTY_KEY_KIND(event) != kinds[step] ||
+			TTY_KEY_PAYLOAD(event) != payloads[step] ||
+			(step == 2 && (TTY_KEY_MODS(event) & TTY_MOD_CTRL) == 0)) {
+			puts("ktest: FAIL event");
+			return 1;
+		}
+	}
+	return puts("ktest: PASS") < 0 ? 1 : 0;
+}
+
 int main(int argc, char **argv)
 {
 	unsigned long ev;
 	unsigned int preedit;
 
-	(void) argc;
-	(void) argv;
+	if (argc == 2 && strcmp(argv[1], "--auto") == 0) { return test_auto(); }
+	if (argc != 1) {
+		puts("ktest: FAIL usage");
+		return 1;
+	}
 	tty_raw(1);
 	preedit = 0;
 	draw(0, 0);
@@ -149,5 +183,5 @@ int main(int argc, char **argv)
 		draw(ev, preedit);
 	}
 	/* 일부러 raw를 끄지 않고 나간다. 커널이 되돌리는지 보려는 것. */
-	return 0;
+	return puts("\nktest: PASS") < 0 ? 1 : 0;
 }

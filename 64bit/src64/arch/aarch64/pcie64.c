@@ -40,7 +40,7 @@
 #define RP1_FUNCTION 0U
 #define RP1_VENDOR_DEVICE 0x00011de4U
 
-static volatile uint8_t *pcie2;
+static uintptr_t pcie2;
 
 static uint32_t config_index64(uint32_t bus, uint32_t device,
 	uint32_t function)
@@ -142,7 +142,7 @@ int pcie64_probe_rp1(uint32_t *vendor_device, uint32_t *class_revision,
 	uint32_t status;
 	uint32_t id;
 
-	pcie2 = (volatile uint8_t *) arch64_phys_to_virt(PCIE2_BASE);
+	pcie2 = arch64_phys_to_virt(PCIE2_BASE);
 	status = *(volatile uint32_t *) (pcie2 + PCIE_MISC_PCIE_STATUS);
 	if ((status & (PCIE_STATUS_DL_ACTIVE | PCIE_STATUS_PHY_LINK_UP)) !=
 			(PCIE_STATUS_DL_ACTIVE | PCIE_STATUS_PHY_LINK_UP)) {

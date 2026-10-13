@@ -23,6 +23,7 @@ const char *block64_transport(void);
 uint64_t block64_part_base(void);
 /* 볼륨의 전체 섹터 수. 장치가 크기를 알려 주지 않으면 0. */
 uint64_t block64_sector_count(void);
+/* count가 0이면 버퍼와 LBA를 검사하거나 전송하지 않는 성공 no-op이다. */
 int block64_read(uint64_t lba, uint32_t count, void *dst);
 int block64_write(uint64_t lba, uint32_t count, const void *src);
 

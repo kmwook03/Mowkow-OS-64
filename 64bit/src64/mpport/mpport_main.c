@@ -2,32 +2,31 @@
  * mpport_main.c -- 커널에 넣은 MicroPython의 시작과 끝
  *
  * GC 힙, 스택 한계, REPL과 스크립트 실행 진입점이 여기 있다. 파일 시스템과
- * 콘솔로 이어 주는 부분은 mphalport.c에 있다.
+ * 콘솔은 mphalport.c, GC 파일 버퍼는 mpport_file64.c가 이어 준다.
  */
 #include <mpport64.h>
 #include <mtask64.h>
+
+#include "mpport_file_internal64.h"
 
 #include "py/builtin.h"
 #include "py/compile.h"
 #include "py/cstack.h"
 #include "py/gc.h"
 #include "py/lexer.h"
-#include "py/mperrno.h"
 #include "py/mpstate.h"
 #include "py/parse.h"
-#include "py/reader.h"
 #include "py/runtime.h"
 #include "shared/runtime/gchelper.h"
 #include "shared/runtime/pyexec.h"
 
-#include <asmfunc64.h>
-#ifdef __aarch64__
-#include <arch/arch64.h>
-#endif
+#include <arch/platform64.h>
 #include <console64.h>
 #include <fd64.h>
 #include <memory64.h>
+#include <string_copy64.h>
 #include <stdint.h>
+#include <string.h>
 
 /*
  * library_kor.scm까지 장기 유지하려면 4 MiB가 필요하다. x86_64는 기존 계약대로
@@ -44,52 +43,39 @@ static uint8_t *gc_heap;
 static uint8_t gc_heap[MPPORT_GC_HEAP_SIZE];
 #endif
 
-/*
- * MicroPython은 태생적으로 단일 인스턴스다: gc_heap도 하나, mp_state_ctx도
- * 하나(전역). 콘솔마다 py를 돌리려면 콘솔 수만큼의 512KiB .bss에 더해,
- * MP_STATE_VM이 바꿔 낄 수 있는 포인터를 거치도록 벤더링된 MicroPython 자체를
- * 고쳐야 한다. 따라서 시스템 전체에서 한 번에 하나, 두 번째 콘솔은 거절하도록 설계하였다.
+/* One persistent VM/GC heap is shared by every console. The claim serializes
+ * initialization, execution, exception reporting and session cleanup.
  */
 static int mp_busy;
 
-static int mpport_claim(void)
+static int mpport_claim64(void)
 {
 	uint64_t flags;
 
-#ifdef __aarch64__
-	flags = arch64_irq_save();
-#else
-	flags = io_load_rflags();
-	io_cli();
-#endif
+	flags = platform_irq_save64();
 	if (mp_busy != 0) {
-#ifdef __aarch64__
-		arch64_irq_restore(flags);
-#else
-		io_store_rflags(flags);
-#endif
+		platform_irq_restore64(flags);
 		/* console64_puts는 도는 태스크로 콘솔을 찾으므로 거절 메시지는
 		   거절당한 콘솔에 찍힌다. */
 		console64_puts("py already running in another console\n");
 		return -1;
 	}
 	mp_busy = 1;
-#ifdef __aarch64__
-	arch64_irq_restore(flags);
-#else
-	io_store_rflags(flags);
-#endif
+	platform_irq_restore64(flags);
 	return 0;
 }
 
-static void mpport_release(void)
+static void mpport_release64(void)
 {
+	uint64_t flags = platform_irq_save64();
+
 	mp_busy = 0;
+	platform_irq_restore64(flags);
 }
 
 /*
  * 콘솔 명령이 스크립트에 넘기는 인자 하나. sys.argv를 켜지 않는다 --
- * 문자열 하나 때문에 그럴 값어치가 없다. 
+ * 문자열 하나 때문에 그럴 값어치가 없다.
  * 콘솔의 입력 줄은 다음 명령에 덮어씌워지므로 가리키지 않고 베껴 둔다.
  */
 static char mp_argv[FD64_NAME_MAX];
@@ -97,16 +83,12 @@ static int mp_argv_set;
 
 void mpport_set_argv(const char *arg)
 {
-	size_t i;
-
 	if (arg == NULL) {
 		mp_argv_set = 0;
 		return;
 	}
-	for (i = 0; i + 1 < sizeof(mp_argv) && arg[i] != '\0'; i++) {
-		mp_argv[i] = arg[i];
-	}
-	mp_argv[i] = '\0';
+	/* Preserve the port's bounded-prefix argument convention. */
+	(void) str_copy64(mp_argv, sizeof(mp_argv), arg);
 	mp_argv_set = 1;
 }
 
@@ -117,221 +99,233 @@ const char *mpport_argv(void)
 
 /*
  * C 스택 한계는 부를 때마다 다시 잰다. 콘솔마다 태스크가 따로고 스택도 따로라
- * (console64.c), 다른 콘솔에서 측정한 값을 물려받으면 넘침 검사가 엉뚱한 자리를 본다. 
+ * (console64.c), 다른 콘솔에서 측정한 값을 물려받으면 넘침 검사가 엉뚱한 자리를 본다.
  * mp_init과 달리 이건 되풀이해도 되는 일이다.
  */
-static void mpport_stack_limit(void)
+static int mpport_stack_limit64(uintptr_t stack_top)
 {
 	int here;
 	size_t available;
+	uintptr_t here_address = (uintptr_t) &here;
 	struct TASK64 *task;
 
 	/*
-	 * 콘솔이 자기 태스크에서 돌면 그 스택은 memman64가 준 64KiB지 커널 메인 스택이 아니다. 
-	 * stack_bottom으로 측정하면 몇 MiB가 남은 줄 알고 넘침 검사가 걸리지 않아, 
+	 * 콘솔이 자기 태스크에서 돌면 그 스택은 memman64가 준 64KiB지 커널 메인 스택이 아니다.
+	 * stack_bottom으로 측정하면 몇 MiB가 남은 줄 알고 넘침 검사가 걸리지 않아,
 	 * 깊은 재귀가 조용히 태스크 스택을 침범한다.
 	 */
 	task = task_now64();
-	if (task != NULL && task->stack_base != 0) {
-		available = (size_t) ((uintptr_t) &here - task->stack_base);
+	if (task != NULL && task->stack_usable_base != 0) {
+		if (here_address < task->stack_usable_base ||
+			here_address - task->stack_usable_base > task->stack_usable_size) {
+			return -22;
+		}
+		if (stack_top < here_address || stack_top - task->stack_usable_base >
+			task->stack_usable_size) {
+			return -22;
+		}
+		available = (size_t) (stack_top - task->stack_usable_base);
 	} else {
-		available = (size_t) ((uintptr_t) &here - (uintptr_t) stack_bottom);
+		if (here_address < (uintptr_t) stack_bottom || stack_top < here_address) {
+			return -22;
+		}
+		available = (size_t) (stack_top - (uintptr_t) stack_bottom);
 	}
-	mp_cstack_init_with_sp_here(available);
+	if (available <= MICROPY_STACK_CHECK_MARGIN) {
+		return -22;
+	}
+	mp_cstack_init_with_top((void *) stack_top, available);
+	return 0;
 }
 
-/*
- * 해석기는 부팅 뒤 한 번만 세운다. 머꼬의 바탕 환경을 만드는 데 약 1.7초가 드는데, 
- * 그것을 부를 때마다 해석기를 실행시킬 이유가 없다. 
- * 그래서 mp_deinit()도 없애고 GC 힙과 qstr 풀이 부팅 내내 살아 있으므로, 
- * 메모리 누수가 발생하면 세션을 넘겨 쌓인다.
+enum MPPORT_MODE64 {
+	MPPORT_REPL64,
+	MPPORT_FILE64,
+	MPPORT_MOWKOW64
+};
+
+struct MPPORT_SESSION64 {
+	uintptr_t stack_top;
+	int init_started;
+	int repl_active;
+};
+
+/* Successful initialization persists across sessions to retain modules/qstrs.
+ * A failed first initialization publishes no VM and can be retried.
  */
 static int mp_ready;
 
-static int mpport_init(void)
+static int mpport_init64(volatile struct MPPORT_SESSION64 *session)
 {
-	mpport_stack_limit();
+	if (mpport_stack_limit64(session->stack_top) != 0) {
+		console64_puts("MicroPython: invalid stack bounds\n");
+		return -22;
+	}
 	if (mp_ready != 0) {
 		return 0;
 	}
 #ifdef __aarch64__
-	gc_heap = (uint8_t *) memman64_alloc_4k(&memman64,
-		MPPORT_GC_HEAP_SIZE);
+	/* Retain ownership if a previous failed initialization could not free it. */
 	if (gc_heap == NULL) {
-		console64_puts("MicroPython: cannot allocate GC heap\n");
-		return -1;
+		gc_heap = (uint8_t *) memman64_alloc_4k(&memman64, MPPORT_GC_HEAP_SIZE);
+		if (gc_heap == NULL) {
+			console64_puts("MicroPython: cannot allocate GC heap\n");
+			return -12;
+		}
 	}
-	gc_init(gc_heap, gc_heap + MPPORT_GC_HEAP_SIZE);
-#else
-	gc_init(gc_heap, gc_heap + sizeof(gc_heap));
 #endif
+	session->init_started = 1;
+	gc_init(gc_heap, gc_heap + MPPORT_GC_HEAP_SIZE);
 	mp_init();
 	mp_ready = 1;
 	return 0;
 }
 
-/*
- * 파일 하나를 GC 힙으로 읽어 온다. 없으면 NULL, 있으면 크기를 *out_size에.
- *
- * 스크립트 실행과 import가 같은 것을 필요로 해서 한 곳에 둔다. 
- * memman64가 아니라 GC 힙에 담는 이유는 수명이다.
- * mp_reader_new_mem에 free_len을 함께 주면 lexer가 닫힐 때 리더가 알아서 m_del한다. 
- * import는 자기가 연 버퍼를 언제 놓아야 하는지 부르는 쪽에서 알 방법이 없다.
- *
- * m_new는 자리가 없으면 MemoryError를 던지고 NLR 문맥 안에서만 부른다.
- */
-uint8_t *mpport_load_file(const char *path, size_t *out_size)
+static void mpport_finish64(const volatile struct MPPORT_SESSION64 *session,
+	const mp_state_thread_t *thread_before)
 {
-	struct FDHANDLE64 fh;
-	byte *buf;
-	size_t size;
-
-	if (fd64_open(&fh, path) == 0) {
-		return NULL;
+	if (session->repl_active != 0) {
+		console64_repl_set_active(0);
 	}
-	size = fh.info.size;
-	/* 빈 파일도 유효한 모듈이다. m_new(0)은 NULL을 돌려줄 수 있어서
-	   "없음"과 헷갈리므로 1바이트를 잡아 둔다. */
-	buf = m_new(byte, size == 0 ? 1 : size);
-	fd64_read(&fh, buf, size);
-	*out_size = size;
-	return buf;
+	mpport_set_argv(NULL);
+	if (mp_ready == 0) {
+		mp_state_ctx.thread = *thread_before;
+	}
+	if (session->init_started != 0 && mp_ready == 0) {
+		/* No port init hooks or external VM resources are configured. Discard
+		 * partial GC roots before releasing the heap, while preserving the
+		 * caller's outer NLR/callback/thread state captured before our catcher.
+		 */
+		memset(&mp_state_ctx.vm, 0, sizeof(mp_state_ctx.vm));
+		memset(&mp_state_ctx.mem, 0, sizeof(mp_state_ctx.mem));
+#ifdef __aarch64__
+		if (memman64_free_4k(&memman64, (uintptr_t) gc_heap,
+			MPPORT_GC_HEAP_SIZE) == 0) {
+			gc_heap = NULL;
+		} else {
+			console64_puts("MicroPython: cannot free GC heap; retained for retry\n");
+		}
+#endif
+	}
+	/* Console/memory cleanup may not raise NLR. Publish availability last. */
+	mpport_release64();
+}
+
+static void mpport_compile_call64(mp_lexer_t *lex)
+{
+	qstr source_name = lex->source_name;
+	mp_parse_tree_t parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
+	mp_obj_t module_fun = mp_compile(&parse_tree, source_name, false);
+
+	mp_call_function_0(module_fun);
+}
+
+/* Keep execution roots below the session anchor even under compiler inlining. */
+static __attribute__((noinline)) void mpport_execute64(enum MPPORT_MODE64 mode, const char *arg,
+	volatile struct MPPORT_SESSION64 *session)
+{
+	static const char mowkow_source[] = "import mowkow\nmowkow.main()\n";
+	mp_lexer_t *lex;
+
+	if (mode == MPPORT_REPL64) {
+		session->repl_active = 1;
+		console64_repl_set_active(1);
+		(void) pyexec_friendly_repl();
+		return;
+	}
+	if (mode == MPPORT_MOWKOW64) {
+		mpport_set_argv(arg);
+		lex = mp_lexer_new_from_str_len(qstr_from_str("머꼬"), mowkow_source,
+			sizeof(mowkow_source) - 1, 0);
+	} else {
+		lex = mpport_file_lexer64(arg);
+		if (lex == NULL) {
+			console64_puts("file not found\n");
+			return;
+		}
+	}
+	mpport_compile_call64(lex);
+}
+
+static void mpport_report64(enum MPPORT_MODE64 mode, void *exception)
+{
+	nlr_buf_t nlr;
+
+	/* Keep the claim while printing: another console must not mutate the VM.
+	 * A reporting exception must still reach the common cleanup path.
+	 */
+	if (nlr_push(&nlr) == 0) {
+		mp_obj_t exc = MP_OBJ_FROM_PTR(exception);
+		const mp_obj_type_t *type = mp_obj_get_type(exc);
+
+		if (mode == MPPORT_MOWKOW64 &&
+			(type == &mp_type_KeyboardInterrupt || type == &mp_type_SystemExit)) {
+			console64_puts("\n");
+		} else {
+			mp_obj_print_exception(&mp_plat_print, exc);
+		}
+		nlr_pop();
+	} else {
+		console64_puts("MicroPython: cannot print exception\n");
+	}
+}
+
+static void mpport_session64(enum MPPORT_MODE64 mode, const char *arg)
+{
+	/* Flags modified below the catcher remain defined after setjmp-based NLR. */
+	volatile struct MPPORT_SESSION64 session = { 0 };
+	mp_state_thread_t thread_before;
+	nlr_buf_t nlr;
+
+	if (mpport_claim64() != 0) {
+		return;
+	}
+	thread_before = mp_state_ctx.thread;
+	/* GC must scan every session root and all descendant execution frames.
+	 * Anchoring inside the init helper excludes caller parse/compile roots.
+	 * Use one-past object endpoints so compiler local ordering cannot hide a
+	 * root. The validated task stack supplies the readable lower bound.
+	 */
+	session.stack_top = (uintptr_t) (&thread_before + 1);
+	if (session.stack_top < (uintptr_t) (&nlr + 1)) {
+		session.stack_top = (uintptr_t) (&nlr + 1);
+	}
+	if (session.stack_top < (uintptr_t) (&session + 1)) {
+		session.stack_top = (uintptr_t) (&session + 1);
+	}
+	if (session.stack_top < (uintptr_t) (&arg + 1)) {
+		session.stack_top = (uintptr_t) (&arg + 1);
+	}
+	if (nlr_push(&nlr) == 0) {
+		if (mpport_init64(&session) == 0) {
+			mpport_execute64(mode, arg, &session);
+		}
+		nlr_pop();
+	} else if (mp_ready == 0) {
+		/* A partial VM cannot be trusted to format its own exception objects. */
+		console64_puts("MicroPython: initialization failed\n");
+	} else {
+		mpport_report64(mode, nlr.ret_val);
+	}
+	mpport_finish64(&session, &thread_before);
 }
 
 void mpport_repl(void)
 {
-	if (mpport_claim() != 0) {
-		return;
-	}
-	if (mpport_init() != 0) {
-		mpport_release();
-		return;
-	}
-
-	console64_repl_set_active(1);
-	pyexec_friendly_repl();
-	console64_repl_set_active(0);
-
-	mpport_release();
+	mpport_session64(MPPORT_REPL64, NULL);
 }
 
 void mpport_run_file(const char *path)
 {
-	nlr_buf_t nlr;
-
-	if (mpport_claim() != 0) {
-		return;
-	}
-	if (mpport_init() != 0) {
-		mpport_release();
-		return;
-	}
-
-	if (nlr_push(&nlr) == 0) {
-		byte *buf;
-		size_t size;
-		mp_reader_t reader;
-		mp_lexer_t *lex;
-		qstr source_name;
-		mp_parse_tree_t parse_tree;
-		mp_obj_t module_fun;
-
-		/* 파일을 GC 힙에 담으므로 mpport_init 뒤에, 그리고 NLR 안에서
-		   읽는다. 예전에는 memman64로 먼저 읽었다. */
-		buf = mpport_load_file(path, &size);
-		if (buf == NULL) {
-			console64_puts("file not found\n");
-		} else {
-			mp_reader_new_mem(&reader, buf, size, size);
-			lex = mp_lexer_new(qstr_from_str(path), reader);
-			source_name = lex->source_name;
-			parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
-			module_fun = mp_compile(&parse_tree, source_name, false);
-			mp_call_function_0(module_fun);
-		}
-		nlr_pop();
-	} else {
-		mp_obj_print_exception(&mp_plat_print, MP_OBJ_FROM_PTR(nlr.ret_val));
-	}
-
-	mpport_release();
+	mpport_session64(MPPORT_FILE64, path);
 }
 
-/*
- * `머꼬` 명령. 파일을 돌리는 게 아니라 두 줄짜리 소스를 그대로 컴파일해 돌린다:
- * mowkow.py는 스크립트가 아니라 모듈이라야 library_kor.scm으로 만든 바탕
- * 환경이 import 캐시에 남는다.
- *
- * 나가는 길은 넷인데 셋은 파이썬 쪽에서 끝난다. 빈 줄은 업스트림
- * eval_print_loop이 스스로 빠져나오고, Ctrl-D는 EOFError로 같은 자리에서
- * 잡히고, Ctrl-C는 KeyboardInterrupt로 여기까지 올라온다. 여기서는 그 둘
- * (KeyboardInterrupt, SystemExit)을 조용히 삼켜서 역추적이 찍히지 않게 한다.
- *
- * repl_active는 건드리지 않는다. 머꼬의 입력은 mowio.readline이고 그 길은
- * line_capture가 먼저 잡으므로(console64.c:1238) 플래그가 필요 없다. 켜지
- * 않으니 콘솔이 REPL 모드에 갇힐 길도 없다.
+/* Mowkow uses mowio.readline, not the Python REPL queue. KeyboardInterrupt and
+ * SystemExit end this session quietly; EOFError is handled by the Python loop.
  */
 void mpport_run_mowkow(const char *arg)
 {
-	static const char source[] = "import mowkow\nmowkow.main()\n";
-	nlr_buf_t nlr;
-
-	if (mpport_claim() != 0) {
-		return;
-	}
-	if (mpport_init() != 0) {
-		mpport_release();
-		return;
-	}
-	mpport_set_argv(arg);
-
-	if (nlr_push(&nlr) == 0) {
-		mp_lexer_t *lex;
-		qstr source_name;
-		mp_parse_tree_t parse_tree;
-		mp_obj_t module_fun;
-
-		lex = mp_lexer_new_from_str_len(qstr_from_str("머꼬"), source,
-				sizeof(source) - 1, 0);
-		source_name = lex->source_name;
-		parse_tree = mp_parse(lex, MP_PARSE_FILE_INPUT);
-		module_fun = mp_compile(&parse_tree, source_name, false);
-		mp_call_function_0(module_fun);
-		nlr_pop();
-	} else {
-		mp_obj_t exc = MP_OBJ_FROM_PTR(nlr.ret_val);
-		const mp_obj_type_t *type = mp_obj_get_type(exc);
-
-		if (type != &mp_type_KeyboardInterrupt && type != &mp_type_SystemExit) {
-			mp_obj_print_exception(&mp_plat_print, exc);
-		} else {
-			console64_puts("\n");
-		}
-	}
-
-	mpport_set_argv(NULL);
-	mpport_release();
-}
-
-/*
- * 링크된 코어(py/lexer.h)가 요구한다. MICROPY_READER_POSIX와
- * MICROPY_READER_VFS가 둘 다 꺼져 있으므로 포트가 직접 준다. import가
- * 모듈 소스를 여기로 가져간다.
- *
- * free_len으로 size를 같이 넘겨 lexer가 닫힐 때 버퍼도 함께 풀리게 한다.
- */
-mp_lexer_t *mp_lexer_new_from_file(qstr filename)
-{
-	mp_reader_t reader;
-	byte *buf;
-	size_t size;
-
-	buf = mpport_load_file(qstr_str(filename), &size);
-	if (buf == NULL) {
-		mp_raise_OSError(MP_ENOENT);
-	}
-	mp_reader_new_mem(&reader, buf, size, size);
-	return mp_lexer_new(filename, reader);
+	mpport_session64(MPPORT_MOWKOW64, arg);
 }
 
 /*
@@ -358,7 +352,7 @@ mp_import_stat_t mp_import_stat(const char *path)
  * REPL을 쓰든 안 쓰든 링크된 코어(py/gc.c)가 요구한다.
  * gc_helper_collect_regs_and_stack()는 업스트림 그대로 가져다 쓴다
  * (shared/runtime/gchelper_generic.c). x86_64용 레지스터 저장 경로가 이미
- * 있어 아키텍처별 어셈블리가 필요 없다. 위의 mp_cstack_init_with_sp_here()
+ * 있어 아키텍처별 어셈블리가 필요 없다. 세션의 mp_cstack_init_with_top()
  * 가 설정하는 MP_STATE_THREAD(stack_top)에 기댄다.
  */
 void gc_collect(void)

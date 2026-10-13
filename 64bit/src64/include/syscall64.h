@@ -14,14 +14,17 @@
 #define SYS_TICKS  9
 #define SYS_TTY    10
 
-/* SYS_OPEN 플래그 (따로 SYS_CREATE를 두지 않는다) */
+/* SYS_OPEN accepts only these two bits; 0 opens an existing file for I/O.
+   Names are copied into a FD64_NAME_MAX-byte kernel buffer including NUL and
+   checked for well-formed UTF-8 before filesystem access. Bad input returns -1. */
 #define O_CREAT 1
 #define O_TRUNC 2
 
 /*
  * SYS_TTY: 하나의 번호에 연산 코드를 실어 쓴다.
- * rdi = 연산, rsi 이후가 인자. 커서 이동/지우기/속성 등 그리기 연산은
- * 아직 없다.
+ * rdi = 연산, rsi 이후가 인자. AArch64에서는 x0 = 연산, x1 이후가 인자다.
+ * 좌표와 사각형은 화면 안에 있어야 한다. 잘못된 요청은 -1을 반환하며
+ * 화면을 수정하지 않는다. 유효한 시작점의 0 크기 지우기는 성공 no-op이다.
  */
 #define TTY_MODE    0   /* rsi: 1이면 raw, 0이면 cooked */
 #define TTY_READKEY 1   /* 키 이벤트 하나를 기다렸다가 묶어서 돌려준다 */

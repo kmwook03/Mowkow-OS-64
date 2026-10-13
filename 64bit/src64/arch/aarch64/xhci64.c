@@ -1,6 +1,7 @@
 /* RP1's two DWC3 host blocks expose xHCI capability registers at offset 0. */
 #include <arch/arch64.h>
 #include <stdint.h>
+#include <usbhid64.h>
 
 #define RP1_USB0_BASE 0x200000U
 #define RP1_USB1_BASE 0x300000U
@@ -93,7 +94,7 @@ struct XHCI64_CONTROLLER_STATE {
 	struct XHCI64_TRB interrupt_ring[XHCI_RING_TRBS]
 		__attribute__((aligned(4096)));
 	uint8_t descriptor_buffer[512] __attribute__((aligned(64)));
-	uint8_t interrupt_report[64] __attribute__((aligned(64)));
+	uint8_t interrupt_report[USBHID64_REPORT_MAX] __attribute__((aligned(64)));
 	uint32_t command_enqueue;
 	uint32_t command_cycle;
 	uint32_t event_dequeue;
@@ -103,6 +104,9 @@ struct XHCI64_CONTROLLER_STATE {
 	uint32_t interrupt_enqueue;
 	uint32_t interrupt_cycle;
 	uint64_t interrupt_pending_pointer;
+	uint32_t interrupt_pending_slot;
+	uint32_t interrupt_pending_endpoint;
+	uint32_t interrupt_pending_length;
 };
 
 static struct XHCI64_CONTROLLER_STATE xhci_states[2]
@@ -143,15 +147,15 @@ int xhci64_select_controller(uint32_t controller_id)
 	return 0;
 }
 
-static volatile uint8_t *xhci_capability64(uintptr_t rp1_base)
+static uintptr_t xhci_capability64(uintptr_t rp1_base)
 {
-	return (volatile uint8_t *) (rp1_base + xhci_controller_offset);
+	return rp1_base + xhci_controller_offset;
 }
 
 static int controller_has_connection64(uintptr_t base)
 {
-	volatile uint8_t *capability = (volatile uint8_t *) base;
-	volatile uint8_t *operational;
+	uintptr_t capability = base;
+	uintptr_t operational;
 	uint32_t caplength;
 	uint32_t hcsparams1;
 	uint32_t port_count;
@@ -275,7 +279,7 @@ static void delay_xhci64(uint32_t milliseconds)
 	}
 }
 
-static uint32_t port_protocol_major64(volatile uint8_t *capability,
+static uint32_t port_protocol_major64(uintptr_t capability,
 	uint32_t port_id)
 {
 	uint32_t hccparams1;
@@ -310,7 +314,7 @@ static uint32_t port_protocol_major64(volatile uint8_t *capability,
 static int probe_controller64(uintptr_t base, uint32_t *capability,
 	uint32_t *hcsparams1)
 {
-	volatile uint8_t *registers = (volatile uint8_t *) base;
+	uintptr_t registers = base;
 	uint32_t cap;
 	uint32_t params;
 	uint32_t caplength;
@@ -334,7 +338,7 @@ static int probe_controller64(uintptr_t base, uint32_t *capability,
 	return 0;
 }
 
-static void advance_event_ring64(volatile uint8_t *interrupter)
+static void advance_event_ring64(uintptr_t interrupter)
 {
 	xhci0_event_dequeue++;
 	if (xhci0_event_dequeue == XHCI_RING_TRBS) {
@@ -347,8 +351,8 @@ static void advance_event_ring64(volatile uint8_t *interrupter)
 	__asm__ volatile ("dsb sy" ::: "memory");
 }
 
-static int wait_command_completion64(volatile uint8_t *operational,
-	volatile uint8_t *interrupter, uint64_t expected_pointer,
+static int wait_command_completion64(uintptr_t operational,
+	uintptr_t interrupter, uint64_t expected_pointer,
 	struct XHCI64_COMMAND_RESULT *result, uint32_t *slot_id)
 {
 	uint64_t deadline;
@@ -395,7 +399,7 @@ static int wait_command_completion64(volatile uint8_t *operational,
 	return -2;
 }
 
-static int wait_transfer_completion64(volatile uint8_t *interrupter,
+static int wait_transfer_completion64(uintptr_t interrupter,
 	uint64_t expected_pointer, uint32_t slot_id, uint32_t endpoint_id,
 	uint32_t timeout_ms, struct XHCI64_DESCRIPTOR_RESULT *result)
 {
@@ -467,8 +471,8 @@ int xhci64_probe_rp1(uintptr_t rp1_base, uint32_t capability[2],
 static int reset_controller64(uintptr_t base,
 	struct XHCI64_RESET_RESULT *result)
 {
-	volatile uint8_t *capability = (volatile uint8_t *) base;
-	volatile uint8_t *operational;
+	uintptr_t capability = base;
+	uintptr_t operational;
 	volatile uint32_t *command;
 	volatile uint32_t *status;
 	uint32_t caplength;
@@ -527,10 +531,10 @@ int xhci64_reset_rp1(uintptr_t rp1_base,
 static int start_selected_controller64(uintptr_t rp1_base,
 	struct XHCI64_START_RESULT *result)
 {
-	volatile uint8_t *capability;
-	volatile uint8_t *operational;
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability;
+	uintptr_t operational;
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	uint32_t caplength;
 	uint32_t hcsparams1;
 	uint32_t scratchpads;
@@ -663,9 +667,8 @@ int xhci64_port_inventory(uintptr_t rp1_base,
 		return -1;
 	}
 	for (controller = 0; controller < 2U; controller++) {
-		volatile uint8_t *capability = (volatile uint8_t *)
-			(rp1_base + offsets[controller]);
-		volatile uint8_t *operational;
+		uintptr_t capability = rp1_base + offsets[controller];
+		uintptr_t operational;
 		uint32_t caplength;
 		uint32_t count;
 		uint32_t port;
@@ -699,10 +702,10 @@ int xhci64_port_inventory(uintptr_t rp1_base,
 int xhci64_noop_command(uintptr_t rp1_base,
 	struct XHCI64_COMMAND_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *operational;
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t operational;
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbell;
 	uint64_t command_pointer;
 	uint32_t caplength;
@@ -736,10 +739,10 @@ int xhci64_noop_command(uintptr_t rp1_base,
 int xhci64_enable_slot(uintptr_t rp1_base,
 	struct XHCI64_SLOT_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *operational;
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t operational;
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbell;
 	struct XHCI64_COMMAND_RESULT command_result;
 	uint64_t command_pointer;
@@ -794,10 +797,10 @@ int xhci64_address_device(uintptr_t rp1_base, uint32_t port_id,
 	uint32_t port_speed, uint32_t slot_id,
 	struct XHCI64_ADDRESS_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *operational;
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t operational;
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbell;
 	struct XHCI64_COMMAND_RESULT command_result;
 	uint64_t command_pointer;
@@ -902,9 +905,9 @@ static int read_descriptor64(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t descriptor_type, uint32_t descriptor_index, uint32_t length,
 	struct XHCI64_DESCRIPTOR_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbells;
 	uint64_t buffer_dma;
 	uint64_t status_pointer;
@@ -999,9 +1002,8 @@ static int find_boot_hid64(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t protocol, struct XHCI64_HID_RESULT *result)
 {
 	struct XHCI64_DESCRIPTOR_RESULT transfer;
-	uint32_t offset;
+	struct USBHID64_CONFIG config;
 	uint32_t total_length;
-	int hid_interface;
 	int status;
 
 	if (result == NULL) {
@@ -1055,43 +1057,16 @@ static int find_boot_hid64(uintptr_t rp1_base, uint32_t slot_id,
 		return -7;
 	}
 
-	hid_interface = 0;
-	for (offset = 0; offset + 2U <= total_length;) {
-		uint32_t descriptor_length = xhci0_descriptor_buffer[offset];
-		uint32_t descriptor_type = xhci0_descriptor_buffer[offset + 1U];
-
-		if (descriptor_length < 2U || offset + descriptor_length > total_length) {
-			return -8;
-		}
-		if (descriptor_type == 4U && descriptor_length >= 9U) {
-			hid_interface =
-				xhci0_descriptor_buffer[offset + 5U] == 3U &&
-				xhci0_descriptor_buffer[offset + 6U] == 1U &&
-				xhci0_descriptor_buffer[offset + 7U] == protocol;
-			if (hid_interface != 0) {
-				result->interface_number =
-					xhci0_descriptor_buffer[offset + 2U];
-			}
-		} else if (descriptor_type == 5U && descriptor_length >= 7U &&
-				hid_interface != 0 &&
-				(xhci0_descriptor_buffer[offset + 2U] & 0x80U) != 0 &&
-				(xhci0_descriptor_buffer[offset + 3U] & 3U) == 3U) {
-			result->endpoint_address =
-				xhci0_descriptor_buffer[offset + 2U];
-			result->endpoint_max_packet =
-				(uint32_t) xhci0_descriptor_buffer[offset + 4U] |
-				((uint32_t) xhci0_descriptor_buffer[offset + 5U] << 8);
-			result->endpoint_max_packet &= 0x7ffU;
-			result->endpoint_interval =
-				xhci0_descriptor_buffer[offset + 6U];
-			break;
-		}
-		offset += descriptor_length;
+	status = usbhid64_parse_boot_config(xhci0_descriptor_buffer,
+		total_length, protocol, &config);
+	if (status != 0) {
+		return -8;
 	}
-	if (result->configuration_value == 0 || result->endpoint_address == 0 ||
-			result->endpoint_max_packet == 0) {
-		return -9;
-	}
+	result->configuration_value = config.configuration_value;
+	result->interface_number = config.interface_number;
+	result->endpoint_address = config.endpoint_address;
+	result->endpoint_max_packet = config.endpoint_max_packet;
+	result->endpoint_interval = config.endpoint_interval;
 	return 0;
 }
 
@@ -1111,16 +1086,16 @@ static int control_no_data64(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t request_type, uint32_t request, uint32_t value,
 	uint32_t request_index)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbells;
 	struct XHCI64_DESCRIPTOR_RESULT transfer;
 	uint64_t status_pointer;
 	uint32_t index;
 
 	if (request_type > 255U || request > 255U || value > 0xffffU ||
-			request_index > 0xffffU ||
+			request_index > 0xffffU || slot_id == 0 || slot_id > XHCI_MAX_SLOTS ||
 			xhci0_ep0_enqueue + 2U >= XHCI_RING_TRBS - 1U) {
 		return -1;
 	}
@@ -1152,6 +1127,16 @@ static int control_no_data64(uintptr_t rp1_base, uint32_t slot_id,
 		slot_id, 1U, XHCI_TIMEOUT_MS, &transfer);
 }
 
+static int hid_endpoint64(const struct XHCI64_HID_RESULT *hid, uint32_t *id)
+{
+	if (hid == NULL || hid->configuration_value == 0 ||
+		hid->configuration_value > 255U || hid->interface_number > 255U) {
+		return -1;
+	}
+	return usbhid64_endpoint_id(hid->endpoint_address,
+		hid->endpoint_max_packet, hid->endpoint_interval, id);
+}
+
 static uint32_t endpoint_interval64(uint32_t port_speed, uint32_t interval)
 {
 	uint32_t encoded;
@@ -1173,10 +1158,10 @@ int xhci64_configure_boot_hid(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t port_speed, const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_CONFIGURE_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *operational;
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t operational;
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbell;
 	struct XHCI64_COMMAND_RESULT command_result;
 	uint64_t command_pointer;
@@ -1191,10 +1176,10 @@ int xhci64_configure_boot_hid(uintptr_t rp1_base, uint32_t slot_id,
 	int status;
 
 	if (hid == NULL || result == NULL || slot_id == 0 ||
-			slot_id > XHCI_MAX_SLOTS || port_speed == 0 ||
-			(hid->endpoint_address & 0x80U) == 0 ||
-			(hid->endpoint_address & 0x0fU) == 0 ||
-			hid->endpoint_max_packet == 0 ||
+			slot_id > XHCI_MAX_SLOTS || port_speed == 0 || port_speed > 5U ||
+			hid_endpoint64(hid, &endpoint_id) != 0 ||
+			(port_speed >= 3U && hid->endpoint_interval > 16U) ||
+			(port_speed == 2U && hid->endpoint_max_packet > 8U) ||
 			xhci0_command_enqueue >= XHCI_RING_TRBS - 1U) {
 		return -1;
 	}
@@ -1290,6 +1275,9 @@ int xhci64_configure_boot_keyboard(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t port_speed, const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_CONFIGURE_RESULT *result)
 {
+	if (hid == NULL || hid->endpoint_max_packet < 8U) {
+		return -1;
+	}
 	return xhci64_configure_boot_hid(rp1_base, slot_id, port_speed, hid,
 		result);
 }
@@ -1298,9 +1286,9 @@ int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_KEY_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbells;
 	struct XHCI64_DESCRIPTOR_RESULT transfer;
 	uint64_t report_dma;
@@ -1311,7 +1299,7 @@ int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
 	int status;
 
 	if (hid == NULL || result == NULL || slot_id == 0 ||
-			(hid->endpoint_address & 0x80U) == 0 ||
+			slot_id > XHCI_MAX_SLOTS || hid_endpoint64(hid, &endpoint_id) != 0 ||
 			hid->endpoint_max_packet < 8U ||
 			hid->endpoint_max_packet > sizeof(xhci0_keyboard_report)) {
 		return -1;
@@ -1370,9 +1358,15 @@ int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
 		}
 		invalidate_cache64(xhci0_keyboard_report,
 			hid->endpoint_max_packet);
+		if (usbhid64_keyboard_report_valid(xhci0_keyboard_report,
+			hid->endpoint_max_packet) != 0) {
+			continue;
+		}
 		result->modifier = xhci0_keyboard_report[0];
 		for (index = 2U; index < 8U; index++) {
-			if (xhci0_keyboard_report[index] != 0) {
+			uint16_t key;
+
+			if (usbhid64_key_transition(xhci0_keyboard_report[index], 1, &key) == 0) {
 				result->keycode = xhci0_keyboard_report[index];
 				return 0;
 			}
@@ -1384,7 +1378,10 @@ int xhci64_read_boot_key(uintptr_t rp1_base, uint32_t slot_id,
 int xhci64_hid_set_boot_protocol(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid)
 {
-	if (hid == NULL || slot_id == 0) {
+	uint32_t endpoint_id;
+
+	if (slot_id == 0 || slot_id > XHCI_MAX_SLOTS ||
+		hid_endpoint64(hid, &endpoint_id) != 0) {
 		return -1;
 	}
 	return control_no_data64(rp1_base, slot_id, 0x21U, 0x0bU, 0,
@@ -1394,6 +1391,9 @@ int xhci64_hid_set_boot_protocol(uintptr_t rp1_base, uint32_t slot_id,
 int xhci64_keyboard_set_boot_protocol(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid)
 {
+	if (hid == NULL || hid->endpoint_max_packet < 8U) {
+		return -1;
+	}
 	return xhci64_hid_set_boot_protocol(rp1_base, slot_id, hid);
 }
 
@@ -1401,9 +1401,9 @@ int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid,
 	struct XHCI64_KEY_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	volatile uint32_t *doorbells;
 	struct XHCI64_DESCRIPTOR_RESULT transfer;
 	uint64_t trb_pointer;
@@ -1413,6 +1413,7 @@ int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
 	int status;
 
 	if (hid == NULL || result == NULL || slot_id == 0 ||
+			slot_id > XHCI_MAX_SLOTS || hid_endpoint64(hid, &endpoint_id) != 0 ||
 			hid->endpoint_max_packet < 8U ||
 			xhci0_interrupt_enqueue >= XHCI_RING_TRBS - 1U) {
 		return -1;
@@ -1466,10 +1467,16 @@ int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
 		}
 		invalidate_cache64(xhci0_keyboard_report,
 			hid->endpoint_max_packet);
+		if (usbhid64_keyboard_report_valid(xhci0_keyboard_report,
+			hid->endpoint_max_packet) != 0) {
+			continue;
+		}
 		result->modifier = xhci0_keyboard_report[0];
 		result->keycode = 0;
 		for (index = 2U; index < 8U; index++) {
-			if (xhci0_keyboard_report[index] != 0) {
+			uint16_t key;
+
+			if (usbhid64_key_transition(xhci0_keyboard_report[index], 1, &key) == 0) {
 				result->keycode = xhci0_keyboard_report[index];
 				break;
 			}
@@ -1484,12 +1491,13 @@ int xhci64_read_boot_release(uintptr_t rp1_base, uint32_t slot_id,
 int xhci64_hid_arm(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
+	uintptr_t capability = xhci_capability64(rp1_base);
 	volatile uint32_t *doorbells;
 	uint32_t endpoint_id;
 	uint32_t index;
 
-	if (hid == NULL || slot_id == 0 || xhci0_keyboard_pending_pointer != 0 ||
+	if (hid == NULL || slot_id == 0 || slot_id > XHCI_MAX_SLOTS ||
+			hid_endpoint64(hid, &endpoint_id) != 0 || xhci0_keyboard_pending_pointer != 0 ||
 			hid->endpoint_max_packet < 3U ||
 			hid->endpoint_max_packet > sizeof(xhci0_keyboard_report) ||
 			xhci0_interrupt_enqueue >= XHCI_RING_TRBS - 1U) {
@@ -1505,6 +1513,9 @@ int xhci64_hid_arm(uintptr_t rp1_base, uint32_t slot_id,
 		XHCI_TRB_IOC | xhci0_interrupt_cycle;
 	xhci0_keyboard_pending_pointer =
 		rp1_dma_address64(&xhci0_interrupt_ring[index]);
+	xhci_states[xhci_controller_id].interrupt_pending_slot = slot_id;
+	xhci_states[xhci_controller_id].interrupt_pending_endpoint = endpoint_id;
+	xhci_states[xhci_controller_id].interrupt_pending_length = hid->endpoint_max_packet;
 	clean_cache64(xhci0_keyboard_report, sizeof(xhci0_keyboard_report));
 	clean_cache64(&xhci0_interrupt_ring[index],
 		sizeof(xhci0_interrupt_ring[index]));
@@ -1520,9 +1531,9 @@ int xhci64_hid_poll(uintptr_t rp1_base, uint32_t slot_id,
 	const struct XHCI64_HID_RESULT *hid, uint8_t *report,
 	size_t report_length)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *runtime;
-	volatile uint8_t *interrupter;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t runtime;
+	uintptr_t interrupter;
 	struct XHCI64_TRB *event;
 	uint64_t event_pointer;
 	uint32_t actual_length;
@@ -1531,18 +1542,23 @@ int xhci64_hid_poll(uintptr_t rp1_base, uint32_t slot_id,
 	uint32_t endpoint_id;
 	uint32_t i;
 	uint32_t residual_length;
+	uint32_t event_status;
 	uint32_t type;
 
 	if (hid == NULL || report == NULL || report_length == 0 ||
 			report_length > sizeof(xhci0_keyboard_report) || slot_id == 0 ||
-			xhci0_keyboard_pending_pointer == 0) {
+			slot_id > XHCI_MAX_SLOTS || hid_endpoint64(hid, &endpoint_id) != 0 ||
+			xhci0_keyboard_pending_pointer == 0 ||
+			xhci_states[xhci_controller_id].interrupt_pending_slot != slot_id ||
+			xhci_states[xhci_controller_id].interrupt_pending_endpoint != endpoint_id ||
+			xhci_states[xhci_controller_id].interrupt_pending_length != hid->endpoint_max_packet) {
 		return -1;
 	}
 	endpoint_id = ((hid->endpoint_address & 0x0fU) << 1) + 1U;
 	runtime = capability +
 		(*(volatile uint32_t *) (capability + XHCI_RTSOFF) & ~0x1fU);
 	interrupter = runtime + XHCI_IR0_BASE;
-	for (;;) {
+	for (i = 0; i < XHCI_RING_TRBS; i++) {
 		event = &xhci0_event_ring[xhci0_event_dequeue];
 		invalidate_cache64(event, sizeof(*event));
 		control = event->control;
@@ -1551,12 +1567,13 @@ int xhci64_hid_poll(uintptr_t rp1_base, uint32_t slot_id,
 		}
 		type = (control >> 10) & 0x3fU;
 		event_pointer = event->parameter;
-		completion_code = event->status >> 24;
+		event_status = event->status;
+		completion_code = event_status >> 24;
 		advance_event_ring64(interrupter);
 		if (type != XHCI_TRB_TYPE_TRANSFER_EVENT) {
 			continue;
 		}
-		residual_length = event->status & 0x00ffffffU;
+		residual_length = event_status & 0x00ffffffU;
 		if ((completion_code != 1U && completion_code != 13U) ||
 				residual_length > hid->endpoint_max_packet ||
 				((control >> 16) & 0x1fU) != endpoint_id ||
@@ -1573,13 +1590,14 @@ int xhci64_hid_poll(uintptr_t rp1_base, uint32_t slot_id,
 		}
 		invalidate_cache64(xhci0_keyboard_report,
 			hid->endpoint_max_packet);
-		for (i = 0; i < report_length; i++) {
-			report[i] = i < actual_length ?
-				xhci0_keyboard_report[i] : 0;
+		for (size_t byte = 0; byte < report_length; byte++) {
+			report[byte] = byte < actual_length ?
+				xhci0_keyboard_report[byte] : 0;
 		}
 		xhci0_keyboard_pending_pointer = 0;
 		return (int) actual_length;
 	}
+	return 0;
 }
 
 int xhci64_keyboard_arm(uintptr_t rp1_base, uint32_t slot_id,
@@ -1602,8 +1620,8 @@ int xhci64_keyboard_poll(uintptr_t rp1_base, uint32_t slot_id,
 int xhci64_reset_connected_port(uintptr_t rp1_base,
 	struct XHCI64_PORT_RESULT *result)
 {
-	volatile uint8_t *capability = xhci_capability64(rp1_base);
-	volatile uint8_t *operational;
+	uintptr_t capability = xhci_capability64(rp1_base);
+	uintptr_t operational;
 	volatile uint32_t *portsc;
 	uint64_t deadline;
 	uint64_t frequency;

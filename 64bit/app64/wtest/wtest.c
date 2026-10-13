@@ -1,155 +1,119 @@
-/*
- * wtest.c -- FAT32 쓰기 자체 점검
- *
- * 만들고, 쓰고, 다시 열어 확인한다. 한 번 실행한 뒤 재부팅해서 cat으로
- * 읽어 보면 내용이 캐시가 아니라 디스크까지 갔는지 알 수 있다.
+/* FAT32 write/readback smoke. --verify modes only read persisted files.
+ * Run writes on disposable images; close errors and partial I/O are checked.
  */
 #include <mowos.h>
 
-/* FAT32 쓰기 자체 점검: 만들기, 쓰기, 다시 열기, 확인하기.
-   한 번 실행("wtest")한 뒤 재부팅하고 "cat TEST.TXT"로 읽어 보면 내용이
-   RAM 캐시가 아니라 매체까지 갔는지 알 수 있다. */
-
-#define BIG_SIZE 1500
-#define CHUNK_SIZE 4096
-#define HUGE_SIZE (384 * CHUNK_SIZE)      /* 1.5 MiB */
+#define BIG_SIZE 1500U
+#define CHUNK_SIZE 4096U
+#define HUGE_SIZE (384U * CHUNK_SIZE)
 
 static const char text[] = "phase0 fat12 write ok\n";
-static char big[BIG_SIZE];
-static char chunk[CHUNK_SIZE];
+static unsigned char chunk[CHUNK_SIZE];
 
-int main(int argc, char **argv)
+static int fail(const char *stage)
 {
-	const char *path;
-	char buf[64];
-	int fd;
-	long n;
-	size_t len;
-	size_t got;
-	size_t i;
+	puts(stage);
+	puts("wtest: FAIL");
+	return 1;
+}
 
-	path = (argc >= 2 && strcmp(argv[1], "HUGE") != 0) ? argv[1] : "TEST.TXT";
-	len = strlen(text);
+/* Reject non-progress and impossible counts before advancing the buffer. */
+static int transfer(int fd, void *buf, size_t size, int writing)
+{
+	unsigned char *bytes = buf;
+	size_t offset = 0;
 
-	fd = open(path, O_CREAT | O_TRUNC);
-	if (fd < 0) {
-		puts("wtest: FAIL create");
-		return 1;
+	while (offset < size) {
+		long count = writing ? write(fd, bytes + offset, size - offset) :
+			read(fd, bytes + offset, size - offset);
+
+		if (count <= 0 || (size_t) count > size - offset) { return -1; }
+		offset += (size_t) count;
 	}
-	n = write(fd, text, len);
-	close(fd);
-	if (n != (long) len) {
-		puts("wtest: FAIL write");
-		return 1;
+	return 0;
+}
+
+static unsigned char pattern(size_t offset, int huge)
+{
+	return huge ? (unsigned char) (offset % 251) :
+		(unsigned char) ('a' + offset % 26);
+}
+
+static int test_file(const char *path, size_t size, int kind, int verify_only)
+{
+	int fd;
+	int result = 0;
+	size_t offset;
+	unsigned char extra;
+
+	if (!verify_only) {
+		fd = open(path, O_CREAT | O_TRUNC);
+		if (fd < 0) { return fail("wtest: create error"); }
+		for (offset = 0; offset < size; ) {
+			size_t count = size - offset;
+			size_t i;
+
+			if (count > CHUNK_SIZE) { count = CHUNK_SIZE; }
+			for (i = 0; i < count; i++) {
+				chunk[i] = kind == 0 ? (unsigned char) text[offset + i] :
+					pattern(offset + i, kind == 2);
+			}
+			if (transfer(fd, chunk, count, 1) != 0) {
+				result = 1;
+				break;
+			}
+			offset += count;
+		}
+		/* Always close, including a failed write; either error fails the test. */
+		if (close(fd) < 0) { result = 1; }
+		if (result) { return fail("wtest: write/close error"); }
 	}
 
 	fd = open(path, 0);
-	if (fd < 0) {
-		puts("wtest: FAIL reopen");
-		return 1;
-	}
-	n = read(fd, buf, sizeof(buf));
-	close(fd);
-	if (n != (long) len || memcmp(buf, text, len) != 0) {
-		puts("wtest: FAIL readback");
-		return 1;
-	}
+	if (fd < 0) { return fail("wtest: reopen error"); }
+	for (offset = 0; offset < size; ) {
+		size_t count = size - offset;
+		size_t i;
 
-	/* 여러 클러스터에 걸치는 경우: 1500바이트는 512바이트 클러스터 세 개에
-	   걸치므로 빈 클러스터 찾기와 사슬 잇기까지 함께 확인한다. */
-	fd = open("BIG.TXT", O_CREAT | O_TRUNC);
-	if (fd < 0) {
-		puts("wtest: FAIL big create");
-		return 1;
-	}
-	for (i = 0; i < BIG_SIZE; i++) {
-		big[i] = (char) ('a' + i % 26);
-	}
-	n = write(fd, big, BIG_SIZE);
-	close(fd);
-	if (n != BIG_SIZE) {
-		puts("wtest: FAIL big write");
-		return 1;
-	}
-	memset(big, 0, BIG_SIZE);
-	fd = open("BIG.TXT", 0);
-	if (fd < 0) {
-		puts("wtest: FAIL big reopen");
-		return 1;
-	}
-	for (got = 0; got < BIG_SIZE; got += (size_t) n) {
-		n = read(fd, big + got, BIG_SIZE - got);
-		if (n <= 0) {
+		if (count > CHUNK_SIZE) { count = CHUNK_SIZE; }
+		if (transfer(fd, chunk, count, 0) != 0) {
+			result = 1;
 			break;
 		}
+		for (i = 0; i < count; i++) {
+			unsigned char expected = kind == 0 ? (unsigned char) text[offset + i] :
+				pattern(offset + i, kind == 2);
+
+			if (chunk[i] != expected) { result = 1; }
+		}
+		if (result) { break; }
+		offset += count;
 	}
-	close(fd);
-	if (got != BIG_SIZE) {
-		puts("wtest: FAIL big readback size");
+	/* Exact size matters: a correct prefix with trailing bytes is a failure. */
+	if (!result && read(fd, &extra, 1) != 0) { result = 1; }
+	if (close(fd) < 0) { result = 1; }
+	return result ? fail("wtest: readback/close error") : 0;
+}
+
+int main(int argc, char **argv)
+{
+	const char *path = "TEST.TXT";
+	int huge = 0;
+	int verify_only = 0;
+
+	if (argc > 2) { return fail("wtest: usage error"); }
+	if (argc == 2) {
+		if (strcmp(argv[1], "HUGE") == 0) { huge = 1; }
+		else if (strcmp(argv[1], "--verify") == 0) { verify_only = 1; }
+		else if (strcmp(argv[1], "--verify-huge") == 0) {
+			huge = 1;
+			verify_only = 1;
+		} else { path = argv[1]; }
+	}
+	if (test_file(path, sizeof(text) - 1, 0, verify_only) != 0 ||
+		test_file("BIG.TXT", BIG_SIZE, 1, verify_only) != 0 ||
+		(huge && test_file("HUGE.TXT", HUGE_SIZE, 2, verify_only) != 0)) {
 		return 1;
 	}
-	for (i = 0; i < BIG_SIZE; i++) {
-		if (big[i] != (char) ('a' + i % 26)) {
-			puts("wtest: FAIL big readback data");
-			return 1;
-		}
-	}
-
-	/* 2 MiB 이미지 확인: 예전 9섹터 FAT은 클러스터 3071까지밖에 표현하지
-	   못했다. 1.5 MiB를 쓰면 할당이 그 위로 넘어가므로, 커진 FAT과 늘어난
-	   데이터 영역을 실제로 밟는다.
-	   1.5 MiB를 먹고 20초쯤 걸리므로 "run WTEST HUGE"로 부를 때만 한다. */
-	if (argc < 2 || strcmp(argv[1], "HUGE") != 0) {
-		puts("wtest: ok");
-		return 0;
-	}
-	fd = open("HUGE.TXT", O_CREAT | O_TRUNC);
-	if (fd < 0) {
-		puts("wtest: FAIL huge create");
-		return 1;
-	}
-	for (got = 0; got < HUGE_SIZE; got += CHUNK_SIZE) {
-		for (i = 0; i < CHUNK_SIZE; i++) {
-			chunk[i] = (char) ((got + i) % 251);
-		}
-		n = write(fd, chunk, CHUNK_SIZE);
-		if (n != CHUNK_SIZE) {
-			close(fd);
-			puts("wtest: FAIL huge write");
-			return 1;
-		}
-	}
-	close(fd);
-
-	fd = open("HUGE.TXT", 0);
-	if (fd < 0) {
-		puts("wtest: FAIL huge reopen");
-		return 1;
-	}
-	for (got = 0; got < HUGE_SIZE; got += CHUNK_SIZE) {
-		size_t off;
-
-		for (off = 0; off < CHUNK_SIZE; off += (size_t) n) {
-			n = read(fd, chunk + off, CHUNK_SIZE - off);
-			if (n <= 0) {
-				break;
-			}
-		}
-		if (off != CHUNK_SIZE) {
-			close(fd);
-			puts("wtest: FAIL huge readback size");
-			return 1;
-		}
-		for (i = 0; i < CHUNK_SIZE; i++) {
-			if (chunk[i] != (char) ((got + i) % 251)) {
-				close(fd);
-				puts("wtest: FAIL huge readback data");
-				return 1;
-			}
-		}
-	}
-	close(fd);
-
-	puts("wtest: ok");
-	return 0;
+	return puts("wtest: PASS") < 0 ? 1 : 0;
 }

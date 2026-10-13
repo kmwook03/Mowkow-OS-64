@@ -18,6 +18,7 @@
 
 include common/mk/config.mk
 include 32bit/mk/x86.mk
+include 64bit/mk/common64.mk
 include 64bit/mk/micropython.mk
 include 64bit/mk/x86_64.mk
 include 64bit/mk/aarch64.mk
@@ -29,7 +30,8 @@ include 64bit/mk/aarch64.mk
 .PHONY : default help info \
 	run iso clean $(APPS) \
 	x86_64 run64 run64-ahci parity64 parity64-ahci clean64 mpy-qstr \
-	aarch64 aarch64-stage aarch64-mpy-foundation clean-a64
+	aarch64 aarch64-stage aarch64-mpy-foundation clean-a64 \
+	style64 check64 test64-host test64-qemu test64-qemu-ahci
 
 default : $(IMG_FILE)
 
@@ -49,11 +51,19 @@ help :
 	@echo "    make parity64   머꼬 병행 검사 (호스트 CPython과 견주기)"
 	@echo "    make parity64-ahci  같은 검사를 q35 + AHCI로 실행"
 	@echo "    make clean64    build64/ img64/ 지우기"
+	@echo "    BOOT_TEST64=1   부팅 중 파괴적 FAT32 쓰기 검사를 명시적으로 활성화"
+	@echo "    TASK_STACK_DEBUG64=1  태스크 스택 guard/사용량 검사를 활성화"
 	@echo ""
 	@echo "  Raspberry Pi 5 (AArch64, M9)"
 	@echo "    make aarch64    Pi 5 kernel과 boot partition staging 빌드"
 	@echo "    make aarch64-stage  build64/aarch64-boot/ 동기화"
 	@echo "    make clean-a64  AArch64 빌드 산출물 지우기"
+	@echo ""
+	@echo "  64비트 검사"
+	@echo "    make style64    자체 소스 스타일 검사"
+	@echo "    make check64    스타일·호스트 테스트·양 아키텍처 빌드"
+	@echo "    make test64-qemu       QEMU IDE 회귀 검사"
+	@echo "    make test64-qemu-ahci  QEMU AHCI 회귀 검사"
 	@echo ""
 	@echo "  그 밖에"
 	@echo "    make info       찾아낸 소스와 앱 목록 보기"
@@ -67,3 +77,17 @@ info :
 	@echo "[64비트 커널]     $(KERNEL64_C_SRCS)"
 	@echo "[64비트 앱]       $(APP64_NAMES)"
 	@echo "[커널 크기 상한]  $(KERNEL64_SECTORS) 섹터"
+
+style64 :
+	$(PYTHON) $(TOOL64PATH)/check_style64.py
+
+test64-host :
+	$(PYTHON) -m unittest discover -s 64bit/tests -p 'test_*.py'
+
+check64 : style64 test64-host x86_64 aarch64
+
+test64-qemu : $(IMG64_FILE)
+	$(PYTHON) $(TOOL64PATH)/app_regression64.py --image $(IMG64_FILE)
+
+test64-qemu-ahci : $(IMG64_FILE)
+	$(PYTHON) $(TOOL64PATH)/app_regression64.py --image $(IMG64_FILE) --ahci

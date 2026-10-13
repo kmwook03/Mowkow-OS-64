@@ -25,7 +25,8 @@
 #define KEY64_RCTRL   (KEY64_EXT | 0x1d)
 #define KEY64_RALT    (KEY64_EXT | 0x38)
 
-void init_keyboard64(struct FIFO64 *fifo);
+int init_keyboard64(struct FIFO64 *fifo);
+uint8_t keyboard64_controller_status(void);
 void inthandler21_64(void);
 
 /*
@@ -33,6 +34,8 @@ void inthandler21_64(void);
  * 키가 완성되면 *out에 넣고 1, 접두사나 무시할 바이트면 0을 돌려준다.
  */
 int keyboard64_decode(uint8_t byte, uint16_t *out);
+/* Single IRQ producer; reset after a controller error or stream discontinuity. */
+void keyboard64_decode_reset(void);
 
 /* Shift/Ctrl은 물리 키 상태다. 콘솔마다 따로 두면 누른 채 포커스가 옮겨갔을
    때 한쪽에 눌림이 남으므로 키보드 계층이 하나만 들고 있는다.
