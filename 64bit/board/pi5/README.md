@@ -1,4 +1,15 @@
-# Raspberry Pi 5 boot files
+# Raspberry Pi 5 bring-up 및 실기 검증 기록
+
+현재 빌드·SD 카드 준비·부팅 절차는
+[Raspberry Pi 5 실행 문서](../../../docs/platforms/raspberry-pi-5.md)를 따릅니다.
+[공통 시스템 구조](../../../docs/architecture.md)와
+[프로젝트 소개](../../../README.md)에서 다른 문서로 이동할 수 있습니다.
+
+아래 내용은 M1~M8 bring-up 당시의 구현과 검증 결과를 보존한 기록입니다.
+단계별 출력과 과거의 수동 파일 복사·쓰기 시험 절차는 현재 기본 빌드와 다를 수 있습니다.
+현재 파괴적 부트 쓰기 시험은 `BOOT_TEST64=1` 빌드에서만 실행합니다.
+
+## 과거 부트 파일과 초기 bring-up
 
 아직 전용 SD 카드 이미지를 만들지 않는다. FAT32 부트 파티션에 다음 파일을
 복사한다.
