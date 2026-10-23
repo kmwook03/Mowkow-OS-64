@@ -7,12 +7,12 @@
  * base; that base is commonly 0x80000000 rather than zero.
  */
 #include <arch/arch64.h>
+#include <arch/aarch64_memory64.h>
+#include <arch/aarch64_poll64.h>
+#include "platform_io64.h"
 #include <stdint.h>
 
-#define PCIE2_OUTBOUND_BASE 0x1f00000000ULL
 #define PCI_COMMAND_MEMORY (1U << 1)
-#define PCI_BAR_IO (1U << 0)
-#define PCI_BAR_ADDRESS_MASK 0xfffffff0U
 
 #define RP1_SYSINFO_CHIP_ID 0x00U
 #define RP1_SYSINFO_PLATFORM 0x04U
@@ -36,22 +36,16 @@
 #define UARTCR_TXE (1U << 8)
 #define UARTCR_RXE (1U << 9)
 #define UART_LOOPBACK_BYTE 0x4dU
-#define UART_POLL_LIMIT 100000U
+#define UART_TIMEOUT_MS64 1000U
 
 static int bar1_physical64(uint32_t bar1, uint32_t root_memory_base,
 	uint64_t *physical)
 {
-	uint32_t bar_address;
+	uintptr_t base;
 
-	if ((bar1 & PCI_BAR_IO) != 0) {
-		return -1;
-	}
-	bar_address = bar1 & PCI_BAR_ADDRESS_MASK;
-	if (bar_address < root_memory_base) {
-		return -2;
-	}
-	*physical = PCIE2_OUTBOUND_BASE +
-		(uint64_t) (bar_address - root_memory_base);
+	if (physical == NULL || pcie_rp1_range64(bar1, root_memory_base, 0,
+			RP1_BAR_BYTES64, &base) != 0) { return -22; }
+	*physical = base;
 	return 0;
 }
 
@@ -82,12 +76,12 @@ int rp164_probe(uint32_t bar1, uint32_t root_memory_base,
 		return -2;
 	}
 	sysinfo = (volatile uint32_t *) arch64_phys_to_virt((uintptr_t) physical);
-	chip = sysinfo[RP1_SYSINFO_CHIP_ID / sizeof(uint32_t)];
+	chip = a64_read32_64((uintptr_t) sysinfo + RP1_SYSINFO_CHIP_ID);
 	if (chip_id != NULL) {
 		*chip_id = chip;
 	}
 	if (platform != NULL) {
-		*platform = sysinfo[RP1_SYSINFO_PLATFORM / sizeof(uint32_t)];
+		*platform = a64_read32_64((uintptr_t) sysinfo + RP1_SYSINFO_PLATFORM);
 	}
 	if (chip != RP1_C0_CHIP_ID) {
 		return -3;
@@ -111,12 +105,34 @@ int rp164_probe_uart0(uint32_t bar1, uint32_t root_memory_base,
 	}
 	uart = arch64_phys_to_virt((uintptr_t) (physical + RP1_UART0_BASE));
 	for (i = 0; i < 5; i++) {
-		registers[i] = *(volatile uint32_t *) (uart + offsets[i]);
+		registers[i] = a64_read32_64(uart + offsets[i]);
 		if (registers[i] == 0xdeaddeadU || registers[i] == 0xffffffffU) {
 			return -2;
 		}
 	}
 	return 0;
+}
+
+static int uart_wait64(uintptr_t uart, uint32_t mask, const char *stage)
+{
+	struct POLL_DEADLINE64 deadline;
+	uint64_t frequency = a64_frequency64();
+	uint32_t value;
+
+	if (poll_deadline_init64(&deadline, a64_counter64(), frequency,
+			UART_TIMEOUT_MS64, 1000U) != 0) {
+		aarch64_poll_fail64("rp1-uart0", stage, "CNTFRQ_EL0", 0, frequency, -22);
+		return -22;
+	}
+	for (;;) {
+		value = a64_read32_64(uart + UARTFR);
+		if ((value & mask) == 0) { return 0; }
+		if (poll_deadline_expired64(&deadline, a64_counter64())) {
+			aarch64_poll_fail64("rp1-uart0", stage, "UARTFR", uart + UARTFR, value, -110);
+			return -110;
+		}
+		a64_relax64();
+	}
 }
 
 int rp164_uart0_loopback(uint32_t bar1, uint32_t root_memory_base,
@@ -129,7 +145,6 @@ int rp164_uart0_loopback(uint32_t bar1, uint32_t root_memory_base,
 	uint32_t old_lcrh;
 	uint32_t old_cr;
 	uint32_t received;
-	unsigned int count;
 	int status;
 
 	if (echoed == NULL ||
@@ -137,57 +152,45 @@ int rp164_uart0_loopback(uint32_t bar1, uint32_t root_memory_base,
 		return -1;
 	}
 	uart = arch64_phys_to_virt((uintptr_t) (physical + RP1_UART0_BASE));
-	old_ibrd = *(volatile uint32_t *) (uart + UARTIBRD);
-	old_fbrd = *(volatile uint32_t *) (uart + UARTFBRD);
-	old_lcrh = *(volatile uint32_t *) (uart + UARTLCR_H);
-	old_cr = *(volatile uint32_t *) (uart + UARTCR);
+	old_ibrd = a64_read32_64(uart + UARTIBRD);
+	old_fbrd = a64_read32_64(uart + UARTFBRD);
+	old_lcrh = a64_read32_64(uart + UARTLCR_H);
+	old_cr = a64_read32_64(uart + UARTCR);
 
-	*(volatile uint32_t *) (uart + UARTCR) = 0;
-	*(volatile uint32_t *) (uart + UARTECR) = 0;
-	*(volatile uint32_t *) (uart + UARTICR) = 0x7ffU;
+	a64_write32_64(uart + UARTCR, 0);
+	a64_write32_64(uart + UARTECR, 0);
+	a64_write32_64(uart + UARTICR, 0x7ffU);
 	/* RP1 clk_uart is 48 MHz: 26 + 3/64 gives 115200 baud. */
-	*(volatile uint32_t *) (uart + UARTIBRD) = 26U;
-	*(volatile uint32_t *) (uart + UARTFBRD) = 3U;
-	*(volatile uint32_t *) (uart + UARTLCR_H) =
-		UARTLCR_H_FEN | UARTLCR_H_WLEN_8;
-	*(volatile uint32_t *) (uart + UARTCR) = UARTCR_UARTEN | UARTCR_LBE |
-		UARTCR_TXE | UARTCR_RXE;
-	__asm__ volatile ("dsb sy" ::: "memory");
+	a64_write32_64(uart + UARTIBRD, 26U);
+	a64_write32_64(uart + UARTFBRD, 3U);
+	a64_write32_64(uart + UARTLCR_H, UARTLCR_H_FEN | UARTLCR_H_WLEN_8);
+	a64_write32_64(uart + UARTCR, UARTCR_UARTEN | UARTCR_LBE |
+		UARTCR_TXE | UARTCR_RXE);
+	a64_barrier64();
 
-	status = -2;
-	for (count = 0; count < UART_POLL_LIMIT; count++) {
-		if ((*(volatile uint32_t *) (uart + UARTFR) & UARTFR_TXFF) == 0) {
-			status = 0;
-			break;
-		}
+	status = uart_wait64(uart, UARTFR_TXFF, "loopback-tx") == 0 ? 0 : -2;
+	if (status == 0) {
+		a64_write32_64(uart + UARTDR, UART_LOOPBACK_BYTE);
+		a64_barrier64();
+		status = uart_wait64(uart, UARTFR_RXFE, "loopback-rx") == 0 ? 0 : -3;
 	}
 	if (status == 0) {
-		*(volatile uint32_t *) (uart + UARTDR) = UART_LOOPBACK_BYTE;
-		__asm__ volatile ("dsb sy" ::: "memory");
-		status = -3;
-		for (count = 0; count < UART_POLL_LIMIT; count++) {
-			if ((*(volatile uint32_t *) (uart + UARTFR) &
-					UARTFR_RXFE) == 0) {
-				status = 0;
-				break;
-			}
-		}
-	}
-	if (status == 0) {
-		received = *(volatile uint32_t *) (uart + UARTDR);
+		received = a64_read32_64(uart + UARTDR);
 		*echoed = received;
 		if ((received & 0xffU) != UART_LOOPBACK_BYTE ||
 				(received & 0xf00U) != 0) {
 			status = -4;
+			aarch64_poll_fail64("rp1-uart0", "loopback-echo", "UARTDR",
+				uart + UARTDR, received, -5);
 		}
 	}
 
 	/* Leave firmware state exactly as M5c observed it. */
-	*(volatile uint32_t *) (uart + UARTCR) = 0;
-	*(volatile uint32_t *) (uart + UARTIBRD) = old_ibrd;
-	*(volatile uint32_t *) (uart + UARTFBRD) = old_fbrd;
-	*(volatile uint32_t *) (uart + UARTLCR_H) = old_lcrh;
-	*(volatile uint32_t *) (uart + UARTCR) = old_cr;
-	__asm__ volatile ("dsb sy" ::: "memory");
+	a64_write32_64(uart + UARTCR, 0);
+	a64_write32_64(uart + UARTIBRD, old_ibrd);
+	a64_write32_64(uart + UARTFBRD, old_fbrd);
+	a64_write32_64(uart + UARTLCR_H, old_lcrh);
+	a64_write32_64(uart + UARTCR, old_cr);
+	a64_barrier64();
 	return status;
 }

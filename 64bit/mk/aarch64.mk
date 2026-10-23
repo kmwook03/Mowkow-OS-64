@@ -53,13 +53,15 @@ A64_LDFLAGS = -nostdlib --gc-sections -T $(A64_ARCH_DIR)/kernel64.ld
 A64_SRCS = $(A64_ARCH_DIR)/boot64.S $(A64_ARCH_DIR)/vectors64.S \
 	$(A64_ARCH_DIR)/user64.S $(A64_ARCH_DIR)/fptest64.S \
 	$(A64_ARCH_DIR)/font64.S \
-	$(A64_ARCH_DIR)/gioaon64.c $(A64_ARCH_DIR)/mmu64.c \
+	$(A64_ARCH_DIR)/gioaon64.c $(A64_ARCH_DIR)/board64.c \
+	$(A64_ARCH_DIR)/boot_smoke64.c $(A64_ARCH_DIR)/mmu64.c \
 	$(A64_ARCH_DIR)/mailbox64.c $(A64_ARCH_DIR)/fb64.c \
 	$(A64_ARCH_DIR)/exception64.c $(A64_ARCH_DIR)/gic64.c \
 	$(A64_ARCH_DIR)/gtimer64.c $(A64_ARCH_DIR)/sched64.c \
-	$(A64_ARCH_DIR)/platform64.c \
+	$(A64_ARCH_DIR)/platform64.c $(A64_ARCH_DIR)/poll64.c \
 	$(A64_ARCH_DIR)/sdhci64.c $(A64_ARCH_DIR)/pcie64.c \
 	$(A64_ARCH_DIR)/rp164.c $(A64_ARCH_DIR)/xhci64.c \
+	$(A64_ARCH_DIR)/usb_xhci64.c \
 	$(A64_ARCH_DIR)/usbhid64.c $(A64_ARCH_DIR)/keyboard64.c \
 	$(COMMON64_C_SRCS)
 A64_OBJS = $(patsubst $(A64_ARCH_DIR)/%.S,$(A64_BUILD_DIR)/%.o,\

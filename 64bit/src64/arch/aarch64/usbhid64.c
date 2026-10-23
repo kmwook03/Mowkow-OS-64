@@ -14,10 +14,34 @@ int usbhid64_endpoint_id(uint32_t address, uint32_t packet, uint32_t interval,
 	return 0;
 }
 
+/* Known standard descriptors have a fixed prefix even when this boot-HID
+ * parser skips their contents. Unknown class/vendor types retain bLength framing.
+ */
+static size_t descriptor_minimum64(uint32_t type)
+{
+	switch (type) {
+	case 1U: return 18U;
+	case 2U: case 4U: case 7U: return 9U;
+	case 5U: return 7U;
+	case 6U: return 10U;
+	case 8U: case 11U: case 49U: return 8U;
+	case 9U: case 16U: return 3U;
+	case 10U: return 4U;
+	case 15U: return 5U;
+	case 48U: return 6U;
+	default: return 2U;
+	}
+}
+
 int usbhid64_parse_boot_config(const uint8_t *data, size_t length,
 	uint32_t protocol, struct USBHID64_CONFIG *config)
 {
 	struct USBHID64_CONFIG selected = { 0 };
+	uint8_t interfaces[32] = { 0 };
+	uint8_t defaults[32] = { 0 };
+	uint32_t interface_count = 0;
+	uint32_t active_endpoints = 0;
+	int alternate_zero = 0;
 	size_t offset;
 	uint32_t endpoints = 0;
 	uint32_t expected = 0;
@@ -33,7 +57,7 @@ int usbhid64_parse_boot_config(const uint8_t *data, size_t length,
 	}
 	if (length < 9U || data[0] != 9U || data[1] != 2U ||
 		((size_t) data[2] | ((size_t) data[3] << 8)) != length ||
-		data[4] == 0 || data[5] == 0) {
+		data[4] == 0 || data[5] == 0 || (data[7] & 0x80U) == 0) {
 		return -84;
 	}
 	for (offset = 9U; offset < length;) {
@@ -46,17 +70,31 @@ int usbhid64_parse_boot_config(const uint8_t *data, size_t length,
 		}
 		size = descriptor[0];
 		type = descriptor[1];
-		if (size < 2U || size > length - offset) {
+		if (type == 0 || size < descriptor_minimum64(type) || size > length - offset) {
 			return -84;
 		}
-		if (type == 2U) {
+		if (type == 1U || type == 2U || type == 3U || type == 6U ||
+				type == 7U || type == 15U || type == 16U) {
 			return -84;
 		} else if (type == 4U) {
-			if (size < 9U || (have_interface && seen != expected)) {
+			if (have_interface && (seen != expected || (hid_class && !have_hid))) {
 				return -84;
 			}
 			have_interface = 1;
 			expected = descriptor[4];
+			if (expected > 30U) { return -84; }
+			interface_number = descriptor[2];
+			if (!(interfaces[interface_number / 8U] & (1U << (interface_number % 8U)))) {
+				interfaces[interface_number / 8U] |= (uint8_t) (1U << (interface_number % 8U));
+				interface_count++;
+			}
+			alternate_zero = descriptor[3] == 0;
+			if (alternate_zero) {
+				if (defaults[interface_number / 8U] & (1U << (interface_number % 8U))) {
+					return -84;
+				}
+				defaults[interface_number / 8U] |= (uint8_t) (1U << (interface_number % 8U));
+			}
 			seen = 0;
 			endpoints = 0;
 			have_hid = 0;
@@ -69,13 +107,16 @@ int usbhid64_parse_boot_config(const uint8_t *data, size_t length,
 			uint32_t i;
 			int report_descriptor = 0;
 
-			if (!have_interface || size < 6U || descriptor[5] == 0 ||
+			if (!have_interface || have_hid || seen != 0 || size < 6U || descriptor[5] == 0 ||
 				descriptor[5] > (size - 6U) / 3U) {
 				return -84;
 			}
 			for (i = 0; i < descriptor[5]; i++) {
-				if (descriptor[6U + i * 3U] == 0x22U &&
-					(descriptor[7U + i * 3U] || descriptor[8U + i * 3U])) {
+				if (descriptor[7U + i * 3U] == 0 && descriptor[8U + i * 3U] == 0) {
+					return -84;
+				}
+				if (descriptor[6U + i * 3U] == 0x22U) {
+					if (report_descriptor) { return -84; }
 					report_descriptor = 1;
 				}
 			}
@@ -86,7 +127,7 @@ int usbhid64_parse_boot_config(const uint8_t *data, size_t length,
 		} else if (type == 5U) {
 			uint32_t address, id, packet;
 
-			if (!have_interface || size < 7U || seen >= expected) {
+			if (!have_interface || seen >= expected || (hid_class && !have_hid)) {
 				return -84;
 			}
 			address = descriptor[2];
@@ -96,6 +137,10 @@ int usbhid64_parse_boot_config(const uint8_t *data, size_t length,
 			id = ((address & 0x0fU) << 1) + (address >> 7);
 			if (endpoints & (1U << id)) {
 				return -84;
+			}
+			if (alternate_zero) {
+				if (active_endpoints & (1U << id)) { return -84; }
+				active_endpoints |= 1U << id;
 			}
 			endpoints |= 1U << id;
 			seen++;
@@ -117,7 +162,8 @@ int usbhid64_parse_boot_config(const uint8_t *data, size_t length,
 		}
 		offset += size;
 	}
-	if (have_interface && seen != expected) {
+	if (interface_count != data[4] ||
+			(have_interface && (seen != expected || (hid_class && !have_hid)))) {
 		return -84;
 	}
 	if (selected.endpoint_address == 0) {

@@ -1,5 +1,6 @@
 #include <arch/arch64.h>
-#include <arch/cache_range64.h>
+#include <arch/aarch64_boot64.h>
+#include <arch/aarch64_cache64.h>
 #include <arch/platform64.h>
 #include <mtask64.h>
 
@@ -70,23 +71,64 @@ void platform_task_switch64(struct CONTEXT64 *old_context,
 
 void platform_framebuffer_flush64(uintptr_t address, size_t bytes)
 {
-	uint64_t ctr;
-	uintptr_t line_size;
-	struct CACHE_RANGE64 range;
-
-	__asm__ volatile ("mrs %0, ctr_el0" : "=r" (ctr));
-	line_size = (uintptr_t) 4U << ((ctr >> 16) & 15U);
-	if (cache_range_init64(&range, address, bytes, line_size) != 0) { return; }
-	address = range.first;
-	for (;;) {
-		__asm__ volatile ("dc cvac, %0" :: "r" (address) : "memory");
-		/* Stop at the last line before advancing can wrap. */
-		if (address == range.last) { break; }
-		address += line_size;
-	}
+	(void) a64_cache_walk64(address, bytes, A64_CACHE_CLEAN64);
 }
 
 void platform_framebuffer_sync64(void)
 {
 	__asm__ volatile ("dsb sy" ::: "memory");
+}
+
+void arch64_irq_disable(void)
+{
+	__asm__ volatile ("msr daifset, #2" ::: "memory");
+}
+
+void arch64_irq_enable(void)
+{
+	__asm__ volatile ("msr daifclr, #2" ::: "memory");
+}
+
+uint64_t arch64_irq_save(void)
+{
+	uint64_t state;
+
+	__asm__ volatile ("mrs %0, daif\n\tmsr daifset, #2" : "=r" (state) :: "memory");
+	return state;
+}
+
+void arch64_irq_restore(uint64_t state)
+{
+	__asm__ volatile ("msr daif, %0" :: "r" (state) : "memory");
+}
+
+void arch64_halt(void)
+{
+	__asm__ volatile ("wfi");
+}
+
+void arch64_halt_with_irq(void)
+{
+	__asm__ volatile ("msr daifclr, #2\n\twfi" ::: "memory");
+}
+
+uint64_t aarch64_boot_counter64(void)
+{
+	uint64_t value;
+
+	__asm__ volatile ("isb\n\tmrs %0, cntpct_el0" : "=r" (value));
+	return value;
+}
+
+uint64_t aarch64_boot_frequency64(void)
+{
+	uint64_t frequency;
+
+	__asm__ volatile ("mrs %0, cntfrq_el0" : "=r" (frequency));
+	return frequency;
+}
+
+void aarch64_boot_relax64(void)
+{
+	__asm__ volatile ("yield");
 }

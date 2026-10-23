@@ -20,8 +20,7 @@ static struct TASK64 *current64 = &tasks64[0];
 static void (*entries64[32])(void);
 static uint8_t vram64[STRIDE64 * HEIGHT64];
 static jmp_buf sleep_stop64;
-static int irq64, sleep_checks64, processed64;
-#ifdef CONSOLE_STATE_MACHINE64
+static int irq64, sleep_checks64;
 static void (*before_irq64)(void);
 static void (*on_sleep64)(void);
 
@@ -34,7 +33,6 @@ static void inject_before_irq64(void)
 		hook();
 	}
 }
-#endif
 static int alloc_calls64, sheet_calls64, bind_calls64;
 static int fail_alloc64, fail_sheet64, fail_bind64;
 static int fail_task_alloc64, fail_fifo64, fail_entry64, fail_run64, fail_kill64;
@@ -58,9 +56,7 @@ int fixture_fifo_init64(struct FIFO64 *fifo, uint32_t size,
 
 uint64_t platform_irq_save64(void)
 {
-#ifdef CONSOLE_STATE_MACHINE64
 	inject_before_irq64();
-#endif
 	int old = irq64;
 	irq64 = 1;
 	return old;
@@ -68,9 +64,7 @@ uint64_t platform_irq_save64(void)
 void platform_irq_restore64(uint64_t state) { irq64 = (int) state; }
 void platform_irq_disable64(void)
 {
-#ifdef CONSOLE_STATE_MACHINE64
 	inject_before_irq64();
-#endif
 	irq64 = 1;
 }
 void platform_irq_enable64(void) { irq64 = 0; }
@@ -93,11 +87,6 @@ void io_out8(uint16_t port, uint8_t value)
 		assert(screen_hash64() == image && live64 == resources);
 	}
 }
-#ifndef CONSOLE_STATE_MACHINE64
-int keyboard64_shift(void) { return 0; }
-int keyboard64_ctrl(void) { return 0; }
-int keyboard64_alt(void) { return 0; }
-#endif
 uint32_t graphic64_rgb32(uint8_t index) { return index; }
 
 uintptr_t memman64_alloc_4k(struct MEMMAN64 *man, size_t size)
@@ -200,28 +189,11 @@ int task_kill64(struct TASK64 *task)
 int task_sleep64(struct TASK64 *task)
 {
 	assert(irq64 != 0 && task == current64);
-#ifdef CONSOLE_STATE_MACHINE64
 	if (on_sleep64 != NULL) { on_sleep64(); return 0; }
-#endif
 	assert(console_self64()->close_ready != 0);
 	if (++sleep_checks64 == 2) { longjmp(sleep_stop64, 1); }
 	return 0; /* emulate a spurious wake before the reaper runs */
 }
-#ifndef CONSOLE_STATE_MACHINE64
-void console64_process_key(struct CONSOLE64 *con, uint16_t key)
-{
-	(void) con;
-	(void) key;
-	processed64++;
-	assert(0); /* a parked close-ready task must not resume its editor */
-}
-void console64_process_input_key(struct CONSOLE64 *con, uint16_t key)
-{
-	(void) con;
-	(void) key;
-	assert(0);
-}
-#endif
 
 static void no_failures64(void)
 {
@@ -491,9 +463,8 @@ static void close_park64(void)
 	assert(con->keys.overruns == 1 && con->close_requested);
 	current64 = con->task;
 	sleep_checks64 = 0;
-	processed64 = 0;
 	if (setjmp(sleep_stop64) == 0) { entries64[current64 - tasks64](); assert(0); }
-	assert(processed64 == 0 && con->close_ready);
+	assert(con->close_ready && fifo64_status(&con->keys) == CONSOLE64_KEY_BUF);
 	assert(console64_post_input_key(con, 0x30) != 0);
 	irq64 = 0; /* longjmp stands in for context switching, not IRQ return */
 	current64 = &tasks64[0];
@@ -501,7 +472,7 @@ static void close_park64(void)
 	assert(con->slot_state == CONSOLE64_FREE);
 }
 
-int main(void)
+static void lifecycle_checks64(void)
 {
 	tasks64[0].flags = TASK64_FLAGS_RUNNING;
 	init_failures64();
@@ -517,7 +488,6 @@ int main(void)
 	close_park64();
 	cleanup64();
 	puts("GUI lifecycle: context, failure atomicity, ownership/retry, resize and close: PASS");
-	return 0;
 }
 
 void platform_framebuffer_flush64(uintptr_t address, size_t bytes)
