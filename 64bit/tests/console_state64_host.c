@@ -1,8 +1,5 @@
-/* Reuse allocation/task fault injection with the production editor/keyboard. */
-#define CONSOLE_STATE_MACHINE64
-#define main lifecycle_checks64
+/* GUI lifetime faults and console transitions share the real editor/keyboard. */
 #include "gui_lifecycle64_host.c"
-#undef main
 
 #include <keyboard64.h>
 
@@ -399,7 +396,7 @@ static void focus_close64(void)
 
 int main(void)
 {
-	assert(lifecycle_checks64() == 0);
+	lifecycle_checks64();
 	initialize64();
 	console64_set_hangul_font(hangul_font64);
 	mode_sequences64();

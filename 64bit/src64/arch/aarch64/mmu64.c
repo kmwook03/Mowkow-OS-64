@@ -1,20 +1,27 @@
-/* BCM2712 4 KiB translation tables used by the M3 paging bring-up. */
+/* BCM2712 4 KiB translation tables and bounded EL0 mappings. */
 #include <arch/arch64.h>
+#include <arch/aarch64_cache64.h>
+#include <arch/aarch64_memory64.h>
 #include <stdint.h>
 
 #define TABLE_ENTRIES 512U
 #define PAGE_SIZE 4096ULL
 #define L2_SPAN (1ULL << 21)
-#define LOW_RAM_SIZE (1ULL << 30)
+#define LOW_RAM_SIZE AARCH64_RAM_BYTES64
 
 #define MAILBOX_BASE 0x107c013880ULL
 #define GIO_AON_BASE 0x107d517c00ULL
 #define GIC_BASE 0x107fff9000ULL
 #define SDHCI_BASE 0x1000fff000ULL
 #define PCIE2_BASE 0x1000120000ULL
-#define PCIE2_OUTBOUND_BASE 0x1f00000000ULL
-#define PCIE2_OUTBOUND_SIZE 0x100000000ULL
+#define PCIE2_OUTBOUND_BASE PCIE_OUTBOUND_BASE64
+#define PCIE2_OUTBOUND_SIZE PCIE_OUTBOUND_BYTES64
 #define L1_SPAN (1ULL << 30)
+
+_Static_assert((PCIE2_OUTBOUND_BASE & (L1_SPAN - 1U)) == 0, "PCIe block alignment");
+_Static_assert((PCIE2_OUTBOUND_SIZE & (L1_SPAN - 1U)) == 0, "PCIe block size");
+_Static_assert(PCIE2_OUTBOUND_BASE < (1ULL << 39) &&
+	PCIE2_OUTBOUND_SIZE <= (1ULL << 39) - PCIE2_OUTBOUND_BASE, "PCIe map extent");
 
 #define DESC_VALID 0x1ULL
 #define DESC_TABLE_OR_PAGE 0x3ULL
@@ -49,14 +56,22 @@ static uint64_t table_descriptor64(const void *table)
 		DESC_TABLE_OR_PAGE;
 }
 
+#ifdef AARCH64_MMU_HOST_TEST
+void a64_test_tlb64(void);
+#endif
+
 static void flush_user_tlb64(void)
 {
+#ifdef AARCH64_MMU_HOST_TEST
+	a64_test_tlb64();
+#else
 	__asm__ volatile (
 		"dsb ishst\n\t"
 		"tlbi vmalle1\n\t"
 		"dsb ish\n\t"
 		"isb"
 		::: "memory");
+#endif
 }
 
 void arch64_user_unmap_all(void)
@@ -77,46 +92,68 @@ void arch64_user_unmap_all(void)
 	flush_user_tlb64();
 }
 
-int arch64_user_map_range(uintptr_t base, size_t size, int executable)
+/* Preflight all table ownership and capacity before publishing any PTE.
+ * Process loading serializes these calls; no IRQ path mutates user tables.
+ */
+static int user_tables_available64(uintptr_t first, uintptr_t end)
 {
-	uintptr_t current;
-	uintptr_t end;
-	unsigned int slot;
+	unsigned int needed = 0, free = 0;
 
-	if (size == 0 || base + size < base || base + size > LOW_RAM_SIZE) {
-		return -1;
+	for (unsigned int i = 0; i < USER_L3_TABLES; i++) {
+		if (user_l3_index[i] == 0xffffU) { free++; continue; }
+		if (user_l3_index[i] >= TABLE_ENTRIES ||
+			user_l2[user_l3_index[i]] != table_descriptor64(user_l3[i])) { return -22; }
+		for (unsigned int j = 0; j < i; j++) {
+			if (user_l3_index[j] == user_l3_index[i]) { return -22; }
+		}
 	}
-	current = base & ~(uintptr_t) (PAGE_SIZE - 1);
-	end = (base + size + PAGE_SIZE - 1) & ~(uintptr_t) (PAGE_SIZE - 1);
-	user_l1[0] = table_descriptor64(user_l2);
-	while (current < end) {
-		unsigned int l2_index = (unsigned int) ((current >> 21) & 0x1ffU);
-		unsigned int l3_index = (unsigned int) ((current >> 12) & 0x1ffU);
-		uint64_t flags = DESC_TABLE_OR_PAGE | DESC_ATTR_INDEX(0) |
-			DESC_INNER_SHAREABLE | DESC_ACCESS_FLAG | DESC_AP_EL0_RW |
-			DESC_PXN;
+	for (unsigned int index = (unsigned int) (first / L2_SPAN);
+			index <= (end - 1U) / L2_SPAN; index++) {
+		unsigned int slot;
 
 		for (slot = 0; slot < USER_L3_TABLES; slot++) {
-			if (user_l3_index[slot] == l2_index) {
-				break;
-			}
+			if (user_l3_index[slot] == index) { break; }
+		}
+		if (slot == USER_L3_TABLES) {
+			if (user_l2[index] != 0) { return -22; }
+			needed++;
+		}
+	}
+	return needed <= free ? 0 : -12;
+}
+
+int arch64_user_map_range(uintptr_t base, size_t size, int executable)
+{
+	uintptr_t current, end;
+	unsigned int slot;
+	int status;
+
+	if (!aarch64_ram_span64(base, size) || (executable != 0 && executable != 1)) {
+		return -22;
+	}
+	current = base & ~(uintptr_t) (PAGE_SIZE - 1U);
+	/* The validated RAM endpoint leaves room for page rounding. */
+	end = (base + size + PAGE_SIZE - 1U) & ~(uintptr_t) (PAGE_SIZE - 1U);
+	status = user_tables_available64(current, end);
+	if (status != 0) { return status; }
+	user_l1[0] = table_descriptor64(user_l2);
+	while (current < end) {
+		unsigned int l2_index = (unsigned int) (current / L2_SPAN);
+		unsigned int l3_index = (unsigned int) ((current >> 12) & 0x1ffU);
+		uint64_t flags = DESC_TABLE_OR_PAGE | DESC_ATTR_INDEX(0) |
+			DESC_INNER_SHAREABLE | DESC_ACCESS_FLAG | DESC_AP_EL0_RW | DESC_PXN;
+
+		for (slot = 0; slot < USER_L3_TABLES; slot++) {
+			if (user_l3_index[slot] == l2_index) { break; }
 		}
 		if (slot == USER_L3_TABLES) {
 			for (slot = 0; slot < USER_L3_TABLES; slot++) {
-				if (user_l3_index[slot] == 0xffffU) {
-					user_l3_index[slot] = (uint16_t) l2_index;
-					user_l2[l2_index] = table_descriptor64(user_l3[slot]);
-					break;
-				}
+				if (user_l3_index[slot] == 0xffffU) { break; }
 			}
+			user_l3_index[slot] = (uint16_t) l2_index;
+			user_l2[l2_index] = table_descriptor64(user_l3[slot]);
 		}
-		if (slot == USER_L3_TABLES) {
-			arch64_user_unmap_all();
-			return -2;
-		}
-		if (executable == 0) {
-			flags |= DESC_UXN;
-		}
+		if (executable == 0) { flags |= DESC_UXN; }
 		user_l3[slot][l3_index] = (current & DESC_ADDRESS_MASK) | flags;
 		current += PAGE_SIZE;
 	}
@@ -126,30 +163,17 @@ int arch64_user_map_range(uintptr_t base, size_t size, int executable)
 
 void arch64_sync_user_code(uintptr_t physical, size_t size)
 {
+	struct CACHE_RANGE64 data, instruction;
 	uintptr_t address;
-	uintptr_t end;
-	uintptr_t line_size;
-	uint64_t ctr;
 
-	if (size == 0) {
-		return;
-	}
-	__asm__ volatile ("mrs %0, ctr_el0" : "=r" (ctr));
+	if (!aarch64_ram_span64(physical, size)) { return; }
 	address = arch64_phys_to_virt(physical);
-	end = address + size;
-	line_size = 4ULL << ((ctr >> 16) & 0xfU);
-	for (address &= ~(line_size - 1); address < end;
-			address += line_size) {
-		__asm__ volatile ("dc cvau, %0" :: "r" (address) : "memory");
-	}
-	__asm__ volatile ("dsb ish" ::: "memory");
-	address = arch64_phys_to_virt(physical);
-	line_size = 4ULL << (ctr & 0xfU);
-	for (address &= ~(line_size - 1); address < end;
-			address += line_size) {
-		__asm__ volatile ("ic ivau, %0" :: "r" (address) : "memory");
-	}
-	__asm__ volatile ("dsb ish\n\tisb" ::: "memory");
+	if (cache_range_init64(&data, address, size, a64_cache_size64(0)) != 0 ||
+		cache_range_init64(&instruction, address, size, a64_cache_size64(1)) != 0) { return; }
+	(void) a64_cache_walk64(address, size, A64_CACHE_CODE_CLEAN64);
+	a64_cache_sync64(0);
+	(void) a64_cache_walk64(address, size, A64_CACHE_CODE_INVALIDATE64);
+	a64_cache_sync64(1);
 }
 
 static uint64_t normal_page_descriptor64(uint64_t physical)
@@ -171,25 +195,35 @@ static uint64_t device_block_descriptor64(uint64_t physical)
 		DESC_ATTR_INDEX(1) | DESC_ACCESS_FLAG | DESC_PXN | DESC_UXN;
 }
 
-static void map_device_window64(uint64_t address, unsigned int table_index)
+static int map_device_window64(uint64_t address, unsigned int table_index)
 {
 	uint64_t window_base;
 	unsigned int l2_index;
 	unsigned int page;
 
+	if (table_index >= 5U || address >= (1ULL << 39) ||
+		(address / L1_SPAN != MAILBOX_BASE / L1_SPAN &&
+		address / L1_SPAN != SDHCI_BASE / L1_SPAN)) { return -22; }
 	window_base = address & ~(L2_SPAN - 1);
 	l2_index = (unsigned int) ((address >> 21) & 0x1ffULL);
+	if (mmio_l2[l2_index] != 0) { return -22; }
+	for (unsigned int i = 0; i < TABLE_ENTRIES; i++) {
+		if (mmio_l2[i] == table_descriptor64(mmio_l3[table_index])) { return -22; }
+	}
 	mmio_l2[l2_index] = table_descriptor64(mmio_l3[table_index]);
 	for (page = 0; page < TABLE_ENTRIES; page++) {
 		mmio_l3[table_index][page] = device_page_descriptor64(
 			window_base + (uint64_t) page * PAGE_SIZE);
 	}
+	return 0;
 }
 
 void arch64_mmu_init(void)
 {
+#ifndef AARCH64_MMU_HOST_TEST
 	uint64_t tcr;
 	uint64_t sctlr;
+#endif
 	uint64_t outbound;
 	unsigned int l2_index;
 	unsigned int page;
@@ -208,11 +242,14 @@ void arch64_mmu_init(void)
 
 	/* SDHCI is in L1 slot 0x40; the other BCM2712 devices are in 0x41.
 	   Their L2 indices do not overlap, so both slots can share this L2 table. */
-	map_device_window64(MAILBOX_BASE, 0);
-	map_device_window64(GIO_AON_BASE, 1);
-	map_device_window64(GIC_BASE, 2);
-	map_device_window64(SDHCI_BASE, 3);
-	map_device_window64(PCIE2_BASE, 4);
+	if (map_device_window64(MAILBOX_BASE, 0) != 0 ||
+		map_device_window64(GIO_AON_BASE, 1) != 0 ||
+		map_device_window64(GIC_BASE, 2) != 0 ||
+		map_device_window64(SDHCI_BASE, 3) != 0 ||
+		map_device_window64(PCIE2_BASE, 4) != 0) {
+		arch64_panic_blink(6);
+		return;
+	}
 
 	/* TTBR0 retains the low bootstrap map while TTBR1 supplies the canonical
 	   high-half kernel alias. A later user-mode step can replace TTBR0 without
@@ -237,6 +274,7 @@ void arch64_mmu_init(void)
 		ttbr1_l1[index] = descriptor;
 	}
 
+#ifndef AARCH64_MMU_HOST_TEST
 	__asm__ volatile (
 		"dsb sy\n\t"
 		"tlbi vmalle1\n\t"
@@ -264,6 +302,7 @@ void arch64_mmu_init(void)
 	sctlr &= ~(1ULL << 19);
 	sctlr |= (1ULL << 0) | (1ULL << 2) | (1ULL << 12);
 	__asm__ volatile ("msr sctlr_el1, %0\n\tisb" :: "r" (sctlr) : "memory");
+#endif
 }
 
 void arch64_mmu_finish_high(void)
@@ -274,6 +313,9 @@ void arch64_mmu_finish_high(void)
 	   and leave TTBR0 pointing at an empty, EL0-ready translation root. */
 	arch64_user_unmap_all();
 	root_physical = arch64_virt_to_phys((uintptr_t) user_l1);
+#ifdef AARCH64_MMU_HOST_TEST
+	(void) root_physical;
+#else
 	__asm__ volatile (
 		"msr ttbr0_el1, %0\n\t"
 		"dsb ishst\n\t"
@@ -281,14 +323,20 @@ void arch64_mmu_finish_high(void)
 		"dsb ish\n\t"
 		"isb"
 		:: "r" (root_physical) : "memory");
+#endif
 }
 
 static int translate_el1_64(uintptr_t virtual_address, uintptr_t *physical)
 {
 	uint64_t par;
 
+#ifdef AARCH64_MMU_HOST_TEST
+	par = 1;
+	(void) virtual_address;
+#else
 	__asm__ volatile ("at s1e1r, %0\n\tisb\n\tmrs %1, par_el1" :
 		"+r" (virtual_address), "=r" (par) :: "memory");
+#endif
 	if ((par & DESC_VALID) != 0) {
 		return -1;
 	}
@@ -301,8 +349,13 @@ static int accessible_el0_64(uintptr_t virtual_address)
 {
 	uint64_t par;
 
+#ifdef AARCH64_MMU_HOST_TEST
+	par = 1;
+	(void) virtual_address;
+#else
 	__asm__ volatile ("at s1e0r, %0\n\tisb\n\tmrs %1, par_el1" :
 		"+r" (virtual_address), "=r" (par) :: "memory");
+#endif
 	return (par & DESC_VALID) == 0;
 }
 

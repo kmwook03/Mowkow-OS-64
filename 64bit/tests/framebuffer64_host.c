@@ -15,7 +15,7 @@ static size_t flush_bytes64[64], flush_count64, sync_count64;
 
 uint32_t graphic64_rgb32(uint8_t index)
 {
-	return (uint32_t) index * 0x010101U;
+	return 0x120034U | ((uint32_t) index << 8);
 }
 
 void platform_framebuffer_flush64(uintptr_t address, size_t bytes)
@@ -155,7 +155,7 @@ static void response64(void)
 		{ 0, 144 }, { 1, 0 }, { 2, 0 }, { 3, 4 }, { 4, 8 },
 		{ 5, 0 }, { 5, 65536 }, { 6, 0 }, { 6, 65536 },
 		{ 9, 0x80000004 }, { 10, 1919 }, { 11, 1079 }, { 15, 1 },
-		{ 16, 1 }, { 20, 24 }, { 24, 0 }, { 24, 2 },
+		{ 16, 1 }, { 20, 24 }, { 24, 2 },
 		{ 27, 0x80000004 }, { 28, 0xc0000000 }, { 28, 0xc0100001 },
 		{ 28, 0xfffff000 }, { 29, 0 }, { 29, 7680 * 1080 - 1 },
 		{ 32, 4 }, { 33, 7679 }, { 33, 7681 }, { 33, 65536 }, { 34, 1 }
@@ -169,11 +169,52 @@ static void response64(void)
 		uint32_t index = invalid[i][0], original = response[index];
 
 		response[index] = invalid[i][1];
-		assert(framebuffer_response64(response, &info) == -22);
+		assert(framebuffer_response64(response, &info) < 0);
 		assert(memcmp(&info, &saved, sizeof(info)) == 0);
 		response[index] = original;
 	}
+	/* A future firmware may return a longer desired length in a fixed buffer. */
+	for (size_t index = 2; index < 34; index += 3 + response[index + 1] / 4) {
+		uint32_t original = response[index + 2];
+
+		response[index + 2] = original + 4;
+		assert(framebuffer_response64(response, &info) == 0);
+		assert(memcmp(&info, &saved, sizeof(info)) == 0);
+		response[index + 2] = 0x80000000U | (response[index + 1] - 1);
+		assert(framebuffer_response64(response, &info) == -4);
+		response[index + 2] = original;
+	}
+	response[24] = 0;
+	assert(framebuffer_response64(response, &info) == 0);
+	assert(info.framebuffer_type == (1U | BOOTINFO_BGR64));
+	response[24] = 1;
 	assert(arch64_fb_probe(NULL) == -22);
+}
+
+static void pixel_order64(void)
+{
+	uint32_t pixels[4] = { 0xa5a5a5a5U, 0xa5a5a5a5U, 0, 0 };
+	uint8_t source[] = { 1, 2 }, owners[] = { 7, 1 };
+	struct BOOTINFO64 info = { .scrnx = 2, .scrny = 1,
+		.bytes_per_scanline = 8, .bpp = 32, .framebuffer_type = 1,
+		.reserved2 = sizeof(pixels), .vram = (uintptr_t) pixels };
+	struct FRAMEBUFFER64 fb, saved;
+
+	assert(framebuffer_boot64(&fb, &info) == 0);
+	assert(framebuffer_span64(&fb, 0, 0, source, owners, 7, 2) == 0);
+	assert(pixels[0] == 0x120134U && pixels[1] == 0xa5a5a5a5U);
+	info.framebuffer_type |= BOOTINFO_BGR64;
+	assert(framebuffer_boot64(&fb, &info) == 0);
+	assert(framebuffer_span64(&fb, 0, 0, source, owners, 7, 2) == 0);
+	assert(pixels[0] == 0x340112U && pixels[1] == 0xa5a5a5a5U);
+	saved = fb;
+	info.bpp = 8;
+	assert(framebuffer_boot64(&fb, &info) == -22);
+	assert(memcmp(&fb, &saved, sizeof(fb)) == 0);
+	framebuffer_pixel_order = 0;
+	assert(fb_color64(0x12, 0x01, 0x34) == 0x340112U);
+	framebuffer_pixel_order = 1;
+	assert(fb_color64(0x12, 0x01, 0x34) == 0x120134U);
 }
 
 static void early_clip64(void)
@@ -211,6 +252,7 @@ int main(void)
 	backend64(32);
 	cache_lines64();
 	response64();
+	pixel_order64();
 	early_clip64();
 	puts("Framebuffer geometry, backends, clipped row flush, cache ranges and Pi reply: PASS");
 	return 0;

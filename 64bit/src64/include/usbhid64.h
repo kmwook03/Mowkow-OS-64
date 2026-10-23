@@ -23,6 +23,10 @@ int usbhid64_endpoint_id(uint32_t address, uint32_t packet, uint32_t interval,
 	uint32_t *endpoint_id);
 /* Parse the complete configuration, including descriptors after the chosen
  * interface. Protocol is 1 (keyboard) or 2 (mouse); output changes on success.
+ * Check known descriptor prefixes before fields, interface/endpoint counts,
+ * alternate-zero endpoint ownership and all HID subordinate extents. Type
+ * 0x21 is HID-specific only inside a HID interface; unknown class/vendor
+ * descriptors are skipped using their bounded bLength.
  */
 int usbhid64_parse_boot_config(const uint8_t *data, size_t length,
 	uint32_t protocol, struct USBHID64_CONFIG *config);

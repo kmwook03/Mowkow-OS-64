@@ -1,8 +1,10 @@
+#include <assert.h>
+#include <string.h>
 #include <stddef.h>
+#include "poll_test64.h"
 #include <stdint.h>
 
 #define SDHCI64_HOST_TEST 1
-#define SDHCI_TIMEOUT 8U
 #include "../src64/arch/aarch64/sdhci64.c"
 
 #define CHECK64(condition) do { \
@@ -10,6 +12,12 @@
 		return __LINE__; \
 	} \
 } while (0)
+
+static uint64_t test_clock64, test_frequency64 = 1000;
+uint64_t sdhci64_test_counter64(void) { return test_clock64++; }
+uint64_t sdhci64_test_frequency64(void) { return test_frequency64; }
+void sdhci64_test_relax64(void) { test_clock64 += 10; }
+void sdhci64_test_configure_pins64(void) { }
 
 static uint32_t interrupt_values[4];
 static uint32_t interrupt_count;
@@ -21,7 +29,8 @@ static uint32_t first_buffer_write;
 static uint32_t last_buffer_write;
 static uint8_t reset_value;
 static uint32_t reset_writes;
-static int reset_stuck;
+static int reset_stuck, probe_model64;
+static uint32_t present64, command64;
 
 static void set_interrupts(const uint32_t *values, uint32_t count)
 {
@@ -59,9 +68,9 @@ uint32_t sdhci64_test_read32(uint32_t offset)
 {
 	uint32_t value;
 
-	if (offset == SDHCI_PRESENT_STATE) {
-		return 0;
-	}
+	if (offset == SDHCI_PRESENT_STATE) { return present64; }
+	if (probe_model64 && offset == SDHCI_RESPONSE0) { return command64 == 8 ? 0x1aa : 0; }
+	if (probe_model64 && offset == SDHCI_CLOCK_CONTROL) { return SDHCI_CLOCK_INT_STABLE; }
 	if (offset == SDHCI_BUFFER) {
 		buffer_reads++;
 		return buffer_value;
@@ -86,15 +95,16 @@ void sdhci64_test_write8(uint32_t offset, uint8_t value)
 
 void sdhci64_test_write16(uint32_t offset, uint16_t value)
 {
-	(void) offset;
-	(void) value;
+	if (offset == SDHCI_COMMAND) { command64 = value >> 8; }
 }
 
 void sdhci64_test_write32(uint32_t offset, uint32_t value)
 {
-	if (offset != SDHCI_BUFFER) {
-		return;
+	if (offset == SDHCI_INT_STATUS && value != UINT32_MAX &&
+			(value & (SDHCI_INT_ERROR | SDHCI_INT_ERROR_MASK)) != 0) {
+		assert(poll_last64.value == value && poll_last64.error == -5);
 	}
+	if (offset != SDHCI_BUFFER) { return; }
 	if (buffer_writes == 0) {
 		first_buffer_write = value;
 	}
@@ -251,10 +261,40 @@ static int test_command_error_recovery(void)
 	return 0;
 }
 
+static void test_poll_deadlines64(void)
+{
+	uint64_t start;
+	unsigned int failures;
+	const uint32_t complete[] = { SDHCI_INT_CMD_COMPLETE };
+	const uint32_t pending[] = { 0 };
+
+	test_clock64 = UINT64_MAX - 500U; present64 = SDHCI_CMD_INHIBIT;
+	assert(wait_reg32(SDHCI_PRESENT_STATE, SDHCI_CMD_INHIBIT, 0, "command-inhibit") == -1);
+	assert(test_clock64 < 1000 && poll_last64.value == SDHCI_CMD_INHIBIT &&
+		poll_last64.error == -110 && strcmp(poll_last64.device, "sdhci") == 0);
+	present64 = 0; failures = poll_failures64;
+	assert(wait_reg32(SDHCI_PRESENT_STATE, SDHCI_CMD_INHIBIT, 0, "command-inhibit") == 0);
+	assert(poll_failures64 == failures);
+	set_interrupts(pending, 1);
+	assert(wait_interrupt(SDHCI_INT_CMD_COMPLETE, "command-complete") == -1);
+	assert(strcmp(poll_last64.register_name, "INT_STATUS") == 0 && poll_last64.error == -110);
+	test_frequency64 = 0;
+	assert(wait_interrupt(SDHCI_INT_CMD_COMPLETE, "command-complete") == -1);
+	assert(strcmp(poll_last64.register_name, "CNTFRQ_EL0") == 0 && poll_last64.value == 0);
+	test_frequency64 = 1000;
+	/* Real controller_init must bound ACMD41 readiness, not count command retries. */
+	set_interrupts(complete, 1); probe_model64 = 1; start = test_clock64;
+	assert(controller_init() == -1);
+	assert(strcmp(poll_last64.stage, "ocr-ready") == 0 && poll_last64.value == 0);
+	assert(test_clock64 - start >= 1000 && test_clock64 - start < 1100);
+	probe_model64 = 0;
+}
+
 int main(void)
 {
 	int status;
 
+	test_poll_deadlines64();
 	status = test_capacity_decode();
 	if (status != 0) {
 		return status;

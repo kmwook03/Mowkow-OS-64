@@ -4,6 +4,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Pi pixel-order flag; low bits retain the loader's framebuffer type. */
+#define BOOTINFO_BGR64 0x80U
+
 struct BOOTINFO64 {
 	uint8_t cyls;
 	uint8_t leds;

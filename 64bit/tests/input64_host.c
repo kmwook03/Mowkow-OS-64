@@ -336,6 +336,71 @@ static int descriptors64(void)
 	return 0;
 }
 
+static int descriptor_boundaries64(void)
+{
+	static const uint8_t types[][2] = {
+		{ 1, 18 }, { 2, 9 }, { 4, 9 }, { 5, 7 }, { 6, 10 }, { 7, 9 },
+		{ 8, 8 }, { 9, 3 }, { 10, 4 }, { 11, 8 }, { 15, 5 }, { 16, 3 },
+		{ 48, 6 }, { 49, 8 }
+	};
+	long page = sysconf(_SC_PAGESIZE);
+	uint8_t *mapping = mmap(NULL, (size_t) page * 2, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	uint8_t *end;
+	uint8_t data[128];
+	struct USBHID64_CONFIG result, saved;
+
+	CHECK64(mapping != MAP_FAILED && page > 128);
+	end = mapping + page;
+	CHECK64(mprotect(end, (size_t) page, PROT_NONE) == 0);
+	memset(&saved, 0xa5, sizeof(saved));
+	for (size_t type = 0; type < sizeof(types) / sizeof(types[0]); type++) {
+		for (size_t size = 2; size < types[type][1]; size++) {
+			size_t total = sizeof(keyboard_config64) + size;
+
+			memcpy(data, keyboard_config64, sizeof(keyboard_config64));
+			memset(data + sizeof(keyboard_config64), 0, size);
+			data[2] = (uint8_t) total;
+			data[34] = (uint8_t) size;
+			data[35] = types[type][0];
+			memcpy(end - total, data, total);
+			result = saved;
+			CHECK64(usbhid64_parse_boot_config(end - total, total, 1, &result) == -84);
+			CHECK64(memcmp(&result, &saved, sizeof(result)) == 0);
+		}
+	}
+	/* Unknown class/vendor descriptors are still bounded and safely skipped. */
+	memcpy(data, keyboard_config64, 34);
+	data[2] = 36; data[34] = 2; data[35] = 0x99;
+	CHECK64(usbhid64_parse_boot_config(data, 36, 1, &result) == 0);
+	data[35] = 0;
+	CHECK64(usbhid64_parse_boot_config(data, 36, 1, &result) == -84);
+	memcpy(data, keyboard_config64, 34);
+	data[4] = 2;
+	CHECK64(usbhid64_parse_boot_config(data, 34, 1, &result) == -84);
+	/* Duplicate alternate zero and cross-interface endpoint aliases are invalid. */
+	memcpy(data, keyboard_config64, 34);
+	memcpy(data + 34, keyboard_config64 + 9, 25);
+	data[2] = 59; data[54] = 0x82;
+	CHECK64(usbhid64_parse_boot_config(data, 59, 1, &result) == -84);
+	data[4] = 2; data[36] = 1; data[54] = 0x81;
+	CHECK64(usbhid64_parse_boot_config(data, 59, 1, &result) == -84);
+	/* HID class-specific lengths include every declared subordinate entry. */
+	memcpy(data, keyboard_config64, 27);
+	memcpy(data + 30, keyboard_config64 + 27, 7);
+	data[2] = 37; data[18] = 12; data[23] = 2;
+	data[27] = 0x23; data[28] = 1; data[29] = 0;
+	CHECK64(usbhid64_parse_boot_config(data, 37, 1, &result) == 0);
+	data[27] = 0x22;
+	CHECK64(usbhid64_parse_boot_config(data, 37, 1, &result) == -84);
+	data[27] = 0x23; data[28] = 0;
+	CHECK64(usbhid64_parse_boot_config(data, 37, 1, &result) == -84);
+	data[28] = 1; data[23] = 3;
+	CHECK64(usbhid64_parse_boot_config(data, 37, 1, &result) == -84);
+	CHECK64(munmap(mapping, (size_t) page * 2) == 0);
+	return 0;
+}
+
 static int guards64(void)
 {
 	long page = sysconf(_SC_PAGESIZE);
@@ -392,6 +457,7 @@ int main(void)
 	CHECK64(reports64() == 0);
 	CHECK64(descriptors64() == 0);
 	CHECK64(guards64() == 0);
+	CHECK64(descriptor_boundaries64() == 0);
 	puts("PS/2 and USB HID packets, reports, descriptors and endpoint bounds: PASS");
 	return 0;
 }

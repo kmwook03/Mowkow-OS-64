@@ -50,7 +50,8 @@ class Fat32LayoutTest(unittest.TestCase):
         entries = BUILDER.lfn_entries(name, alias)
         units = []
         for entry in reversed(entries):
-            self.assertEqual(entry[13], BUILDER.short_checksum(alias))
+            # Golden checksum for PAIR    TXT, independent of the writer helper.
+            self.assertEqual(entry[13], 0xBD)
             for i in range(BUILDER.LFN_UNITS_PER_ENTRY):
                 offset = (1 + i * 2 if i < 5 else
                           14 + (i - 5) * 2 if i < 11 else

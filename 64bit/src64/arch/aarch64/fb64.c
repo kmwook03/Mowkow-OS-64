@@ -133,7 +133,7 @@ static void draw_hangul64(unsigned int unicode)
 }
 
 /* Validate the fixed response layout before narrowing firmware values or
- * publishing a writable mapping. The GUI backend uses RGB pixel order.
+ * publishing a writable mapping. Preserve the returned RGB/BGR pixel order.
  */
 static int framebuffer_response64(const volatile uint32_t *m,
 	struct BOOTINFO64 *info)
@@ -152,29 +152,36 @@ static int framebuffer_response64(const volatile uint32_t *m,
 	uintptr_t physical;
 
 	if (m == NULL || info == NULL || m[0] != 35U * 4U ||
-		m[1] != 0x80000000U || m[34] != 0) { return -22; }
+		m[1] != 0x80000000U || m[34] != 0) { return -3; }
 	for (size_t i = 0; i < sizeof(tags) / sizeof(tags[0]); i++) {
 		uint32_t index = tags[i][0];
 
+		/* Firmware may advertise a longer response, truncated to our buffer.
+		 * Require the response bit and every byte we actually consume.
+		 */
 		if (m[index] != tags[i][1] || m[index + 1] != tags[i][2] ||
-			m[index + 2] != (0x80000000U | tags[i][2])) { return -22; }
+			(m[index + 2] & 0x80000000U) == 0 ||
+			(m[index + 2] & 0x7fffffffU) < tags[i][2]) { return -4; }
 	}
-	if (m[20] != FB_DEPTH || m[24] != 1U || m[5] == 0 || m[6] == 0 ||
-		m[5] > UINT16_MAX || m[6] > UINT16_MAX || m[33] > UINT16_MAX ||
-		m[10] < m[5] || m[11] < m[6] || m[15] != 0 || m[16] != 0 ||
-		m[29] == 0) { return -22; }
+	if (m[24] > 1U) { return -5; }
+	if (m[20] != FB_DEPTH) { return -8; }
+	if (m[5] == 0 || m[6] == 0 || m[5] > UINT16_MAX ||
+		m[6] > UINT16_MAX || m[33] > UINT16_MAX) { return -9; }
+	if (m[10] < m[5] || m[11] < m[6]) { return -10; }
+	if (m[15] != 0 || m[16] != 0) { return -11; }
+	if (m[29] == 0) { return -12; }
 	physical = m[28] & 0x3fffffffU;
 	/* TTBR1 maps the first GiB of RAM. Reject alias-only or out-of-map buffers. */
 	if (physical == 0 || (physical & 4095U) != 0 ||
-		m[29] > (1U << 30) - physical) { return -22; }
+		m[29] > (1U << 30) - physical) { return -6; }
 	candidate.scrnx = (uint16_t) m[5];
 	candidate.scrny = (uint16_t) m[6];
 	candidate.bytes_per_scanline = (uint16_t) m[33];
 	candidate.bpp = FB_DEPTH;
-	candidate.framebuffer_type = 1;
+	candidate.framebuffer_type = 1U | (m[24] == 0 ? BOOTINFO_BGR64 : 0U);
 	candidate.reserved2 = m[29];
 	candidate.vram = arch64_phys_to_virt(physical);
-	if (framebuffer_boot64(&fb, &candidate) != 0) { return -22; }
+	if (framebuffer_boot64(&fb, &candidate) != 0) { return -7; }
 	*info = candidate;
 	return 0;
 }
@@ -183,6 +190,7 @@ int arch64_fb_probe(struct BOOTINFO64 *bootinfo)
 {
 	volatile uint32_t *m = framebuffer_request;
 	struct BOOTINFO64 candidate;
+	int status;
 
 	if (bootinfo == NULL) { return -22; }
 
@@ -204,8 +212,9 @@ int arch64_fb_probe(struct BOOTINFO64 *bootinfo)
 	if (aarch64_mailbox_call(PROPERTY_CHANNEL, m, m[0]) != 0) {
 		return -2;
 	}
-	if (framebuffer_response64(m, &candidate) != 0 ||
-		framebuffer_boot64(&framebuffer64, &candidate) != 0) { return -3; }
+	status = framebuffer_response64(m, &candidate);
+	if (status != 0) { return status; }
+	if (framebuffer_boot64(&framebuffer64, &candidate) != 0) { return -7; }
 	framebuffer_info = candidate;
 	framebuffer_pixel_order = m[24];
 	active_hangul_font = hangul_font64;

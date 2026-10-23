@@ -18,6 +18,9 @@ class Sdhci64Test(unittest.TestCase):
             subprocess.run(
                 [
                     compiler,
+                    "-O2",
+                    "-fsanitize=undefined",
+                    "-fno-sanitize-recover=all",
                     "-std=c11",
                     "-Wall",
                     "-Wextra",
@@ -30,7 +33,7 @@ class Sdhci64Test(unittest.TestCase):
                 check=True,
                 cwd=ROOT,
             )
-            subprocess.run([str(executable)], check=True, cwd=ROOT)
+            subprocess.run([str(executable)], check=True, cwd=ROOT, timeout=10)
 
 
 if __name__ == "__main__":
