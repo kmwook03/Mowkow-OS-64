@@ -569,7 +569,8 @@ void aarch64_high_main(void)
 		arch64_dbg_puts("PANIC: framebuffer init failed, status=");
 		dbg_hex32((uint32_t) status);
 		arch64_dbg_puts("\n");
-		arch64_panic_blink(status == -2 ? 2 : 3);
+		/* No framebuffer exists yet, so the LED is the only visible diagnostic. */
+		arch64_panic_blink(status <= -2 && status >= -12 ? -status : 3);
 	}
 	init_palette64();
 	status = arch64_mmu_self_test();

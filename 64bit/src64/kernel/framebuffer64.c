@@ -29,6 +29,23 @@ static void rgb_span64(uint8_t *destination, const uint8_t *source,
 static const struct FRAMEBUFFER_OPS64 indexed_ops64 = { indexed_span64 };
 static const struct FRAMEBUFFER_OPS64 rgb_ops64 = { rgb_span64 };
 
+static void bgr_span64(uint8_t *destination, const uint8_t *source,
+	const uint8_t *owners, uint8_t owner, int32_t count)
+{
+	uint32_t *row = (uint32_t *) (void *) destination;
+
+	for (int32_t x = 0; x < count; x++) {
+		if (owners[x] == owner) {
+			uint32_t color = graphic64_rgb32(source[x]);
+
+			row[x] = ((color & 0xffU) << 16) | (color & 0xff00U) |
+				((color >> 16) & 0xffU);
+		}
+	}
+}
+
+static const struct FRAMEBUFFER_OPS64 bgr_ops64 = { bgr_span64 };
+
 int framebuffer_init64(struct FRAMEBUFFER64 *fb, uint8_t *pixels, size_t size,
 	int32_t width, int32_t height, uint32_t pitch, uint8_t bpp)
 {
@@ -55,6 +72,7 @@ int framebuffer_init64(struct FRAMEBUFFER64 *fb, uint8_t *pixels, size_t size,
 int framebuffer_boot64(struct FRAMEBUFFER64 *fb, const struct BOOTINFO64 *info)
 {
 	size_t size;
+	int status;
 
 	if (info == NULL || info->framebuffer_type == 0 ||
 		info->bytes_per_scanline == 0 || info->scrny == 0) { return -22; }
@@ -62,8 +80,15 @@ int framebuffer_boot64(struct FRAMEBUFFER64 *fb, const struct BOOTINFO64 *info)
 	if ((size_t) info->scrny > SIZE_MAX / info->bytes_per_scanline) { return -22; }
 	size = info->reserved2 != 0 ? info->reserved2 :
 		(size_t) info->bytes_per_scanline * info->scrny;
-	return framebuffer_init64(fb, (uint8_t *) info->vram, size,
+	if ((info->framebuffer_type & BOOTINFO_BGR64) != 0 && info->bpp != 32U) {
+		return -22;
+	}
+	status = framebuffer_init64(fb, (uint8_t *) info->vram, size,
 		info->scrnx, info->scrny, info->bytes_per_scanline, info->bpp);
+	if (status == 0 && (info->framebuffer_type & BOOTINFO_BGR64) != 0) {
+		fb->ops = &bgr_ops64;
+	}
+	return status;
 }
 
 int framebuffer_span64(const struct FRAMEBUFFER64 *fb, int32_t x, int32_t y,
