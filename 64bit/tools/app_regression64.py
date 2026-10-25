@@ -8,113 +8,17 @@ This is a bounded smoke suite, not comprehensive app/storage coverage.
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
-import socket
-import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 import mowkow_parity
-from mowkow_parity import BOOT_TIMEOUT, CMD_TIMEOUT, DEFAULT_IMAGE, PROMPT, Console
+from mowkow_parity import CMD_TIMEOUT, DEFAULT_IMAGE, PROMPT, Console
 
 
 class AppConsole(Console):
-    """Reuse parity keyboard encoding with a private, bounded QMP session."""
-
-    def __init__(self, image: str, ahci: bool, log_path: str) -> None:
-        self.log_path = log_path
-        self.proc = None
-        self.qmp = None
-        self.connection = None
-        self.temporary = tempfile.TemporaryDirectory(prefix="app-qmp64-")
-        self.stderr = None
-        try:
-            endpoint = str(Path(self.temporary.name) / "qmp.sock")
-            disk = (["-machine", "q35", "-drive",
-                     f"file={image},format=raw,if=none,id=disk0",
-                     "-device", "ich9-ahci,id=ahci",
-                     "-device", "ide-hd,drive=disk0,bus=ahci.0"] if ahci else
-                    ["-drive", f"file={image},format=raw,if=ide"])
-            Path(log_path).write_bytes(b"")
-            self.stderr = open(log_path + ".qemu.log", "wb")
-            self.proc = subprocess.Popen(
-                ["qemu-system-x86_64", *disk, "-boot", "c", "-m", "512M",
-                 "-display", "none", "-serial", f"file:{log_path}",
-                 "-qmp", f"unix:{endpoint},server,nowait"],
-                stdout=subprocess.DEVNULL, stderr=self.stderr,
-            )
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                connection.settimeout(5)
-                try:
-                    connection.connect(endpoint)
-                except OSError:
-                    connection.close()
-                    if self.proc.poll() is not None:
-                        raise RuntimeError(f"QEMU exited; see {log_path}.qemu.log")
-                    time.sleep(0.1)
-                    continue
-                self.connection = connection
-                self.qmp = connection.makefile("rw", encoding="utf-8")
-                break
-            if self.qmp is None:
-                raise TimeoutError("QMP connection timeout")
-            json.loads(self.qmp.readline())
-            self._qmp({"execute": "qmp_capabilities"})
-            self.hangul = True
-            self._wait(PROMPT, BOOT_TIMEOUT, "boot")
-        except BaseException:
-            self.close()
-            raise
-
-    def _qmp(self, message: dict) -> dict:
-        self.qmp.write(json.dumps(message) + "\n")
-        self.qmp.flush()
-        while True:
-            line = self.qmp.readline()
-            if not line:
-                raise RuntimeError("QMP disconnected")
-            response = json.loads(line)
-            if "error" in response:
-                raise RuntimeError(f"QMP error: {response['error']}")
-            if "return" in response:
-                return response
-
-    def _send(self, keys: list[str]) -> None:
-        self._qmp({"execute": "send-key", "arguments": {
-            "keys": [{"type": "qcode", "data": key} for key in keys],
-            "hold-time": 20,
-        }})
-        time.sleep(0.03)
-
-    def _wait(self, tail: str, timeout: float, what: str) -> None:
-        self._wait_after(-1, tail, timeout, what)
-
-    def _wait_after(self, offset: int, tail: str, timeout: float, what: str) -> None:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            current = self.text()
-            if len(current) > offset and current.endswith(tail):
-                return
-            if self.proc.poll() is not None:
-                raise RuntimeError(f"QEMU exited during {what}")
-            time.sleep(0.1)
-        raise TimeoutError(f"timeout during {what}; see {self.log_path}")
-
-    def run(self, command: str, inputs: tuple | list = ()) -> str:
-        before = len(self.text())
-        self.type(command)
-        self._send(["ret"])
-        for line in inputs:
-            time.sleep(1)
-            self.type(line)
-            self._send(["ret"])
-        self._wait_after(before, PROMPT, CMD_TIMEOUT, command)
-        return self.text()[before:]
+    """App assertions over the shared parity/QMP lifecycle and input path."""
 
     def run_ktest(self) -> str:
         before = len(self.text())
@@ -126,24 +30,6 @@ class AppConsole(Console):
         self._send(["ctrl", "x"])
         self._wait_after(before, PROMPT, CMD_TIMEOUT, "ktest exit")
         return self.text()[before:]
-
-    def close(self) -> None:
-        try:
-            if self.proc is not None and self.proc.poll() is None:
-                self.proc.terminate()
-                try:
-                    self.proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    self.proc.kill()
-                    self.proc.wait(timeout=5)
-        finally:
-            if self.qmp is not None:
-                self.qmp.close()
-            if self.connection is not None:
-                self.connection.close()
-            if self.stderr is not None:
-                self.stderr.close()
-            self.temporary.cleanup()
 
 
 def check_app(raw: str, name: str, status: int = 0) -> None:
@@ -158,8 +44,7 @@ def check_app(raw: str, name: str, status: int = 0) -> None:
 
 
 def run_apps(image: str, ahci: bool, log: str) -> None:
-    console = AppConsole(image, ahci, log + "-apps.log")
-    try:
+    with AppConsole(image, ahci, log + "-apps.log") as console:
         check_app(console.run_ktest(), "ktest")
         print("ktest-auto ok", flush=True)
         help_output = console.run("help")
@@ -173,24 +58,21 @@ def run_apps(image: str, ahci: bool, log: str) -> None:
         print("mtest/reentry ok", flush=True)
         check_app(console.run("wtest HUGE"), "wtest")
         print("wtest-huge ok", flush=True)
-    finally:
-        console.close()
     # A new process boots the same disk, losing all kernel caches and app state.
-    console = AppConsole(image, ahci, log + "-reboot.log")
-    try:
+    with AppConsole(image, ahci, log + "-reboot.log") as console:
         check_app(console.run("wtest --verify-huge"), "wtest")
         print("wtest-persistence ok", flush=True)
-    finally:
-        console.close()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", default=DEFAULT_IMAGE)
     parser.add_argument("--ahci", action="store_true")
-    parser.add_argument("--log", help="serial prefix (default: /tmp/mowkow-regression-{ide,ahci})")
+    parser.add_argument("--log", help="serial prefix (default: unique directory under /tmp)")
     args = parser.parse_args()
-    log = args.log or f"/tmp/mowkow-regression-{'ahci' if args.ahci else 'ide'}"
+    kind = "ahci" if args.ahci else "ide"
+    log = args.log or str(Path(tempfile.mkdtemp(prefix=f"mowkow-regression-{kind}-")) / "serial")
+    print(f"regression log prefix: {log}", flush=True)
     with tempfile.TemporaryDirectory(prefix="app-regression64-") as temporary:
         image = str(Path(temporary) / "disk.img")
         shutil.copyfile(args.image, image)

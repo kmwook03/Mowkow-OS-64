@@ -5,7 +5,7 @@
 
     python3 tools/mowkow_parity.py [--ahci] [--image IMG] [--case 이름]
 
-QEMU를 화면 없이 띄우고, QMP send-key로 콘솔에 명령을 쳐 넣고, COM1으로
+QEMU를 화면 없이 띄우고, QMP key event로 콘솔에 명령을 쳐 넣고, COM1으로
 나온 것을 받는다. 콘솔은 한글 입력으로 뜨므로 한글은 두벌식 자판 순서로
 친다(TYPE 표). 그래서 `머꼬 add.mk`도, `읽기`에 넣는 `가나`도 사람이 치는
 길과 같은 길로 들어간다.
@@ -19,20 +19,27 @@ QEMU를 화면 없이 띄우고, QMP send-key로 콘솔에 명령을 쳐 넣고,
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UPSTREAM = os.path.join(ROOT, "64bit", "py64", "머꼬", "upstream")
 DEFAULT_IMAGE = os.path.join(ROOT, "img64", "mowkow64.img")
 
 PROMPT = "> "
+MOWKOW_PROMPT = ">  "
 BOOT_TIMEOUT = 60
 CMD_TIMEOUT = 180
+QMP_TIMEOUT = 5
+CONNECT_TIMEOUT = 10
+QMP_MESSAGE_MAX = 1024 * 1024
 
 # -- 두벌식 자판. 한글을 사람이 치는 그대로 자판 순서로 바꾼다. --
 LEAD = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ"
@@ -69,78 +76,175 @@ def hangul_keys(ch):
 
 
 class Console:
-    """QEMU 하나를 띄워 놓고 콘솔에 명령을 쳐 넣는다."""
+    """One owned QEMU process and a private, bounded, synchronous QMP session."""
 
-    def __init__(self, image, ahci, log_path):
-        disk = (["-machine", "q35",
-                 "-drive", "file=%s,format=raw,if=none,id=disk0" % image,
-                 "-device", "ich9-ahci,id=ahci",
-                 "-device", "ide-hd,drive=disk0,bus=ahci.0"] if ahci else
-                ["-drive", "file=%s,format=raw,if=ide" % image])
+    def __init__(self, image: str, ahci: bool, log_path: str | None = None) -> None:
         self.log_path = log_path
-        open(log_path, "wb").close()
-        self.proc = subprocess.Popen(
-            ["qemu-system-x86_64"] + disk + ["-boot", "c", "-m", "512M",
-             "-display", "none", "-serial", "file:%s" % log_path,
-             "-qmp", "tcp:127.0.0.1:%d,server,nowait" % 4444],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.qmp = None
-        for _ in range(50):
+        self.proc = None
+        self.connection = None
+        self.stderr = None
+        self.temporary = None
+        self.received = bytearray()
+        self.request_id = 0
+        try:
+            self.temporary = tempfile.TemporaryDirectory(prefix="mowkow-qmp64-")
+            if self.log_path is None:
+                fd, self.log_path = tempfile.mkstemp(prefix="mowkow-parity-", suffix=".log")
+                os.close(fd)
+            Path(self.log_path).write_bytes(b"")
+            self.stderr = open(self.log_path + ".qemu.log", "wb")
+            endpoint = str(Path(self.temporary.name) / "qmp.sock")
+            disk = (["-machine", "q35", "-drive",
+                     f"file={image},format=raw,if=none,id=disk0",
+                     "-device", "ich9-ahci,id=ahci",
+                     "-device", "ide-hd,drive=disk0,bus=ahci.0"] if ahci else
+                    ["-drive", f"file={image},format=raw,if=ide"])
+            self.proc = subprocess.Popen(
+                ["qemu-system-x86_64", *disk, "-boot", "c", "-m", "512M",
+                 "-display", "none", "-serial", f"file:{self.log_path}",
+                 "-qmp", f"unix:{endpoint},server,nowait"],
+                stdout=subprocess.DEVNULL, stderr=self.stderr,
+            )
+            self._connect(endpoint)
+            greeting = self._receive(time.monotonic() + QMP_TIMEOUT)
+            if not isinstance(greeting.get("QMP"), dict):
+                raise RuntimeError("invalid QMP greeting")
+            self._qmp({"execute": "qmp_capabilities"})
+            self.hangul = True
+            self._wait(PROMPT, BOOT_TIMEOUT, "boot prompt")
+            self._ready_input()
+        except BaseException:
+            self.close(suppress_errors=True)
+            if self.log_path is not None:
+                print(f"QEMU logs: {self.log_path}, {self.log_path}.qemu.log", file=sys.stderr)
+            raise
+
+    def __enter__(self) -> Console:
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close(suppress_errors=exc_type is not None)
+
+    def _check_alive(self) -> None:
+        if self.proc is None or self.proc.poll() is not None:
+            raise RuntimeError(f"QEMU exited; see {self.log_path}.qemu.log")
+
+    def _connect(self, endpoint: str) -> None:
+        deadline = time.monotonic() + CONNECT_TIMEOUT
+        while time.monotonic() < deadline:
+            self._check_alive()
+            connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             try:
-                self.qmp = socket.create_connection(("127.0.0.1", 4444)).makefile("rw")
-                break
-            except OSError:
-                time.sleep(0.2)
-        if self.qmp is None:
-            raise RuntimeError("QMP에 붙지 못했다")
-        self.qmp.readline()
-        self._qmp({"execute": "qmp_capabilities"})
-        self.hangul = True          # 콘솔은 한글 입력으로 뜬다
-        self._wait(PROMPT, BOOT_TIMEOUT, "부팅과 첫 프롬프트")
+                connection.settimeout(max(0.001, deadline - time.monotonic()))
+                connection.connect(endpoint)
+            except BaseException as error:
+                connection.close()
+                if not isinstance(error, OSError) or error.errno not in (
+                        errno.ENOENT, errno.ECONNREFUSED):
+                    raise
+                time.sleep(0.1)
+            else:
+                self.connection = connection
+                return
+        raise TimeoutError("QMP connection timeout")
 
-    def _qmp(self, message):
-        self.qmp.write(json.dumps(message) + "\n")
-        self.qmp.flush()
-        return self.qmp.readline()
+    def _receive(self, deadline: float) -> dict:
+        while True:
+            self._check_alive()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("QMP response timeout")
+            newline = self.received.find(b"\n")
+            if newline >= 0:
+                line = self.received[:newline]
+                del self.received[:newline + 1]
+                try:
+                    response = json.loads(line)
+                except (ValueError, UnicodeError) as error:
+                    raise RuntimeError("invalid QMP JSON") from error
+                if not isinstance(response, dict):
+                    raise RuntimeError("invalid QMP message")
+                return response
+            self.connection.settimeout(remaining)
+            try:
+                chunk = self.connection.recv(4096)
+            except TimeoutError as error:
+                raise TimeoutError("QMP response timeout") from error
+            if not chunk:
+                raise RuntimeError("QMP disconnected")
+            self.received.extend(chunk)
+            if len(self.received) > QMP_MESSAGE_MAX:
+                raise RuntimeError("QMP message exceeds size limit")
 
-    def _send(self, keys):
-        self._qmp({"execute": "send-key",
-                   "arguments": {"keys": [{"type": "qcode", "data": k} for k in keys]}})
+    def _qmp(self, message: dict) -> dict:
+        self._check_alive()
+        if self.connection is None:
+            raise RuntimeError("QMP connection is closed")
+        self.request_id += 1
+        request = {**message, "id": self.request_id}
+        deadline = time.monotonic() + QMP_TIMEOUT
+        self.connection.settimeout(QMP_TIMEOUT)
+        self.connection.sendall((json.dumps(request) + "\n").encode("utf-8"))
+        while True:
+            response = self._receive(deadline)
+            if "event" in response:
+                continue
+            if response.get("id") != self.request_id:
+                raise RuntimeError("unexpected QMP response id")
+            if "error" in response:
+                raise RuntimeError(f"QMP error: {response['error']}")
+            if "return" not in response:
+                raise RuntimeError("invalid QMP response")
+            return response
+
+    def _send(self, keys: list[str]) -> None:
+        # Explicit releases avoid send-key's delayed virtual-timer key-up
+        # overlapping the next host-paced stroke (especially Shift+Space).
+        events = [{"type": "key", "data": {"down": down,
+                   "key": {"type": "qcode", "data": key}}}
+                  for down, group in ((True, keys), (False, reversed(keys)))
+                  for key in group]
+        self._qmp({"execute": "input-send-event", "arguments": {"events": events}})
         time.sleep(0.03)
 
-    def text(self):
+    def text(self) -> str:
         with open(self.log_path, encoding="utf-8", errors="replace") as log:
             return log.read()
 
-    def _wait(self, tail, timeout, what):
-        """화면에 tail이 나올 때까지 기다린다. 프롬프트면 '명령이 끝났다'는 뜻이다."""
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if self.text().endswith(tail):
-                return
-            time.sleep(0.2)
-        raise TimeoutError("%s를 기다리다 시간이 지났다" % what)
+    def _wait(self, tail: str, timeout: float, what: str) -> None:
+        self._wait_after(-1, tail, timeout, what)
 
-    def _wait_after(self, offset, tail, timeout, what):
-        """offset 뒤에 새 출력이 생기고 tail로 끝날 때까지 기다린다.
-
-        머꼬와 OS prompt가 둘 다 `> `라서 Ctrl key를 보내기 전의 prompt를
-        완료로 잘못 보지 않으려면 출력 길이도 함께 봐야 한다.
-        """
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+    def _wait_after(self, offset: int, tail: str, timeout: float, what: str) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self._check_alive()
             current = self.text()
             if len(current) > offset and current.endswith(tail):
                 return
-            time.sleep(0.2)
-        raise TimeoutError("%s를 기다리다 시간이 지났다" % what)
+            time.sleep(0.1)
+        raise TimeoutError(f"timeout during {what}; see {self.log_path}")
 
-    def _mode(self, want_hangul):
+    def _ready_input(self) -> None:
+        # console64_init prints its prompt before KBC initialization. Only a
+        # fresh empty-line response proves that the input/event path is live.
+        deadline = time.monotonic() + BOOT_TIMEOUT
+        while time.monotonic() < deadline:
+            before = len(self.text())
+            self._send(["ret"])
+            remaining = deadline - time.monotonic()
+            try:
+                self._wait_after(before, PROMPT, min(1.0, remaining), "input readiness")
+                return
+            except TimeoutError:
+                pass
+        raise TimeoutError(f"input readiness timeout; see {self.log_path}")
+
+    def _mode(self, want_hangul: bool) -> None:
         if self.hangul != want_hangul:
             self._send(["shift", "spc"])
             self.hangul = want_hangul
 
-    def type(self, text):
+    def type(self, text: str) -> None:
         for ch in text:
             keys = hangul_keys(ch)
             if keys is not None:
@@ -158,7 +262,7 @@ class Console:
                 else:
                     self._send([ch])
 
-    def run(self, command, inputs=()):
+    def run(self, command: str, inputs: tuple | list = ()) -> str:
         """명령 한 줄과 그 뒤에 넣을 입력들. 프롬프트로 돌아올 때까지의 출력을 준다."""
         before = len(self.text())
         self.type(command)
@@ -167,39 +271,78 @@ class Console:
             time.sleep(1.0)     # 해석기가 바빠도 키는 큐에 쌓인다
             self.type(line)
             self._send(["ret"])
-        self._wait(PROMPT, CMD_TIMEOUT, "'%s'" % command)
+        self._wait_after(before, PROMPT, CMD_TIMEOUT, command)
         return self.text()[before:]
 
-    def interrupt(self, command, keys):
+    def interrupt(self, command: str, keys: list[str]) -> str:
         """명령의 자체 prompt가 뜨면 Ctrl key를 보내고 OS prompt 복귀를 본다."""
         before = len(self.text())
         self.type(command)
         self._send(["ret"])
-        time.sleep(1.0)
+        self._wait_after(before, MOWKOW_PROMPT, CMD_TIMEOUT, f"{command} REPL")
         offset = len(self.text())
         self._send(keys)
         self._wait_after(offset, PROMPT, CMD_TIMEOUT, "'%s' interrupt" % command)
         return self.text()[before:]
 
-    def py_system_exit(self):
+    def py_system_exit(self) -> str:
         """friendly REPL에서 SystemExit을 내고 OS prompt로 돌아온다."""
         before = len(self.text())
         self.type("py")
         self._send(["ret"])
-        self._wait(">>> ", CMD_TIMEOUT, "py REPL prompt")
+        self._wait_after(before, ">>> ", CMD_TIMEOUT, "py REPL prompt")
         offset = len(self.text())
         self.type("raise SystemExit")
         self._send(["ret"])
         self._wait_after(offset, PROMPT, CMD_TIMEOUT, "py SystemExit")
         return self.text()[before:]
 
-    def close(self):
-        try:
-            self._qmp({"execute": "quit"})
-        except Exception:
-            pass
-        self.proc.terminate()
-        self.proc.wait()
+    def close(self, suppress_errors: bool = False) -> None:
+        errors = []
+        if self.proc is not None:
+            try:
+                if self.proc.poll() is None:
+                    try:
+                        self.proc.terminate()
+                    except ProcessLookupError:
+                        pass
+                    except OSError:
+                        self.proc.kill()
+                try:
+                    self.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.proc.kill()
+                    self.proc.wait(timeout=5)
+                self.proc = None
+            except BaseException as error:
+                errors.append(error)
+                if not isinstance(error, Exception):
+                    try:
+                        self.proc.kill()
+                        self.proc.wait(timeout=5)
+                        self.proc = None
+                    except BaseException as cleanup_error:
+                        errors.append(cleanup_error)
+        for name in ("connection", "stderr", "temporary"):
+            resource = getattr(self, name)
+            if resource is None:
+                continue
+            try:
+                if name == "temporary":
+                    resource.cleanup()
+                else:
+                    resource.close()
+                setattr(self, name, None)
+            except BaseException as error:
+                errors.append(error)
+        if errors:
+            message = f"QEMU cleanup failed ({self.log_path}): {errors}"
+            if not suppress_errors:
+                for error in errors:
+                    if not isinstance(error, Exception):
+                        raise error
+                raise RuntimeError(message)
+            print(message, file=sys.stderr)
 
 
 def drop_prompts(raw):
@@ -237,11 +380,11 @@ def strip_host(raw):
     return drop_prompts(raw)
 
 
-def run_host(mk_name, inputs):
+def run_host(mk_name: str, inputs: list[str]) -> str:
     proc = subprocess.run(
         [sys.executable, "main.py", os.path.join("test_code", mk_name)],
         cwd=UPSTREAM, input="".join(line + "\n" for line in inputs),
-        capture_output=True, text=True)
+        capture_output=True, text=True, timeout=CMD_TIMEOUT, check=True)
     return proc.stdout + proc.stderr
 
 
@@ -260,16 +403,16 @@ def main(argv: list[str] | None = None, console_factory: type[Console] = Console
     parser.add_argument("--image", default=DEFAULT_IMAGE)
     parser.add_argument("--ahci", action="store_true", help="q35 + AHCI로 부팅")
     parser.add_argument("--case", help="이 검사 하나만")
-    parser.add_argument("--log", default="/tmp/mowkow-parity.log")
+    parser.add_argument("--log", help="serial log path (default: unique file under /tmp)")
     args = parser.parse_args(argv)
 
     cases = [c for c in CASES if args.case in (None, c[0])]
     if not cases:
         parser.error("그런 검사가 없다: %s" % args.case)
 
-    console = console_factory(args.image, args.ahci, args.log)
     failures = []
-    try:
+    with console_factory(args.image, args.ahci, args.log) as console:
+        print(f"serial log: {console.log_path}", flush=True)
         smoke = console.run("py smoke.py")
         ok = "smoke ok" in smoke
         print("%-10s %s" % ("smoke", "ok" if ok else "FAIL"))
@@ -284,7 +427,8 @@ def main(argv: list[str] | None = None, console_factory: type[Console] = Console
                 host = strip_host(subprocess.run(
                     [sys.executable, "main.py",
                      os.path.join(ROOT, "64bit", "py64", "머꼬", image_file)],
-                    cwd=UPSTREAM, capture_output=True, text=True).stdout)
+                    cwd=UPSTREAM, capture_output=True, text=True,
+                    timeout=CMD_TIMEOUT, check=True).stdout)
             else:
                 host = strip_host(run_host(upstream_file, inputs))
             if device == host:
@@ -304,7 +448,7 @@ def main(argv: list[str] | None = None, console_factory: type[Console] = Console
         proc = subprocess.run(
             [sys.executable, "main.py"], cwd=UPSTREAM,
             input="".join(line + "\n" for line in repl_lines),
-            capture_output=True, text=True)
+            capture_output=True, text=True, timeout=CMD_TIMEOUT, check=True)
         host = strip_host(proc.stdout + proc.stderr)
         if device == host:
             print("%-10s ok (%d줄)" % ("repl", len(host)))
@@ -343,9 +487,6 @@ def main(argv: list[str] | None = None, console_factory: type[Console] = Console
         print("%-10s %s" % ("cleanup", "ok" if ok else "FAIL"))
         if not ok:
             failures.append("cleanup")
-    finally:
-        console.close()
-
     print("\n%d개 중 %d개 실패" % (len(cases) + 7, len(failures)))
     return 1 if failures else 0
 

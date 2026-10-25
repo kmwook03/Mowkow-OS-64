@@ -20,9 +20,14 @@ Layout (64 MiB, 512-byte sectors, 1 sector per cluster):
 Stage 2 and the kernel sit in the reserved region, so growing the kernel never
 shifts cluster numbering.
 """
-import math
+import errno
+import os
+import shutil
+import stat
 import struct
 import sys
+import tempfile
+from pathlib import Path
 
 SECTOR_SIZE = 512
 TOTAL_SECTORS = 131072
@@ -140,7 +145,8 @@ def utf16_name_units(name: str) -> list[int]:
     try:
         encoded = name.encode("utf-16-le")
     except UnicodeEncodeError as error:
-        raise SystemExit("잘못된 Unicode 파일명입니다") from error
+        # POSIX decodes invalid UTF-8 argv bytes using surrogateescape too.
+        raise SystemExit("잘못된 UTF-8/Unicode 파일명입니다") from error
     return [int.from_bytes(encoded[i:i + 2], "little")
             for i in range(0, len(encoded), 2)]
 
@@ -325,7 +331,7 @@ class Volume:
 
     def add_file(self, name, data):
         validate_file_size(len(data))
-        clusters = max(1, math.ceil(len(data) / SECTOR_SIZE))
+        clusters = file_cluster_count(len(data))
         first = self.alloc_chain(clusters)
         self.write_cluster_data(first, data)
         return b"".join(name_entries(name, first, len(data)))
@@ -341,9 +347,23 @@ class Volume:
             self.put_sectors(RESERVED_SECTORS + copy * SECTORS_PER_FAT, packed)
 
 
-def validate_files(files: list[tuple[str, bytes]]) -> None:
+def file_cluster_count(size: int) -> int:
+    """Keep one allocated cluster for empty files, as in existing images."""
+    cluster_bytes = SECTOR_SIZE * SECTORS_PER_CLUSTER
+    return max(1, (size + cluster_bytes - 1) // cluster_bytes)
+
+
+def validate_files(files: list[tuple[str, bytes]]) -> int:
+    """Preflight the namespace and all allocations; return root clusters.
+
+    Match the kernel's ASCII-only case folding. Both long names and displayed
+    short aliases share the lookup namespace, regardless of input order.
+    """
     seen_names = set()
     seen_aliases = set()
+    seen_alias_names = set()
+    root_bytes = 32  # volume-label entry
+    file_clusters = 0
     for name, data in files:
         validate_file_name(name)
         validate_file_size(len(data))
@@ -352,29 +372,74 @@ def validate_files(files: list[tuple[str, bytes]]) -> None:
             raise SystemExit(
                 f"중복되거나 대소문자만 다른 이름입니다: {name}"
             )
-        seen_names.add(folded)
         entries = name_entries(name, 2, len(data))
         alias = entries[-1][:11]
-        if alias in seen_aliases:
+        alias_name = ascii_fold(short_name_text(alias, entries[-1][12]))
+        if (alias in seen_aliases or folded in seen_alias_names or
+                alias_name in seen_names):
             raise SystemExit(f"8.3 별칭이 충돌합니다: {name}")
+        seen_names.add(folded)
         seen_aliases.add(alias)
+        seen_alias_names.add(alias_name)
+        root_bytes += 32 * len(entries)
+        file_clusters += file_cluster_count(len(data))
+
+    cluster_bytes = SECTOR_SIZE * SECTORS_PER_CLUSTER
+    root_clusters = (root_bytes + cluster_bytes - 1) // cluster_bytes
+    if root_clusters > CLUSTER_COUNT:
+        raise SystemExit("root directory exceeds the volume capacity")
+    if root_clusters + file_clusters > CLUSTER_COUNT:
+        raise SystemExit("files and root directory exceed the volume capacity")
+    return root_clusters
 
 
-def build(image_path, boot, loader, kernel, h04, app_specs):
+def validate_image(path: Path, expected: bytearray) -> None:
+    """Read back the complete temporary image before publishing it."""
+    if (len(expected) != TOTAL_SECTORS * SECTOR_SIZE or
+            path.stat().st_size != len(expected)):
+        raise ValueError("temporary image size mismatch")
+    chunk_size = 1024 * 1024
+    with path.open("rb") as stream:
+        for offset in range(0, len(expected), chunk_size):
+            if stream.read(chunk_size) != expected[offset:offset + chunk_size]:
+                raise ValueError("temporary image content mismatch")
+        if stream.read(1):
+            raise ValueError("temporary image has extra data")
+
+
+def publish_image(output: Path, image: bytearray) -> None:
+    """A failed write, close, validation or rename leaves the old file intact."""
+    if output.is_symlink():
+        raise ValueError("refusing symlink image output")
+    mode = stat.S_IMODE(output.stat().st_mode) if output.exists() else None
+    temporary = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
+    try:
+        staging = temporary / "image"
+        with staging.open("xb") as stream:
+            if stream.write(image) != len(image):
+                raise OSError(errno.EIO, "short image write")
+            stream.flush()
+            os.fsync(stream.fileno())
+        validate_image(staging, image)
+        if mode is not None:
+            staging.chmod(mode)
+        os.replace(staging, output)
+    finally:
+        try:
+            shutil.rmtree(temporary)
+        except OSError as error:
+            # Cleanup cannot undo a completed rename or hide the original error.
+            print(f"image temporary cleanup failed: {temporary}: {error}", file=sys.stderr)
+
+
+def build(image_path: str | Path, boot: bytes, loader: bytes, kernel: bytes,
+          h04: bytes, app_specs: list[str]) -> None:
     if len(boot) != SECTOR_SIZE:
         raise SystemExit("boot sector must be 512 bytes")
     if len(loader) > STAGE2_SECTORS * SECTOR_SIZE:
         raise SystemExit("loader does not fit in its reserved sectors")
     if len(kernel) > KERNEL_MAX_SECTORS * SECTOR_SIZE:
         raise SystemExit(f"kernel exceeds the reserved region ({KERNEL_MAX_SECTORS} sectors)")
-
-    vol = Volume()
-    vol.put_sectors(0, boot)
-    vol.put_sectors(BACKUP_BOOT_LBA, boot)
-    vol.put_sectors(FSINFO_LBA, fsinfo_sector())
-    vol.put_sectors(BACKUP_FSINFO_LBA, fsinfo_sector())
-    vol.put_sectors(STAGE2_LBA, loader)
-    vol.put_sectors(KERNEL_LBA, kernel)
 
     files = [("H04.FNT", h04)]
     readme = (
@@ -388,13 +453,19 @@ def build(image_path, boot, loader, kernel, h04, app_specs):
             raise SystemExit(f"bad app spec: {spec}")
         with open(path, "rb") as f:
             files.append((name, f.read()))
-    validate_files(files)
+    root_clusters = validate_files(files)
+
+    # No image allocation or mutation until names and total capacity pass.
+    vol = Volume()
+    vol.put_sectors(0, boot)
+    vol.put_sectors(BACKUP_BOOT_LBA, boot)
+    vol.put_sectors(FSINFO_LBA, fsinfo_sector())
+    vol.put_sectors(BACKUP_FSINFO_LBA, fsinfo_sector())
+    vol.put_sectors(STAGE2_LBA, loader)
+    vol.put_sectors(KERNEL_LBA, kernel)
 
     # the root directory is itself a cluster chain, so reserve it first and let
     # the files follow; the kernel grows the chain when it runs out of slots
-    # a long name costs extra entries, so size the root by bytes, not by files
-    root_bytes = 32 + sum(len(b"".join(name_entries(n, 2, 0))) for n, _ in files)
-    root_clusters = max(1, math.ceil(root_bytes / (SECTOR_SIZE * SECTORS_PER_CLUSTER)))
     root_first = vol.alloc_chain(root_clusters)
     if root_first != ROOT_CLUSTER:
         raise SystemExit("root directory must start at cluster 2")
@@ -406,8 +477,7 @@ def build(image_path, boot, loader, kernel, h04, app_specs):
     root = root.ljust(root_clusters * SECTOR_SIZE * SECTORS_PER_CLUSTER, b"\0")
     vol.finish(root_first, root)
 
-    with open(image_path, "wb") as f:
-        f.write(vol.image)
+    publish_image(Path(image_path), vol.image)
 
 
 def main():
