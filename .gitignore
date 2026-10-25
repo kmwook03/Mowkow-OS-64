@@ -15,6 +15,7 @@ out/
 build/
 build64/
 img64/
+/img/
 *.iso
 Makefile.orig
 .jpg
@@ -26,6 +27,7 @@ CLAUDE.md
 .codex/
 py64/머꼬/upstream/__pycache__/
 __pycache__/
+*.py[cod]
 arch.md
 CONTEXT.md
 refactor_plan.md

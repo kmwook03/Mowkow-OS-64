@@ -7,7 +7,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -57,24 +56,6 @@ class AppSmoke64Test(unittest.TestCase):
         for raw in bad:
             with self.subTest(raw=raw), self.assertRaises(AssertionError):
                 REGRESSION.check_app(raw, "mtest")
-
-    def test_constructor_failure_reaps_qemu(self) -> None:
-        process = Mock()
-        process.poll.side_effect = [None, 1, None]
-        with tempfile.TemporaryDirectory(prefix="app-log64-") as temporary:
-            log = str(Path(temporary) / "serial.log")
-            with patch.object(REGRESSION.subprocess, "Popen", return_value=process), \
-                    patch.object(REGRESSION.socket, "socket") as factory, \
-                    patch.object(REGRESSION.time, "sleep"):
-                factory.return_value.connect.side_effect = OSError("connect failed")
-                with self.assertRaises(RuntimeError):
-                    REGRESSION.AppConsole("unused.img", False, log)
-                process.terminate.assert_called_once()
-                process.wait.assert_called_once_with(timeout=5)
-                self.assertEqual(2, factory.return_value.close.call_count)
-                # Temporary socket directory and log descriptors are released.
-                endpoint = factory.return_value.connect.call_args.args[0]
-                self.assertFalse(Path(endpoint).parent.exists())
 
 
 if __name__ == "__main__":

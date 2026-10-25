@@ -44,6 +44,15 @@ make aarch64
 
 `aarch64-boot/`에는 `config.txt`, `kernel_2712.img`, 한글 글꼴, AArch64 앱, MicroPython 및 머꼬 스크립트가 함께 들어갑니다. staging 파일 묶음만 다시 동기화하려면 `make aarch64-stage`, AArch64 산출물을 지우려면 `make clean-a64`를 사용합니다.
 
+staging은 같은 파일시스템의 임시 디렉터리에 복사하고 파일 목록과 SHA-256을
+검증한 뒤 공개합니다. 기존 staging을 갱신할 때는 Linux libc의 `renameat2`
+및 파일시스템의 `RENAME_EXCHANGE` 지원이 필요합니다. 지원하지 않거나 교체가
+실패하면 기존 디렉터리를 보존하고 오류로 종료합니다. 기존 staging을 먼저
+삭제하는 대체 경로는 사용하지 않습니다. 이는 로컬 빌드 산출물의 경로 교체이며,
+SD 카드 복사나 전원 차단 시의 저장장치 내구성을 보장하지는 않습니다.
+교체 후 이전 임시 디렉터리 정리가 실패하면 새 결과는 유지하고 남은 경로를
+stderr에 알립니다.
+
 기본 경로에서 크로스 툴체인을 찾지 못하면 도구 경로를 지정할 수 있습니다.
 
 ```bash
