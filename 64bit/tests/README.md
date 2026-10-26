@@ -32,3 +32,14 @@ writing the host's reserved guest address window.
 These fixtures do not emulate controller timing, power loss or journaling.
 Use `make test64-qemu` and `make test64-qemu-ahci` for the real x86 transports;
 Raspberry Pi 5 results are recorded separately in the project context.
+
+`test_nano_compat64.py` exercises the private `64bit/nano64/` stream and UTF
+foundation with ASan/UBSan. It substitutes native syscall gates while keeping
+the real CRT wrappers. It checks short I/O, EOF/error separation, element counts,
+overflow, stream exhaustion before truncation, close ownership/retry and strict
+UTF conversion. Display widths follow the current OS renderer, including its
+one-cell fallback for unsupported Unicode glyphs. The separate recipe audit
+checks the shared inventory, direct header audit and strict flags for both
+architectures. `make nano64-compat` performs the actual cross-compilation and
+is included in `check64`. These archives are not upstream nano executables;
+the tests do not validate the upstream editing loop, OS TTY or storage hardware.

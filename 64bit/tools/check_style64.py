@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCAN_ROOTS = (
     ROOT / "64bit" / "src64",
     ROOT / "64bit" / "app64",
+    ROOT / "64bit" / "nano64",
     ROOT / "64bit" / "tools",
     ROOT / "64bit" / "tests",
 )

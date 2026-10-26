@@ -1,0 +1,30 @@
+{
+  "version": "9.3",
+  "url": "https://www.nano-editor.org/dist/v9/nano-9.3.tar.xz",
+  "sha256": "a9affc52c9596ee0682bcdd4ceb3c0b235eb221d83d733dfd9b0dff45897cb0d",
+  "files": {
+    "src/move.c": "8a884cd3449a05d51b4b30df4c3ebff154c8d3075cf3ff5ec9cb17791048cd6a",
+    "src/nano.c": "f13c37afef9fc9e78d3a00f0da340e32b8677fd9f066eb703972aad0c95e7783",
+    "src/prompt.c": "734674c4706a2047f66d92084748b3ca8e0613eaf08d1682bbaac86cad90f26d",
+    "src/browser.c": "3a11f6d51e1ff51ac937c00dc1a42fa06369ce13c4d46dce51779b13bf24d39b",
+    "src/cut.c": "995700e56931087015afc65c533b24037cc422808a035c2e5118a3fb3e200c13",
+    "src/history.c": "db3ecf9f909ed3bb19fb0c685c691057de5c11915a41fb6a5b260c64067c1ca5",
+    "src/search.c": "30df8520afea9c4a084904fe8cd76031a74f3e7c281ab4873f169b6b58d00535",
+    "src/text.c": "b147f3f099472c0bd5acc2685737a959cf002772d38a28a56f2a5a141ed03f38",
+    "src/rcfile.c": "c910eb6e2a1769abc81f646021e6aa3164ad1a159ea94805b5bf3e623c691b18",
+    "src/global.c": "198bd507cbc8bc4374be4219d39cb1261c881cfee7652872981311bc40b12b74",
+    "src/help.c": "08e21020bc2bf876cf4caad08af69c948700de0f1c57f0f09649a0b782cbfe67",
+    "src/color.c": "dd927551eb69ecd305a7addde9194f3b0fb4c204bb8aa2bf3cae45204c7e572a",
+    "src/files.c": "ab07286b714d9b96c45460943078766bfd16a32912f1537c265f239a866615cd",
+    "src/winio.c": "cfdd498628da18c25479cca324107ed2d88b64f26b23ff53dd22e087d9c91be8",
+    "src/utils.c": "2079478ac2efc6d3b2ec77d288878548495aefe3343ae72476116606b852fc55",
+    "src/chars.c": "7e2243fbd027bd96d2c0d939ebbacfe28c72ae3a5105cb1fe59211c422e7b730",
+    "src/definitions.h": "579d185470fa4e8d6dda2f5cedf210a2fe66814a5e49b88ae17d46443fc83dbb",
+    "src/prototypes.h": "bbd232706ba2ebd0955e42a72959d51bb5af1a3cc7d9a15fa4e52e8c1581d9ad",
+    "COPYING": "fc82ca8b6fdb18d4e3e85cfd8ab58d1bcd3f1b29abe782895abd91d64763f8e7",
+    "COPYING.DOC": "f45cc81b400a048b56c9edbd4c3317f7a8958463dfd55aa96f268ecfd6baa12c",
+    "AUTHORS": "ae7a2b7362e8eefa24004f0ff4e72181e9be3a470cc9ae26736489ac1363cacd",
+    "ChangeLog": "d1cff5f48b6d736f3d7ea354a11069fc2dee7feb850ed65c9d72d9415e56ccac",
+    "NEWS": "4e16ddabdbc27e81e56e3d16c7dc27b9af1ac175132b4a2ceb8b3ba2935da620"
+  }
+}

@@ -22,6 +22,7 @@ include 64bit/mk/common64.mk
 include 64bit/mk/micropython.mk
 include 64bit/mk/x86_64.mk
 include 64bit/mk/aarch64.mk
+include 64bit/mk/nano64.mk
 
 # 32비트 이미지가 기본. include 순서와 상관없이 이것이 기본 목표가 되도록
 # .DEFAULT_GOAL로 못 박는다.
@@ -62,6 +63,7 @@ help :
 	@echo "  64비트 검사"
 	@echo "    make style64    자체 소스 스타일 검사"
 	@echo "    make check64    스타일·호스트 테스트·양 아키텍처 빌드"
+	@echo "    make nano64-compat  nano 파일·UTF 기반 계층 양 아키텍처 빌드"
 	@echo "    make test64-qemu       QEMU IDE 회귀 검사"
 	@echo "    make test64-qemu-ahci  QEMU AHCI 회귀 검사"
 	@echo ""
@@ -84,7 +86,7 @@ style64 :
 test64-host :
 	$(PYTHON) -m unittest discover -s 64bit/tests -p 'test_*.py'
 
-check64 : style64 test64-host x86_64 aarch64
+check64 : style64 test64-host x86_64 aarch64 nano64-compat
 
 test64-qemu : $(IMG64_FILE)
 	$(PYTHON) $(TOOL64PATH)/app_regression64.py --image $(IMG64_FILE)
