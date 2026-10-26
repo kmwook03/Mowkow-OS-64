@@ -6,13 +6,20 @@
 
 #define NANO_EOF64 (-1)
 #define NANO_STREAMS64 8
+#define NANO_FILE_LIMIT64 65536
 
 struct NANO_FILE64;
+const char *nano_file_path64(const char *path);
+int nano_snapshot64(struct NANO_FILE64 *stream);
+
+struct NANO_FILE64;
+extern struct NANO_FILE64 *nano_stdout64;
+extern struct NANO_FILE64 *nano_stderr64;
 
 /* Private nano libc boundary, single application execution context only.
  * No hosted FILE layout or global libc errno is shared with the CRT/VM.
- * Local validation uses positive errno values; ambiguous legacy syscall
- * failures map to EIO (5), never inferred ENOENT/ENOSPC/permission errors.
+ * Local validation and SYS_FILE use explicit errno values. Ambiguous legacy
+ * write/close errors map to EIO (5), never inferred ENOSPC/permission errors.
  */
 /* Only r/rb/w/wb are supported. Text and binary preserve identical bytes.
  * Update, append and exclusive modes fail with ENOSYS before opening a file.
@@ -27,9 +34,9 @@ struct NANO_FILE64 *nano_fdopen64(int fd, const char *mode);
 /* fread/fwrite return whole elements, including after a partial failure.
  * Zero-sized requests do no I/O. Overflow is rejected before buffer access.
  * Reads have a private 512-byte cache; writes retry positive short counts
- * without buffering. A zero write is EIO; a zero read is EOF. The current
- * kernel can also return zero on storage read failure: this ABI cannot
- * distinguish that failure from EOF. Higher-level exact reads remain needed.
+ * without buffering. A zero write is EIO; a zero read is EOF. Checked
+ * FILE_READ64 distinguishes pre-EOF storage failure from EOF. nano_snapshot64
+ * stages at most 64 KiB and verifies exact bytes and EOF before publication.
  * Errors are sticky and block further I/O until clearerr; EOF is independent.
  */
 size_t nano_fread64(void *data, size_t size, size_t count,
@@ -44,7 +51,7 @@ void nano_clearerr64(struct NANO_FILE64 *stream);
 int nano_fileno64(struct NANO_FILE64 *stream);
 
 /* No pending output exists: fflush checks stream errors, not disk durability.
- * NULL flushes all output streams. fsync/metadata/locking are not provided.
+ * NULL flushes all output streams. POSIX fsync uses FILE_SYNC64 separately.
  * fclose releases the stream only after a successful close syscall. A close
  * failure retains ownership for retry. Earlier I/O failure is reported even
  * when close succeeds (then the stream is released, as with libc fclose).

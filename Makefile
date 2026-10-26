@@ -64,8 +64,10 @@ help :
 	@echo "    make style64    자체 소스 스타일 검사"
 	@echo "    make check64    스타일·호스트 테스트·양 아키텍처 빌드"
 	@echo "    make nano64-compat  nano 파일·UTF 기반 계층 양 아키텍처 빌드"
+	@echo "    make nano64-apps    upstream nano 검증용 ELF 양 아키텍처 링크"
 	@echo "    make test64-qemu       QEMU IDE 회귀 검사"
 	@echo "    make test64-qemu-ahci  QEMU AHCI 회귀 검사"
+	@echo "    make test64-nano-storage[-ahci]  일회용 이미지 nano 저장 검증"
 	@echo ""
 	@echo "  그 밖에"
 	@echo "    make info       찾아낸 소스와 앱 목록 보기"
@@ -86,10 +88,20 @@ style64 :
 test64-host :
 	$(PYTHON) -m unittest discover -s 64bit/tests -p 'test_*.py'
 
-check64 : style64 test64-host x86_64 aarch64 nano64-compat
+check64 : style64 test64-host x86_64 aarch64 nano64-compat nano64-apps
 
 test64-qemu : $(IMG64_FILE)
 	$(PYTHON) $(TOOL64PATH)/app_regression64.py --image $(IMG64_FILE)
 
 test64-qemu-ahci : $(IMG64_FILE)
 	$(PYTHON) $(TOOL64PATH)/app_regression64.py --image $(IMG64_FILE) --ahci
+
+# Private nano storage acceptance never replaces the image's existing editor.
+.PHONY : test64-nano-storage test64-nano-storage-ahci
+test64-nano-storage : $(IMG64_FILE) $(NANO64_APP_BUILD)/x86_64/nano.elf
+	$(PYTHON) $(TOOL64PATH)/nano_storage_regression64.py \
+		$(if $(NANO_STORAGE_LOG64),--log $(NANO_STORAGE_LOG64))
+
+test64-nano-storage-ahci : $(IMG64_FILE) $(NANO64_APP_BUILD)/x86_64/nano.elf
+	$(PYTHON) $(TOOL64PATH)/nano_storage_regression64.py --ahci \
+		$(if $(NANO_STORAGE_LOG64),--log $(NANO_STORAGE_LOG64))

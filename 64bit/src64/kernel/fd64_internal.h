@@ -56,6 +56,8 @@ int fd64_zero_cluster(uint32_t cluster);
 void fd64_dir_first(struct FDPOS64 *pos);
 int fd64_dir_scan_next(struct FDPOS64 *pos, struct FDINFO64 *out,
 	struct FDPOS64 *at, char *name, size_t name_size);
+int fd64_dir_find_checked(const char *name, struct FDINFO64 *out,
+	struct FDPOS64 *at);
 int fd64_dir_find(const char *name, struct FDINFO64 *out,
 	struct FDPOS64 *at);
 int fd64_dir_write(struct FDHANDLE64 *fh);

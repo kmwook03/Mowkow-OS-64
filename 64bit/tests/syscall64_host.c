@@ -155,6 +155,29 @@ int fd64_seek(struct FDHANDLE64 *fh, int64_t offset, int whence)
 	return seek_result;
 }
 
+static int checked_error64, checked_calls64, sync_calls64;
+int fd64_stat_checked(struct FDHANDLE64 *fh, const char *name, struct FILE_INFO64 *info)
+{
+	(void) fh;
+	if (name != NULL) { capture_name64(opened_name, name); }
+	checked_calls64++;
+	if (checked_error64) { return checked_error64; }
+	memset(info, 0, sizeof(*info)); info->size64 = 123; info->identity64 = 0x200000040UL;
+	return 0;
+}
+int fd64_open_checked(struct FDHANDLE64 *fh, const char *name, unsigned int flags)
+{
+	(void) fh; (void) flags;
+	capture_name64(opened_name, name); checked_calls64++;
+	return checked_error64;
+}
+int64_t fd64_read_checked(struct FDHANDLE64 *fh, void *dst, size_t size)
+{
+	(void) fh; (void) dst; (void) size;
+	checked_calls64++; return checked_error64 ? checked_error64 : 7;
+}
+int fd64_sync(void) { sync_calls64++; return checked_error64 ? -1 : 3; }
+
 void console64_write_con(struct CONSOLE64 *con, const char *src, uint64_t len)
 {
 	(void) src;
@@ -524,8 +547,45 @@ static int test_dispatch_and_heap64(void)
 	return 0;
 }
 
+static int test_checked_files64(void)
+{
+	reset64();
+	memcpy(user_buffer, "name", 5);
+	uintptr_t output = (uintptr_t) user_buffer + 161; /* Deliberately unaligned. */
+	struct FILE_INFO64 info;
+
+	CHECK64(call64(SYS_FILE, FILE_STAT64, (uintptr_t) user_buffer, output, 0, 0) == 0);
+	memcpy(&info, (void *) output, sizeof(info));
+	CHECK64(info.size64 == 123 && info.identity64 == 0x200000040UL);
+	CHECK64(checked_calls64 == 1 && name_error == 0);
+	checked_error64 = -5;
+	memset((void *) output, 0xa5, sizeof(info));
+	CHECK64((int64_t) call64(SYS_FILE, FILE_STAT64, (uintptr_t) user_buffer, output, 0, 0) == -5);
+	CHECK64(user_buffer[161] == 0xa5);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_OPEN64, (uintptr_t) user_buffer, 7, 0, 0) == -5);
+	CHECK64(process.files[3].used == 0);
+	checked_error64 = 0;
+	CHECK64((int64_t) call64(SYS_FILE, FILE_OPEN64, (uintptr_t) user_buffer, 1UL << 32, 0, 0) == -22);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_STAT64, (uintptr_t) user_buffer, 1, 0, 0) == -14);
+	CHECK64(call64(SYS_FILE, FILE_OPEN64, (uintptr_t) user_buffer, 0, 0, 0) == 3);
+	CHECK64(call64(SYS_FILE, FILE_FSTAT64, 3, output, 0, 0) == 0);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, output, UINT64_MAX, 0) == -22);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, 1, 1, 0) == -14);
+	checked_error64 = -5;
+	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, output, 8, 0) == -5);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_SYNC64, 3, 0, 0, 0) == -5);
+	checked_error64 = 0;
+	CHECK64(call64(SYS_FILE, FILE_READ64, 3, output, 8, 0) == 7);
+	CHECK64(call64(SYS_FILE, FILE_SYNC64, 3, 0, 0, 0) == 0 && sync_calls64 == 2);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_SYNC64, 3, 1, 0, 0) == -22);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_SYNC64, 2, 0, 0, 0) == -9);
+	CHECK64((int64_t) call64(SYS_FILE, 1UL << 32, 0, 0, 0, 0) == -38);
+	return 0;
+}
+
 int main(void)
 {
+	CHECK64(test_checked_files64() == 0);
 	CHECK64(test_open64() == 0);
 	CHECK64(test_name_snapshot64() == 0);
 	CHECK64(test_files64() == 0);

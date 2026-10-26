@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <file_api64.h>
 
 #define FD64_NAME_LEN 11
 /* VFAT은 UTF-16 255단위까지 허용하지만, 이 커널은 이름을 실어 나르는
@@ -12,7 +13,7 @@
  * Malformed UTF and names exceeding either limit are rejected before lookup.
  */
 #define FD64_LFN_MAX_UNITS 52
-#define FD64_NAME_MAX 160
+#define FD64_NAME_MAX FILE_NAME_CAPACITY64
 
 struct FDINFO64 {
 	uint8_t name[8];
@@ -56,6 +57,14 @@ struct FDHANDLE64 {
 
 /* All public operations are task-context only and may sleep on the filesystem
    mutex. They must not be called from IRQ handlers. */
+/* Checked APIs leave output metadata/handles unchanged on failure. OPEN
+ * validates absence before creation; lookup I/O errors never mean ENOENT.
+ * READ may advance/copy a prefix on EIO; discard it. Legacy APIs stay intact.
+ */
+int fd64_stat_checked(struct FDHANDLE64 *fh, const char *name,
+	struct FILE_INFO64 *info);
+int fd64_open_checked(struct FDHANDLE64 *fh, const char *name, unsigned int flags);
+int64_t fd64_read_checked(struct FDHANDLE64 *fh, void *dst, size_t size);
 int fd64_init(void);
 uint32_t fd64_file_count(void);
 /* `index`번째 항목을 *out에, 그 이름을 `name`에 복사한다. 이름은 긴 이름이

@@ -23,6 +23,7 @@ static uint32_t fail_meta_after;
 static uint32_t meta_matches;
 static uint32_t fail_data_lba;
 static uint32_t flush_calls;
+static uint32_t fail_read_lba64 = UINT32_MAX;
 static int truncate_order_seen;
 static uint32_t mutex_depth;
 
@@ -58,6 +59,7 @@ uint64_t block64_sector_count(void)
 
 uint8_t *cache64_get(uint32_t lba, int mode)
 {
+	if (mode == CACHE64_READ && lba == fail_read_lba64) { return NULL; }
 	if (lba >= TEST_SECTORS ||
 			(mode != CACHE64_READ && mode != CACHE64_WRITE &&
 			mode != CACHE64_WRITE_META)) {
@@ -140,6 +142,7 @@ static void reset_volume(void)
 	meta_matches = 0;
 	fail_data_lba = UINT32_MAX;
 	flush_calls = 0;
+	fail_read_lba64 = UINT32_MAX;
 	truncate_order_seen = 0;
 	fat_set(2, FD64_FAT_LAST);
 	for (i = 0; i < FD64_SECTOR_SIZE / sizeof(struct FDINFO64); i++) {
@@ -417,10 +420,63 @@ static int test_truncate_detaches_before_free(void)
 	return 0;
 }
 
+static int test_checked_io64(void)
+{
+	struct FDHANDLE64 fh, saved;
+	struct FILE_INFO64 info;
+	unsigned char data[1025];
+
+	reset_empty_root();
+	memset(&fh, 0xa5, sizeof(fh)); saved = fh;
+	CHECK64(fd64_open_checked(&fh, "NEW.TXT", 0) == -2);
+	CHECK64(memcmp(&fh, &saved, sizeof(fh)) == 0);
+	fail_read_lba64 = fd64_data_lba;
+	CHECK64(fd64_open_checked(&fh, "NEW.TXT", 7) == -5);
+	CHECK64(sectors[fd64_data_lba][0] == 0 && flush_calls == 0);
+	fail_read_lba64 = UINT32_MAX;
+	CHECK64(fd64_open_checked(&fh, "NEW.TXT", 7) == 0);
+	memset(data, 'x', sizeof(data));
+	CHECK64(fd64_write(&fh, data, 1024) == 1024);
+	CHECK64(fd64_stat_checked(NULL, "NEW.TXT", &info) == 0 && info.size64 == 1024);
+	CHECK64(info.identity64 == ((uint64_t) fh.dir.cluster << 32 | fh.dir.offset));
+	CHECK64(fd64_seek(&fh, 0, 0) == 0);
+	fail_read_lba64 = fd64_data_lba + 2;
+	CHECK64(fd64_read_checked(&fh, data, 1024) == -5 && fh.pos == 512);
+	fail_read_lba64 = UINT32_MAX;
+	CHECK64(fd64_seek(&fh, 0, 0) == 0);
+	CHECK64(fd64_read_checked(&fh, data, sizeof(data)) == 1024);
+	CHECK64(fd64_read_checked(&fh, data, 1) == 0);
+	CHECK64(fd64_stat_checked(NULL, "/", &info) == 0 && (info.flags64 & FILE_DIRECTORY64));
+	CHECK64(info.identity64 == 0);
+	CHECK64(fd64_open_checked(&saved, "/", 7) == -21);
+	/* A long spelling must not match a truncated 8.3 candidate and truncate it. */
+	CHECK64(fd64_stat_checked(NULL, "NEW.TXT.EXTRA", &info) == -2);
+	CHECK64(fd64_open_checked(&saved, "NEW.TXT.EXTRA", 7) == 0);
+	CHECK64(fd64_stat_checked(NULL, "NEW.TXT.EXTRA", &info) == 0 && info.size64 == 0);
+	CHECK64(fd64_stat_checked(NULL, "NEW.TXT", &info) == 0 && info.size64 == 1024);
+	struct FDINFO64 *entry = fd64_dir_at(&fh.dir, CACHE64_WRITE_META);
+
+	entry->type |= 1;
+	CHECK64(fd64_open_checked(&saved, "NEW.TXT", 7) == -13 && entry->size == 1024);
+	CHECK64(fd64_open_checked(&saved, "NEW.TXT", 0) == 0);
+	entry->type &= (uint8_t) ~1;
+	fd64_read_only = 1;
+	CHECK64(fd64_open_checked(&saved, "NEW.TXT", 7) == -13 && entry->size == 1024);
+	CHECK64(fd64_stat_checked(NULL, "NEW.TXT", &info) == 0 &&
+		(info.flags64 & FILE_VOLUME_READONLY64));
+	fd64_read_only = 0;
+	/* A full directory whose FAT link is corrupt must not be reported absent. */
+	reset_volume(); fat_set(2, 2);
+	CHECK64(fd64_open_checked(&saved, "ABSENT", 7) == -5 && flush_calls == 0);
+	return 0;
+}
+
 int main(void)
 {
 	int status;
 
+	status = test_checked_io64();
+	if (status != 0) { return status; }
 	status = test_name_policy();
 	if (status != 0) {
 		return status;

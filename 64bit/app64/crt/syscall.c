@@ -2,6 +2,12 @@
 #include <mowos.h>
 #include <syscall.h>
 
+long file_call64(unsigned int operation, unsigned long arg0,
+	unsigned long arg1, unsigned long arg2)
+{
+	return syscall4(SYS_FILE, operation, (long) arg0, (long) arg1, (long) arg2);
+}
+
 long write(int fd, const void *buf, size_t len)
 {
 	return syscall3(SYS_WRITE, fd, (long) buf, (long) len);

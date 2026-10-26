@@ -11,6 +11,7 @@
 #define SYS_FREE   8
 #define SYS_TICKS  9
 #define SYS_TTY    10
+#define SYS_FILE   11
 
 #define TTY_MODE    0
 #define TTY_READKEY 1

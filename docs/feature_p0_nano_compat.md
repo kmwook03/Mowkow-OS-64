@@ -1,5 +1,11 @@
 # P0 nano 파일 스트림·UTF 기반 계층
 
+후속: [파일 경계 연결](feature_p0_nano_storage.md)에서 checked read/metadata/sync와
+실제 upstream 열기·저장을 연결했다. 아래 legacy EOF 제한은 최초 기반 계층의 이력이다.
+
+후속 3차: [전체 nano ELF 링크](feature_p0_nano_link.md)를 완료했다. 아래는 기반 계층의
+2차 완료 당시 기록이며, 일반 libc/POSIX/curses 연결 진행은 후속 문서를 따른다.
+
 2026-10-26, 기준 `b1ecb537f321f79e4db9899fc1aa5f2ad47e0b2a` 위의 미커밋 작업.
 **이번 하위 작업은 완료했다. P0 전체와 업스트림 nano 앱 이식은 미완료다.**
 기존 2026-10-25의 미커밋 P0 시제품·vendor 및 `.gitignore` 변경을 보존했다.

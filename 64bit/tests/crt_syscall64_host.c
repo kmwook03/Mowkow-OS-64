@@ -115,6 +115,12 @@ static void io_wrappers64(void)
 	reset64(&result, 1);
 	assert(write(1, buffer, (size_t) LONG_MAX) == -22);
 	assert(arguments64[2] == LONG_MAX);
+	result = -5;
+	reset64(&result, 1);
+	assert(file_call64(FILE_READ64, 7, (unsigned long) buffer, 16) == -5);
+	assert(calls64 == 1 && number64 == SYS_FILE && arguments64[0] == FILE_READ64);
+	assert(arguments64[1] == 7 && arguments64[2] == (long) buffer && arguments64[3] == 16);
+	result = -22;
 	/* File wrappers also preserve their historical signed ABI. */
 	reset64(&result, 1);
 	assert(open("file", O_CREAT | O_TRUNC) == -22 && number64 == SYS_OPEN);

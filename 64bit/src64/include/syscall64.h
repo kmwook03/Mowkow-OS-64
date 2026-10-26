@@ -13,6 +13,9 @@
 #define SYS_FREE   8
 #define SYS_TICKS  9
 #define SYS_TTY    10
+#define SYS_FILE   11
+
+#include <file_api64.h>
 
 /* SYS_OPEN accepts only these two bits; 0 opens an existing file for I/O.
    Names are copied into a FD64_NAME_MAX-byte kernel buffer including NUL and

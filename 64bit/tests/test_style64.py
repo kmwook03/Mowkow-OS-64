@@ -52,6 +52,13 @@ class Style64Test(unittest.TestCase):
             ("64bit/src64/lib/kstring64.c", "char *str" "cpy(char *dst, const char *src)"),
             ("64bit/src64/include/kstring64.h", "char *str" "cpy(char *dst, const char *src);"),
             ("64bit/src64/mpport/libc/stdio.h", "int spr" "intf(char *str, const char *fmt, ...);"),
+            ("64bit/nano64/include/nano_posix64.h", "char *str" "cpy(char *dst, const char *src);"),
+            ("64bit/nano64/include/nano_posix64.h", "char *str" "cat(char *dst, const char *src);"),
+            ("64bit/nano64/include/nano_posix64.h",
+             "int spr" "intf(char *dst, const char *format, ...);"),
+            ("64bit/nano64/libc64.c", "char *str" "cpy(char *dst, const char *src)"),
+            ("64bit/nano64/libc64.c", "char *str" "cat(char *dst, const char *src)"),
+            ("64bit/nano64/format64.c", "int spr" "intf(char *dst, const char *format, ...)"),
         )
         for path, declaration in cases:
             with self.subTest(path=path):

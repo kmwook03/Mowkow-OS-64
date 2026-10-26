@@ -13,6 +13,7 @@
 #endif
 #include <fd64.h>
 #include <interrupt64.h>
+#include <kstring64.h>
 #include <process64.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -162,6 +163,61 @@ static int syscall_close64(struct PROCESS64 *process, uint64_t fd)
 	return 0;
 }
 
+static int64_t syscall_file_call64(struct PROCESS64 *process,
+	uint64_t operation, uint64_t arg0, uint64_t arg1, uint64_t arg2)
+{
+	struct FILE_INFO64 info;
+	struct FDHANDLE64 *fh;
+	char name[FD64_NAME_MAX];
+	int64_t length;
+	int status;
+
+	if (operation == FILE_STAT64 || operation == FILE_OPEN64) {
+		if (arg2 != 0) { return -22; }
+		if (operation == FILE_STAT64 &&
+			!process64_user_range_valid((void *) arg1, sizeof(info))) { return -14; }
+		if (operation == FILE_OPEN64 && (arg1 & ~7UL)) { return -22; }
+		length = copy_string_from_user64(name, sizeof(name), (const char *) arg0);
+		if (length < 0) { return length; }
+		if (length == 0 || validate_filename_utf864(name, (size_t) length) != 0) {
+			return -22;
+		}
+		if (operation == FILE_STAT64) {
+			status = fd64_stat_checked(NULL, name, &info);
+			if (status == 0) { memcpy((void *) arg1, &info, sizeof(info)); }
+			return status;
+		}
+		for (size_t i = 3; i < PROCESS64_MAX_FILES; i++) {
+			if (!process->files[i].used) {
+				status = fd64_open_checked(&process->files[i].fh, name,
+					(unsigned int) arg1);
+				if (status != 0) { return status; }
+				process->files[i].used = 1;
+				return (int64_t) i;
+			}
+		}
+		return -24;
+	}
+	if (operation != FILE_READ64 && operation != FILE_SYNC64 &&
+		operation != FILE_FSTAT64) { return -38; }
+	fh = syscall_file64(process, arg0);
+	if (fh == NULL) { return -9; }
+	if (operation == FILE_READ64) {
+		if (arg2 > INT64_MAX) { return -22; }
+		if (!process64_user_range_valid((void *) arg1, (size_t) arg2)) { return -14; }
+		return fd64_read_checked(fh, (void *) arg1, (size_t) arg2);
+	}
+	if (arg2 != 0) { return -22; }
+	if (operation == FILE_SYNC64) {
+		if (arg1 != 0) { return -22; }
+		return fd64_sync() < 0 ? -5 : 0;
+	}
+	if (!process64_user_range_valid((void *) arg1, sizeof(info))) { return -14; }
+	status = fd64_stat_checked(fh, NULL, &info);
+	if (status == 0) { memcpy((void *) arg1, &info, sizeof(info)); }
+	return status;
+}
+
 static uintptr_t syscall_alloc64(struct PROCESS64 *process, uint64_t request)
 {
 	uintptr_t p = process->heap_next;
@@ -305,6 +361,9 @@ uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame)
 		break;
 	case SYS_TICKS:
 		frame->rax = syscall_ticks64();
+		break;
+	case SYS_FILE:
+		frame->rax = (uint64_t) syscall_file_call64(process, a0, a1, a2, frame->r10);
 		break;
 	case SYS_TTY:
 		frame->rax = syscall_tty64(process, frame);

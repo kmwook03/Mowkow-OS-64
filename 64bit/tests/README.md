@@ -43,3 +43,23 @@ checks the shared inventory, direct header audit and strict flags for both
 architectures. `make nano64-compat` performs the actual cross-compilation and
 is included in `check64`. These archives are not upstream nano executables;
 the tests do not validate the upstream editing loop, OS TTY or storage hardware.
+
+`test_nano_upstream64.py` now separately compiles the real upstream editor and
+the private libc/POSIX/curses port with ASan/UBSan, using pinned sources and the
+same shared source inventory as both cross-builds. It uses the actual CRT I/O
+wrappers, replacing native syscall gates and bottom-level allocation only.
+It checks editing, Hangul/PREEDIT, undo/redo, search/replace, resize, rendering
+bounds, allocation faults and termination. Actual upstream open/save now uses
+checked metadata/read/sync and a 64KiB preflight. Read faults must not publish
+partial editable buffers; write/sync/close failure retains modified/last_saved.
+The production close wrapper observes retained ownership; fixture assignments
+alone are not counted as checks. `make nano64-apps` builds standalone cross ELF
+files and is included in `check64`; the existing image/staging editor is kept.
+
+`make test64-nano-storage` and `make test64-nano-storage-ahci` separately exercise
+those ELF files on disposable IDE/AHCI images through QMP keyboard events and
+real SYS_TTY. They require QEMU and mtools mcopy. Full bytes, size and EOF are
+compared after shutdown and a reboot/reopen/save cycle. New Hangul, existing
+file edits, DOS, empty/no-final-newline files and the exact/oversized 64KiB
+boundaries are covered. Logs survive temporary image cleanup. See
+`docs/feature_p0_nano_storage.md` for contracts and actual results.

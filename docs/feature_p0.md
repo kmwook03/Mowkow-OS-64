@@ -1,5 +1,9 @@
 # P0 이식 조사와 호스트 시제품
 
+2026-10-26 후속 3차: [양 아키텍처 freestanding nano ELF 링크](feature_p0_nano_link.md)를
+완료했다. 새 private libc/POSIX/curses를 실제 편집 루프와 host fixture에서 검증했다.
+파일 열기·저장은 readiness 검사로 거부하며 실제 OS 실행·P0 전체는 미완료다.
+
 2026-10-26 후속: [nano 파일 스트림·UTF 기반 계층](feature_p0_nano_compat.md)을
 추가하고 clean64/check64(호스트 98개·기존 양 OS·새 계층 양 아키텍처 컴파일)를
 통과했다. 이 기반 archive에는 업스트림 nano 코어가 아직 연결되지 않았다.
@@ -186,14 +190,12 @@ Ctrl-A는 `pyexec_mode_kind=RAW`로 바꾸고 friendly 루프를 반환하지만
 
 ## 다음 P0 작업
 
-1. 파일 스트림·UTF 기반 계층은 2026-10-26 완료했다. 다음은 실제 nano가 include하는
-   libc/POSIX 헤더·심볼 연결, UTF 분류, regex·외부 명령 등 기능 비활성화 경계와
-   curses 계층이다. 이를 묶어 **x86_64/AArch64 실제 앱 ELF**를 링크한다.
-   호스트 libc 심볼을 성공 stub으로 대체하지 않는다. fsync 및 읽기 오류/EOF 구분처럼
-   현재 syscall로 보장할 수 없는 계약은 [후속 기록](feature_p0_nano_compat.md)에 명시했다.
-2. 제한된 curses 계층을 **실제 SYS_TTY**에 연결하여 일회용 x86 이미지에서 한글
-   조합·저장·종료를 재현한다. 현재 호스트 모델의 정확한 관찰을 타깃으로 옮긴다.
-3. MicroPython의 활성 생성 경계·전체 메시지 목록과 bounded 수명·고갈 경로를
-   검증한다. [출력 목록](feature_p0_outputs.md)을 개별 메시지 catalog로 확장한다.
-4. 위 조건이 채워져야 P0를 완료 표시하고 P1 머꼬 `>> ` 작업으로 넘어간다.
+1. 파일 스트림·UTF·libc/POSIX/curses와 **x86_64/AArch64 전체 ELF 링크**, 파일
+   metadata/checked read/sync와 64KiB 사전 검사는 2026-10-26 연결했다. 제한과 실제
+   SYS_TTY/일회용 IDE·AHCI 저장 검증은 [파일 경계 기록](feature_p0_nano_storage.md)에 있다.
+   기존 editor 교체와 Pi 5 UI/SD/입력 검증까지 완료한 것은 아니다.
+2. MicroPython 활성 예외 생성 경계·전체 메시지 목록을 조사하고 bounded 수명·진짜
+   메모리 고갈 시 출처 구분을 검증한다. [출력 목록](feature_p0_outputs.md)을
+   개별 메시지 catalog로 확장한다. vendor 정책 변경 여부는 재현 결과로 판단한다.
+3. 위 조건이 채워져야 P0를 완료 표시하고 P1 머꼬 `>> ` 작업으로 넘어간다.
    Pi 5 전체 UI/SD/입력 검증은 P6에서 별도로 기록한다.

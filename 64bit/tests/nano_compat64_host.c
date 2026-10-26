@@ -55,12 +55,13 @@ long syscall2(long nr, long a0, long a1)
 
 long syscall3(long nr, long a0, long a1, long a2)
 {
-	assert(a0 >= 3 && a1 != 0 && a2 > 0);
+	assert(a0 >= 1 && a1 != 0 && a2 > 0);
 	size_t requested = (size_t) a2;
 	size_t count = requested < chunk64 ? requested : chunk64;
 	long result;
 
 	if (nr == SYS_READ) {
+		assert(a0 >= 3);
 		reads64++;
 		if (count > input_size64 - input_at64) {
 			count = input_size64 - input_at64;
@@ -88,8 +89,12 @@ long syscall3(long nr, long a0, long a1, long a2)
 
 long syscall4(long nr, long a0, long a1, long a2, long a3)
 {
-	(void) a3;
-	return syscall3(nr, a0, a1, a2);
+	assert(nr == SYS_FILE);
+	if (a0 == FILE_OPEN64) {
+		return syscall2(SYS_OPEN, a1, a2 & (O_CREAT | O_TRUNC));
+	}
+	assert(a0 == FILE_READ64);
+	return syscall3(SYS_READ, a1, a2, a3);
 }
 
 long syscall5(long nr, long a0, long a1, long a2, long a3, long a4)
@@ -131,8 +136,8 @@ static void modes_and_ownership64(void)
 		assert(nano_fclose64(stream) == 0);
 		assert(nano_fclose64(stream) == -1 && nano_errno64 == 9);
 	}
-	/* Legacy -2 is not proof of ENOENT; errors keep the existing syscall ABI. */
-	open_result64 = -2;
+	/* The additive open reports actual errno values. */
+	open_result64 = -5;
 	assert(nano_fopen64("한글.TXT", "rb") == NULL && nano_errno64 == 5);
 	struct NANO_FILE64 *pool[NANO_STREAMS64];
 
@@ -298,6 +303,24 @@ static void invalid_requests64(void)
 	assert(writes64 == 1 && nano_fclose64(stream) == -1);
 }
 
+static void console_streams64(void)
+{
+	reset64(NULL, 0, 2);
+	assert(nano_fileno64(nano_stdout64) == 1 && nano_fileno64(nano_stderr64) == 2);
+	assert(nano_fwrite64("stdout", 1, 6, nano_stdout64) == 6 && writes64 == 3);
+	assert(nano_putc64('!', nano_stderr64) == '!');
+	assert(output_size64 == 7 && memcmp(output64, "stdout!", 7) == 0);
+	write_replies64[0] = -1; write_count64 = 1;
+	assert(nano_putc64('x', nano_stdout64) == -1 && nano_ferror64(nano_stdout64));
+	assert(nano_fflush64(NULL) == -1);
+	assert(nano_fclose64(nano_stdout64) == -1 && nano_errno64 == 9);
+	assert(nano_fclose64(nano_stderr64) == -1 && closes64 == 0);
+	nano_clearerr64(nano_stdout64);
+	assert(nano_fflush64(NULL) == 0);
+	assert(nano_putc64('y', nano_stdout64) == 'y');
+	assert(output_size64 == 8 && memcmp(output64, "stdout!y", 8) == 0);
+}
+
 static void utf_conversion64(void)
 {
 	static const struct {
@@ -368,6 +391,7 @@ int main(void)
 	read_boundaries64();
 	io_failures64();
 	invalid_requests64();
+	console_streams64();
 	utf_conversion64();
 	return 0;
 }

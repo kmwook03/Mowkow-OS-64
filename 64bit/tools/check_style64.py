@@ -34,6 +34,16 @@ BANNED_API_DECLARATIONS = {
     Path("64bit/src64/mpport/libc/stdio.h"): re.compile(
         r"int sprintf\(char \*str, const char \*fmt, \.\.\.\);"
     ),
+    Path("64bit/nano64/include/nano_posix64.h"): re.compile(
+        r"(?:char \*(?:strcpy|strcat)\(char \*dst, const char \*src\);|"
+        r"int sprintf\(char \*dst, const char \*format, \.\.\.\);)"
+    ),
+    Path("64bit/nano64/libc64.c"): re.compile(
+        r"char \*(?:strcpy|strcat)\(char \*dst, const char \*src\)"
+    ),
+    Path("64bit/nano64/format64.c"): re.compile(
+        r"int sprintf\(char \*dst, const char \*format, \.\.\.\)"
+    ),
 }
 C_NON_CODE = re.compile(
     r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|/\*[\s\S]*?\*/|//[^\n]*'

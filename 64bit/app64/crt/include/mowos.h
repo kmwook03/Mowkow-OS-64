@@ -4,6 +4,12 @@
 /* Share bounded string builders with the kernel; no syscall/app ABI change. */
 #include "../../../src64/include/string_copy64.h"
 
+#include "../../../src64/include/file_api64.h"
+
+/* Additive file operations preserve errno-style results, unlike legacy open. */
+long file_call64(unsigned int operation, unsigned long arg0,
+	unsigned long arg1, unsigned long arg2);
+
 #define O_CREAT 1
 #define O_TRUNC 2
 

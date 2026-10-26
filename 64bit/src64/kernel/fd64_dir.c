@@ -412,6 +412,60 @@ int fd64_dir_find(const char *name, struct FDINFO64 *out,
 	return 0;
 }
 
+/* A separate checked iterator preserves the legacy boolean scan API. A bounded
+ * chain cursor distinguishes EOC from cache/FAT failures and detects cycles.
+ */
+int fd64_dir_find_checked(const char *name, struct FDINFO64 *out,
+	struct FDPOS64 *at)
+{
+	struct LFN64_STATE lfn;
+	struct FDCHAIN64 chain;
+	struct FDPOS64 pos;
+	struct FDINFO64 entry;
+	const struct FDINFO64 *raw;
+	char alias[13];
+	char found[FD64_NAME_MAX];
+	uint32_t next;
+	int status;
+
+	if (!name_bytes_valid(name)) { return -22; }
+	if (fd64_chain_validate(fd64_root_cluster, 1) != 0 ||
+		fd64_chain_init(&chain, fd64_root_cluster) != 0) { return -5; }
+	fd64_dir_first(&pos);
+	lfn_reset(&lfn);
+	for (uint32_t guard = 0; guard < DIR_SCAN_LIMIT; guard++) {
+		raw = fd64_dir_at(&pos, CACHE64_READ);
+		if (raw == NULL) { return -5; }
+		if (raw->name[0] == 0) { return -2; }
+		if (raw->name[0] != 0xe5 && raw->type == LFN_ATTR) {
+			lfn_collect(&lfn, (const uint8_t *) raw);
+		} else if (raw->name[0] != 0xe5 && (raw->type & 0x08) == 0) {
+			entry = *raw;
+			if (!lfn_finish(&lfn, &entry, found, sizeof(found))) {
+				short_name_text(&entry, found, sizeof(found));
+			}
+			short_name_text(&entry, alias, sizeof(alias));
+			if (name_eq_ci(found, name) || name_eq_ci(alias, name)) {
+				*out = entry;
+				*at = pos;
+				return 0;
+			}
+			lfn_reset(&lfn);
+		} else {
+			lfn_reset(&lfn);
+		}
+		pos.offset += FD64_DIR_ENTRY_SIZE;
+		if (pos.offset == fd64_cluster_bytes()) {
+			status = fd64_chain_advance(&chain, &next);
+			if (status < 0) { return -5; }
+			if (status == 0) { return -2; }
+			pos.cluster = next;
+			pos.offset = 0;
+		}
+	}
+	return -5;
+}
+
 int fd64_dir_write(struct FDHANDLE64 *fh)
 {
 	struct FDINFO64 *entry;
@@ -685,7 +739,7 @@ int fd64_dir_create(struct FDHANDLE64 *fh, const char *name)
 	/* 같은 철자, ASCII 대소문자 차이, 기존 8.3 별칭으로의 충돌을 모두
 	   directory 변경 전에 거절한다. fd64_create()의 기존-file truncate는
 	   이 내부 생성 함수에 도달하기 전에 처리된다. */
-	if (fd64_dir_find(name, &probe, &pos) != 0) {
+	if (fd64_dir_find_checked(name, &probe, &pos) != -2) {
 		return 0;
 	}
 	make_shortname(name11, name, &lossy);

@@ -734,3 +734,115 @@ int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size)
 	mutex64_unlock(&fd64_mutex);
 	return status;
 }
+
+/* Checked metadata and mutation share the same filesystem transaction. */
+static int fd64_lookup_checked(struct FDHANDLE64 *fh, const char *name)
+{
+	struct FDHANDLE64 local = { 0 };
+	int result;
+
+	if (!fd64_initialized) { return -5; }
+	result = fd64_dir_find_checked(name, &local.info, &local.dir);
+	if (result != 0) { return result; }
+	if (!(local.info.type & 0x10) && !fd64_file_chain_valid(&local.info)) { return -5; }
+	local.cluster = fd64_info_cluster(&local.info);
+	*fh = local;
+	return 0;
+}
+
+int fd64_stat_checked(struct FDHANDLE64 *fh, const char *name,
+	struct FILE_INFO64 *info)
+{
+	struct FDHANDLE64 local;
+	struct FILE_INFO64 result = { 0 };
+	int status = 0;
+
+	if (info == NULL || (fh == NULL && name == NULL)) { return -22; }
+	if (mutex64_lock(&fd64_mutex) != 0) { return -5; }
+	if (!fd64_initialized) {
+		status = -5;
+	} else if (name != NULL &&
+		(name[0] == '/' && name[1] == 0)) {
+		/* The root has no directory entry; reserve identity zero for it. */
+		result.flags64 = FILE_DIRECTORY64;
+	} else {
+		if (name != NULL) {
+			status = fd64_lookup_checked(&local, name);
+		} else if (fh->dir.cluster == 0) {
+			status = -9;
+		} else {
+			/* Read fresh metadata, without changing the caller's position. */
+			const struct FDINFO64 *entry = fd64_dir_at(&fh->dir, CACHE64_READ);
+
+			if (entry == NULL) { status = -5; }
+			else {
+				local = *fh; local.info = *entry;
+				if (entry->name[0] == 0 || entry->name[0] == 0xe5 ||
+					(entry->type & 0x08) ||
+					(!(entry->type & 0x10) && !fd64_file_chain_valid(entry))) {
+					status = -5;
+				}
+			}
+		}
+		if (status == 0) {
+			result.identity64 = ((uint64_t) local.dir.cluster << 32) | local.dir.offset;
+			result.size64 = local.info.size;
+			result.flags64 = (local.info.type & 1 ? FILE_READONLY64 : 0) |
+				(local.info.type & 0x10 ? FILE_DIRECTORY64 : 0);
+			result.date64 = local.info.date;
+			result.time64 = local.info.time;
+		}
+	}
+	if (status == 0) {
+		if (fd64_read_only) { result.flags64 |= FILE_VOLUME_READONLY64; }
+		*info = result;
+	}
+	mutex64_unlock(&fd64_mutex);
+	return status;
+}
+
+int fd64_open_checked(struct FDHANDLE64 *fh, const char *name, unsigned int flags)
+{
+	struct FDHANDLE64 local;
+	int status;
+
+	if (fh == NULL || name == NULL || (flags & ~7U) ||
+		((flags & 3U) && !(flags & FILE_WRITING64))) { return -22; }
+	if (name[0] == '/' && name[1] == 0) { return -21; }
+	if (mutex64_lock(&fd64_mutex) != 0) { return -5; }
+	status = fd64_lookup_checked(&local, name);
+	if (status == 0 && (local.info.type & 0x10)) { status = -21; }
+	if ((status == 0 || status == -2) && (flags & FILE_WRITING64) &&
+		(fd64_read_only || (status == 0 && (local.info.type & 1)))) { status = -13; }
+	if (status == -2 && (flags & FILE_CREATE64)) {
+		status = fd64_dir_create(&local, name) && fd64_sync_unlocked() >= 0 ? 0 : -5;
+	} else if (status == 0 && (flags & FILE_TRUNCATE64)) {
+		status = fd64_truncate_unlocked(&local, 0) == 0 ? 0 : -5;
+	}
+	if (status == 0) { *fh = local; }
+	mutex64_unlock(&fd64_mutex);
+	return status;
+}
+
+int64_t fd64_read_checked(struct FDHANDLE64 *fh, void *dst, size_t size)
+{
+	size_t expected;
+	size_t got;
+	int64_t result;
+
+	if (fh == NULL || fh->dir.cluster == 0 || dst == NULL || size > INT64_MAX) {
+		return -22;
+	}
+	if (mutex64_lock(&fd64_mutex) != 0) { return -5; }
+	if (!fd64_initialized || fh->pos > fh->info.size ||
+		!fd64_file_chain_valid(&fh->info)) {
+		result = -5;
+	} else {
+		expected = fh->info.size - fh->pos;
+		if (expected > size) { expected = size; }
+		got = fd64_read_unlocked(fh, dst, size);
+		result = got == expected ? (int64_t) got : -5;
+	}
+	mutex64_unlock(&fd64_mutex);
+	return result;
+}
