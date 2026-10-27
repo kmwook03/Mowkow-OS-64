@@ -9,7 +9,9 @@ import hashlib
 import json
 import os
 import pty
+import resource
 import shlex
+import signal
 import struct
 import subprocess
 import tarfile
@@ -33,6 +35,7 @@ WRAPPED = [
     "mp_obj_new_exception_msg", "mp_obj_new_exception_msg_varg",
     "mp_obj_new_exception_msg_vlist", "mp_obj_new_exception_args",
     "mp_raise_OSError", "mp_obj_print_exception",
+    "gc_alloc",
 ]
 WARNINGS = ["-Wall", "-Wextra", "-Werror", "-Wformat=2", "-Wshadow", "-Wundef",
             "-Wmissing-prototypes", "-Wstrict-prototypes", "-Wcast-align"]
@@ -56,9 +59,26 @@ def symbols(obj: Path, nm: str = "nm") -> list[str]:
                    if line.split() and "U" in line.split()})
 
 
+def message_coverage(catalog: dict[str, object], output: str) -> dict[str, object]:
+    """Expose every unimplemented active ID; matching text does not prove reachability."""
+    formats = {line.removeprefix("FORMAT64 ") for line in output.splitlines()
+               if line.startswith("FORMAT64 ")}
+    messages = catalog["messages"]
+    active = {entry["text"] for entry in messages}
+    if not formats or formats - active:
+        raise ValueError("empty prototype catalog or format absent from active inventory")
+    return {
+        "scope": "format handlers only; not constructor/reachability/translation acceptance",
+        "active_formats": len(active),
+        "prototype_formats": sorted(formats),
+        "pending_ids": [entry["id"] for entry in messages if entry["text"] not in formats],
+        "complete": False,
+    }
+
+
 def micropython(folder: Path, cc: str) -> dict[str, object]:
     """Use separate production objects: -r would resolve calls before --wrap."""
-    run(["make", "-j4", "x86_64"], ROOT, folder / "mp-build.log")
+    run(["make", "-j4", "x86_64", "aarch64"], ROOT, folder / "mp-build.log")
     objects = sorted((ROOT / "build64" / "upy").glob("*.o"))
     objects += sorted((ROOT / "build64" / "upy" / "shared").rglob("*.o"))
     executable = folder / "mp-exception-probe64"
@@ -67,16 +87,65 @@ def micropython(folder: Path, cc: str) -> dict[str, object]:
                "-I", str(ROOT / "build64" / "mpgen"),
                "-isystem", str(ROOT / "third_party" / "micropython"),
                "-idirafter", str(ROOT / "64bit" / "src64" / "include"),
-               str(PROBES / "mp_exception_probe64.c"), *map(str, objects), "-lm",
-               *[f"-Wl,--wrap={name}" for name in WRAPPED], "-o", str(executable)]
-    run(command, ROOT, folder / "mp-link.log")
+               str(PROBES / "mp_exception_probe64.c"),
+               str(PROBES / "mp_lifetime_probe64.c"), *map(str, objects), "-lm",
+               *[f"-Wl,--wrap={name}" for name in WRAPPED]]
+    # Constructor pointer identity is part of upstream's native-exception
+    # checks. Wrapping make_new in runtime.o changes those checks while type
+    # tables in objexcept.o still point at the original function.
+    alias = "-Wl,--defsym=__real_mp_obj_exception_make_new=mp_obj_exception_make_new"
+    run([*command, alias, "-o", str(executable)], ROOT, folder / "mp-link.log")
+    lifetime = folder / "mp-lifetime-probe64"
+    run([*command, "-Wl,--wrap=mp_obj_exception_make_new", "-o", str(lifetime)],
+        ROOT, folder / "mp-lifetime-link.log")
     source = folder / "사용자.py"
     source.write_text("file_missing_identifier\n", encoding="utf-8")
     run([str(executable), str(source)], ROOT, folder / "mp-run.log")
+    for mode in ("boundaries", "retention", "oom"):
+        run([str(executable), f"--audit-{mode}"], ROOT, folder / f"mp-{mode}.log")
+    for mode in ("live", "gc", "reuse", "lock", "oom", "identity"):
+        run([str(lifetime), f"--lifetime-{mode}"], ROOT,
+            folder / f"mp-lifetime-{mode}.log")
+    run([str(lifetime), "--lifetime-catalog"], ROOT, folder / "mp-lifetime-catalog.log")
+    coverage = message_coverage(
+        json.loads((ROOT / "docs/feature_p0_mp_catalog.json").read_text()),
+        (folder / "mp-lifetime-catalog.log").read_text(),
+    )
+    (folder / "mp-lifetime-coverage.json").write_text(
+        json.dumps(coverage, ensure_ascii=False, indent=2) + "\n")
+    overflow = subprocess.run(
+        [str(executable), "--audit-overflow"], cwd=ROOT, text=True,
+        capture_output=True, timeout=30,
+        preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0)),
+    )
+    (folder / "mp-overflow.log").write_text(overflow.stdout + overflow.stderr)
+    if overflow.returncode != -signal.SIGABRT or "origin_count64 <" not in overflow.stderr:
+        raise RuntimeError("expected the prototype's 65th provenance record to be rejected")
+    from feature_mp_boundary64 import experiment
+    boundary = experiment(folder / "mp-boundary", cc, objects)
     revision = subprocess.check_output(
         ["git", "-C", "third_party/micropython", "rev-parse", "HEAD"], cwd=ROOT,
         text=True).strip()
     return {"upstream_commit": revision, "wrapped": WRAPPED, "host_probe": "PASS",
+            "identity_boundary_probe": boundary,
+            "noalloc_probe": {
+                "status": "partial feasibility; constructor coverage FAIL (expected evidence)",
+                "live": "256 retained errors; real VM NameError/TypeError; reentrant report",
+                "gc": "256 released, swept and reused; provenance is not rooted",
+                "reuse": "successful gc_alloc clears provenance at reused address",
+                "oom": "free=0 and locked heap; Korean display uses no additional allocation",
+                "constructor_gap": "real Python type slot bypasses make_new wrapper; same "
+                                   "emergency address/type/args reuse mistranslates user exception",
+                "identity_gap": "make_new wrapping breaks external inline native-type checks",
+                "message_coverage": coverage,
+                "scope": "five formats and explicit EIO; full catalog/OS not implemented",
+            },
+            "negative_audits": {
+                "boundaries": "filename and recursion constructors bypass registry",
+                "retention": "64 original + 64 surrogate objects survive GC",
+                "overflow": "65th record aborts (expected SIGABRT)",
+                "oom": "free=0; original/surrogate alias; message lost; user identity reused",
+            },
             "os_runtime": "NOT RUN", "catalog": "five exception types; not exhaustive",
             "limits": ["64 rooted provenance records", "translation allocates",
                        "same-object-file calls bypass GNU ld --wrap",
@@ -194,7 +263,11 @@ def main() -> int:
         "source_commit": revision,
         "changes": "uncommitted P0 probes; see per-file SHA-256",
         "probe_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                         for path in (Path(__file__), *sorted(PROBES.glob("*.c")))},
+                         for path in (Path(__file__),
+                                      ROOT / "64bit/tools/feature_mp_boundary64.py",
+                                      ROOT / "64bit/tools/feature_mp_audit64.py",
+                                      *sorted(PROBES.glob("*.c")),
+                                      *sorted(PROBES.glob("*.h")))},
     }
     report["status"] = "RUNNING"
     destination = folder / "report.json"
@@ -212,7 +285,7 @@ def main() -> int:
     report["status"] = "HOST PASS; P0 INCOMPLETE"
     destination.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(f"P0 host probes: PASS; evidence: {folder / 'report.json'}")
-    print("P0 remains incomplete until both OS app links and actual TTY runtime pass.")
+    print("P0 remains incomplete: full exception provenance/lifetime coverage is not proven.")
     return 0
 
 

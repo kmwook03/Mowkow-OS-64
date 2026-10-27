@@ -23,6 +23,7 @@
 #include "py/runtime.h"
 #include "shared/runtime/gchelper.h"
 #include "shared/runtime/pyexec.h"
+#include "mp_lifetime_probe64.h"
 
 mp_obj_t __real_mp_obj_new_exception_msg(const mp_obj_type_t *, mp_rom_error_text_t);
 mp_obj_t __real_mp_obj_new_exception_msg_vlist(const mp_obj_type_t *,
@@ -55,6 +56,8 @@ static const char *input64;
 static int korean64;
 static unsigned reports64;
 static unsigned translated64;
+static void *exhaustion64[65536];
+static size_t exhaustion_count64;
 
 static const mp_rom_map_elem_t empty_module_table64[] = {
 	{ MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_mowio) },
@@ -101,6 +104,8 @@ static void remember64(mp_obj_t exception, mp_obj_t translated)
 
 mp_obj_t __wrap_mp_obj_new_exception_msg(const mp_obj_type_t *type, mp_rom_error_text_t msg)
 {
+	if (lifetime_enabled64)
+		return lifetime_msg64(type, msg);
 	mp_obj_t exception = __real_mp_obj_new_exception_msg(type, msg);
 	const char *translation = msg == NULL ? NULL : catalog64((const char *) msg);
 
@@ -113,6 +118,8 @@ mp_obj_t __wrap_mp_obj_new_exception_msg(const mp_obj_type_t *type, mp_rom_error
 mp_obj_t __wrap_mp_obj_new_exception_msg_vlist(const mp_obj_type_t *type,
 	mp_rom_error_text_t format, va_list args)
 {
+	if (lifetime_enabled64)
+		return lifetime_vlist64(type, format, args);
 	va_list copy;
 	const char *translation = catalog64((const char *) format);
 	mp_obj_t exception;
@@ -141,6 +148,8 @@ mp_obj_t __wrap_mp_obj_new_exception_msg_varg(const mp_obj_type_t *type,
 mp_obj_t __wrap_mp_obj_new_exception_args(const mp_obj_type_t *type, size_t count,
 	const mp_obj_t *args)
 {
+	if (lifetime_enabled64)
+		return lifetime_args64(type, count, args);
 	mp_obj_t exception = __real_mp_obj_new_exception_args(type, count, args);
 
 	/* Internal errno constructor, distinct from Python OSError.make_new.
@@ -161,7 +170,7 @@ MP_NORETURN void __wrap_mp_raise_OSError(int error)
 	} else {
 		mp_obj_t exception = MP_OBJ_FROM_PTR(nlr.ret_val);
 
-		if (error == MP_EIO)
+		if (error == MP_EIO && !lifetime_enabled64)
 			remember64(exception, __real_mp_obj_new_exception_msg(&mp_type_OSError,
 				(mp_rom_error_text_t) "[Errno 5] 입출력 오류입니다"));
 		nlr_raise(exception);
@@ -170,6 +179,11 @@ MP_NORETURN void __wrap_mp_raise_OSError(int error)
 
 void __wrap_mp_obj_print_exception(const mp_print_t *print, mp_obj_t exception)
 {
+	if (lifetime_enabled64) {
+		if (!lifetime_print64(print, exception))
+			__real_mp_obj_print_exception(print, exception);
+		return;
+	}
 	/* Capture once; filenames, identifiers, and traceback values are emitted
  * from structured fields. The user's stdout never traverses this wrapper.
  */
@@ -248,8 +262,13 @@ void gc_collect(void)
 {
 	gc_collect_start();
 	gc_collect_root((void **) origins64, sizeof(origins64) / (sizeof(void *)));
+	gc_collect_root(exhaustion64, exhaustion_count64);
+	if (lifetime_enabled64)
+		lifetime_roots64();
 	gc_helper_collect_regs_and_stack();
 	gc_collect_end();
+	if (lifetime_enabled64)
+		lifetime_sweep64();
 }
 
 int signbit(double value)
@@ -322,6 +341,97 @@ static void check64(const char *source, const char *expected, int should_transla
 	assert(translated64 == before + (unsigned) should_translate);
 }
 
+static void audit64(const char *mode)
+{
+	if (strcmp(mode, "--audit-boundaries") == 0) {
+		nlr_buf_t nlr;
+
+		(void) __wrap_mp_obj_new_exception_args(&mp_type_OSError, 1,
+			(mp_obj_t[]) { MP_OBJ_NEW_SMALL_INT(MP_EIO) });
+		assert(origin_count64 == 1);
+		if (nlr_push(&nlr) == 0)
+			mp_raise_OSError(MP_EIO);
+		assert(origin_count64 == 2);
+		if (nlr_push(&nlr) == 0)
+			mp_raise_OSError_with_filename(MP_EIO, "사용자.py");
+		mp_obj_exception_t *error = nlr.ret_val;
+
+		assert(origin_count64 == 2);
+		assert(error->args->len == 2);
+		assert(error->args->items[0] == MP_OBJ_NEW_SMALL_INT(MP_EIO));
+		assert(strcmp(mp_obj_str_get_str(error->args->items[1]), "can't open 사용자.py") == 0);
+		if (nlr_push(&nlr) == 0)
+			mp_raise_recursion_depth();
+		error = nlr.ret_val;
+		assert(origin_count64 == 2);
+		assert(error->base.type == &mp_type_RuntimeError);
+		assert(error->args->len == 1);
+		assert(strcmp(mp_obj_str_get_str(error->args->items[0]),
+			"maximum recursion depth exceeded") == 0);
+		puts("AUDIT boundaries: args/OSError captured; filename/recursion bypass registry");
+		return;
+	}
+	if (strcmp(mode, "--audit-retention") == 0 ||
+		strcmp(mode, "--audit-overflow") == 0) {
+		/* No Python root retains these exceptions; the prototype roots do. */
+		for (size_t i = 0; i < 64; i++)
+			(void) __wrap_mp_obj_new_exception_msg(&mp_type_SyntaxError,
+				MP_ERROR_TEXT("invalid syntax"));
+		gc_collect();
+		for (size_t i = 0; i < 64; i++) {
+			assert(gc_nbytes(MP_OBJ_TO_PTR(origins64[i].exception)) != 0);
+			assert(gc_nbytes(MP_OBJ_TO_PTR(origins64[i].translated)) != 0);
+		}
+		if (strcmp(mode, "--audit-overflow") == 0)
+			(void) __wrap_mp_obj_new_exception_msg(&mp_type_SyntaxError,
+				MP_ERROR_TEXT("invalid syntax"));
+		puts("AUDIT retention: 64 originals + 64 surrogates survive GC; capacity reached");
+		return;
+	}
+	assert(strcmp(mode, "--audit-oom") == 0);
+	/* Fill every allocatable block, not merely request an oversized object.
+	 * Explicit roots keep the fill alive through allocator-triggered GC.
+	 */
+	for (;;) {
+		void *block = gc_alloc(1, 0);
+
+		if (block == NULL)
+			break;
+		assert(exhaustion_count64 < sizeof(exhaustion64) / sizeof(exhaustion64[0]));
+		exhaustion64[exhaustion_count64++] = block;
+	}
+	gc_info_t info;
+	nlr_buf_t nlr;
+
+	gc_info(&info);
+	assert(info.free == 0);
+	if (nlr_push(&nlr) == 0) {
+		(void) m_malloc(1);
+		abort();
+	} else {
+		mp_obj_t exception = MP_OBJ_FROM_PTR(nlr.ret_val);
+		mp_obj_exception_t *native = MP_OBJ_TO_PTR(exception);
+
+		assert(exception == MP_OBJ_FROM_PTR(&MP_STATE_VM(mp_emergency_exception_obj)));
+		assert(origin_count64 == 1);
+		assert(origins64[0].exception == origins64[0].translated);
+		assert(native->args->len == 0);
+		korean64 = 1;
+		__wrap_mp_obj_print_exception(&mp_plat_print, exception);
+		assert(strcmp(output64, "MemoryError: \n") == 0);
+		/* A Python constructor uses this same make_new function. With no
+		 * emergency arg buffer both identity and args match the stale record.
+		 */
+		mp_obj_t user_arg = MP_OBJ_NEW_SMALL_INT(5);
+		mp_obj_t user = mp_obj_exception_make_new(&mp_type_OSError, 1, 0, &user_arg);
+
+		assert(user == exception);
+		assert(((mp_obj_exception_t *) MP_OBJ_TO_PTR(user))->args == origins64[0].args);
+		assert(mp_obj_get_type(user) == &mp_type_OSError);
+	}
+	puts("AUDIT OOM: free=0; original=surrogate=emergency; message lost; user identity reused");
+}
+
 int main(int argc, char **argv)
 {
 	volatile uintptr_t anchor;
@@ -334,6 +444,20 @@ int main(int argc, char **argv)
 		abort();
 	mp_init();
 	assert(argc == 2);
+	if (strncmp(argv[1], "--lifetime-", 11) == 0 ||
+		strncmp(argv[1], "--boundary-", 11) == 0 ||
+		strncmp(argv[1], "--compact-", 10) == 0) {
+		lifetime_run64(argv[1], heap64, sizeof(heap64));
+		mp_deinit();
+		nlr_pop();
+		return 0;
+	}
+	if (strncmp(argv[1], "--audit-", 8) == 0) {
+		audit64(argv[1]);
+		mp_deinit();
+		nlr_pop();
+		return 0;
+	}
 	korean64 = 1;
 	check64("missing_identifier\n", "이름 'missing_identifier'이 정의되지 않았습니다", 1);
 	check64("1()\n", "'int' 객체는 호출할 수 없습니다", 1);

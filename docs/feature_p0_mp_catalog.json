@@ -1,0 +1,4302 @@
+{
+  "schema": 1,
+  "upstream_commit": "e0e9fbb17ed6fd06bb76e266ae554784c9c80804",
+  "scope": "preprocessor-active MP_ERROR_TEXT; not exhaustive output/reachability",
+  "exclusions": [
+    "non-MP_ERROR_TEXT, errno, qstr, type-only, dynamic/user text",
+    "first-party non-error output; nano; Mowkow"
+  ],
+  "profiles": {
+    "x86_64": {
+      "commands": {
+        "vendor": [
+          "x86_64-elf-gcc",
+          "-O2",
+          "-ffreestanding",
+          "-mno-red-zone",
+          "-fno-pic",
+          "-fno-stack-protector",
+          "-Wa,--noexecstack",
+          "-I64bit/src64/include",
+          "-Wall",
+          "-Wextra",
+          "-I64bit/src64/mpport",
+          "-I64bit/src64/mpport/libc",
+          "-isystem",
+          "third_party/micropython",
+          "-isystem",
+          "third_party/micropython/py",
+          "-Ibuild64/mpgen"
+        ],
+        "port": [
+          "x86_64-elf-gcc",
+          "-O2",
+          "-ffreestanding",
+          "-mno-red-zone",
+          "-fno-pic",
+          "-fno-stack-protector",
+          "-Wa,--noexecstack",
+          "-I64bit/src64/include",
+          "-Wall",
+          "-Wextra",
+          "-Wformat=2",
+          "-Wshadow",
+          "-Wundef",
+          "-Wstrict-prototypes",
+          "-Wmissing-prototypes",
+          "-Wcast-align",
+          "-Werror",
+          "-DMOWKOW64_BOOT_TESTS=0",
+          "-DMOWKOW64_TASK_STACK_DEBUG=0",
+          "-I64bit/src64/mpport",
+          "-I64bit/src64/mpport/libc",
+          "-isystem",
+          "third_party/micropython",
+          "-isystem",
+          "third_party/micropython/py",
+          "-Ibuild64/mpgen"
+        ]
+      },
+      "sources": [
+        "64bit/src64/mpport/libc/math.c",
+        "64bit/src64/mpport/libc/math_aarch64.c",
+        "64bit/src64/mpport/modmowio.c",
+        "64bit/src64/mpport/mphalport.c",
+        "64bit/src64/mpport/mpport_file64.c",
+        "64bit/src64/mpport/mpport_headers64.c",
+        "64bit/src64/mpport/mpport_main.c",
+        "third_party/micropython/py/argcheck.c",
+        "third_party/micropython/py/asmarm.c",
+        "third_party/micropython/py/asmbase.c",
+        "third_party/micropython/py/asmrv32.c",
+        "third_party/micropython/py/asmthumb.c",
+        "third_party/micropython/py/asmx64.c",
+        "third_party/micropython/py/asmx86.c",
+        "third_party/micropython/py/asmxtensa.c",
+        "third_party/micropython/py/bc.c",
+        "third_party/micropython/py/binary.c",
+        "third_party/micropython/py/builtinevex.c",
+        "third_party/micropython/py/builtinhelp.c",
+        "third_party/micropython/py/builtinimport.c",
+        "third_party/micropython/py/compile.c",
+        "third_party/micropython/py/cstack.c",
+        "third_party/micropython/py/emitbc.c",
+        "third_party/micropython/py/emitcommon.c",
+        "third_party/micropython/py/emitglue.c",
+        "third_party/micropython/py/emitinlinerv32.c",
+        "third_party/micropython/py/emitinlinethumb.c",
+        "third_party/micropython/py/emitinlinextensa.c",
+        "third_party/micropython/py/emitnarm.c",
+        "third_party/micropython/py/emitndebug.c",
+        "third_party/micropython/py/emitnrv32.c",
+        "third_party/micropython/py/emitnthumb.c",
+        "third_party/micropython/py/emitnx64.c",
+        "third_party/micropython/py/emitnx86.c",
+        "third_party/micropython/py/emitnxtensa.c",
+        "third_party/micropython/py/emitnxtensawin.c",
+        "third_party/micropython/py/formatfloat.c",
+        "third_party/micropython/py/frozenmod.c",
+        "third_party/micropython/py/gc.c",
+        "third_party/micropython/py/lexer.c",
+        "third_party/micropython/py/malloc.c",
+        "third_party/micropython/py/map.c",
+        "third_party/micropython/py/modarray.c",
+        "third_party/micropython/py/modbuiltins.c",
+        "third_party/micropython/py/modcmath.c",
+        "third_party/micropython/py/modcollections.c",
+        "third_party/micropython/py/moderrno.c",
+        "third_party/micropython/py/modgc.c",
+        "third_party/micropython/py/modio.c",
+        "third_party/micropython/py/modmath.c",
+        "third_party/micropython/py/modmicropython.c",
+        "third_party/micropython/py/modstring.c",
+        "third_party/micropython/py/modstruct.c",
+        "third_party/micropython/py/modsys.c",
+        "third_party/micropython/py/modthread.c",
+        "third_party/micropython/py/modweakref.c",
+        "third_party/micropython/py/mpprint.c",
+        "third_party/micropython/py/mpstate.c",
+        "third_party/micropython/py/mpz.c",
+        "third_party/micropython/py/nativeglue.c",
+        "third_party/micropython/py/nlr.c",
+        "third_party/micropython/py/nlraarch64.c",
+        "third_party/micropython/py/nlrmips.c",
+        "third_party/micropython/py/nlrpowerpc.c",
+        "third_party/micropython/py/nlrrv32.c",
+        "third_party/micropython/py/nlrrv64.c",
+        "third_party/micropython/py/nlrsetjmp.c",
+        "third_party/micropython/py/nlrthumb.c",
+        "third_party/micropython/py/nlrx64.c",
+        "third_party/micropython/py/nlrx86.c",
+        "third_party/micropython/py/nlrxtensa.c",
+        "third_party/micropython/py/obj.c",
+        "third_party/micropython/py/objarray.c",
+        "third_party/micropython/py/objattrtuple.c",
+        "third_party/micropython/py/objbool.c",
+        "third_party/micropython/py/objboundmeth.c",
+        "third_party/micropython/py/objcell.c",
+        "third_party/micropython/py/objclosure.c",
+        "third_party/micropython/py/objcode.c",
+        "third_party/micropython/py/objcomplex.c",
+        "third_party/micropython/py/objdeque.c",
+        "third_party/micropython/py/objdict.c",
+        "third_party/micropython/py/objenumerate.c",
+        "third_party/micropython/py/objexcept.c",
+        "third_party/micropython/py/objfilter.c",
+        "third_party/micropython/py/objfloat.c",
+        "third_party/micropython/py/objfun.c",
+        "third_party/micropython/py/objgenerator.c",
+        "third_party/micropython/py/objgetitemiter.c",
+        "third_party/micropython/py/objint.c",
+        "third_party/micropython/py/objint_longlong.c",
+        "third_party/micropython/py/objint_mpz.c",
+        "third_party/micropython/py/objlist.c",
+        "third_party/micropython/py/objmap.c",
+        "third_party/micropython/py/objmodule.c",
+        "third_party/micropython/py/objnamedtuple.c",
+        "third_party/micropython/py/objnone.c",
+        "third_party/micropython/py/objobject.c",
+        "third_party/micropython/py/objpolyiter.c",
+        "third_party/micropython/py/objproperty.c",
+        "third_party/micropython/py/objrange.c",
+        "third_party/micropython/py/objreversed.c",
+        "third_party/micropython/py/objringio.c",
+        "third_party/micropython/py/objset.c",
+        "third_party/micropython/py/objsingleton.c",
+        "third_party/micropython/py/objslice.c",
+        "third_party/micropython/py/objstr.c",
+        "third_party/micropython/py/objstringio.c",
+        "third_party/micropython/py/objstrunicode.c",
+        "third_party/micropython/py/objtemplate.c",
+        "third_party/micropython/py/objtuple.c",
+        "third_party/micropython/py/objtype.c",
+        "third_party/micropython/py/objzip.c",
+        "third_party/micropython/py/opmethods.c",
+        "third_party/micropython/py/pairheap.c",
+        "third_party/micropython/py/parse.c",
+        "third_party/micropython/py/parsenum.c",
+        "third_party/micropython/py/parsenumbase.c",
+        "third_party/micropython/py/persistentcode.c",
+        "third_party/micropython/py/profile.c",
+        "third_party/micropython/py/pystack.c",
+        "third_party/micropython/py/qstr.c",
+        "third_party/micropython/py/reader.c",
+        "third_party/micropython/py/repl.c",
+        "third_party/micropython/py/ringbuf.c",
+        "third_party/micropython/py/runtime.c",
+        "third_party/micropython/py/runtime_utils.c",
+        "third_party/micropython/py/scheduler.c",
+        "third_party/micropython/py/scope.c",
+        "third_party/micropython/py/sequence.c",
+        "third_party/micropython/py/showbc.c",
+        "third_party/micropython/py/smallint.c",
+        "third_party/micropython/py/stackctrl.c",
+        "third_party/micropython/py/stream.c",
+        "third_party/micropython/py/unicode.c",
+        "third_party/micropython/py/vm.c",
+        "third_party/micropython/py/vstr.c",
+        "third_party/micropython/py/warning.c",
+        "third_party/micropython/shared/readline/readline.c",
+        "third_party/micropython/shared/runtime/gchelper_generic.c",
+        "third_party/micropython/shared/runtime/interrupt_char.c",
+        "third_party/micropython/shared/runtime/pyexec.c"
+      ]
+    },
+    "aarch64": {
+      "commands": {
+        "vendor": [
+          "aarch64-none-elf-gcc",
+          "-O2",
+          "-ffreestanding",
+          "-nostdlib",
+          "-mcpu=cortex-a76",
+          "-mstrict-align",
+          "-fno-stack-protector",
+          "-fno-pic",
+          "-fno-asynchronous-unwind-tables",
+          "-fno-unwind-tables",
+          "-ffunction-sections",
+          "-fdata-sections",
+          "-I64bit/src64/include",
+          "-I64bit/src64/mpport",
+          "-I64bit/src64/mpport/libc",
+          "-isystem",
+          "third_party/micropython",
+          "-isystem",
+          "third_party/micropython/py",
+          "-Ibuild64/aarch64-mpgen",
+          "-Wall",
+          "-Wextra"
+        ],
+        "port": [
+          "aarch64-none-elf-gcc",
+          "-O2",
+          "-ffreestanding",
+          "-nostdlib",
+          "-mcpu=cortex-a76",
+          "-mstrict-align",
+          "-fno-stack-protector",
+          "-fno-pic",
+          "-fno-asynchronous-unwind-tables",
+          "-fno-unwind-tables",
+          "-ffunction-sections",
+          "-fdata-sections",
+          "-I64bit/src64/include",
+          "-I64bit/src64/mpport",
+          "-I64bit/src64/mpport/libc",
+          "-isystem",
+          "third_party/micropython",
+          "-isystem",
+          "third_party/micropython/py",
+          "-Ibuild64/aarch64-mpgen",
+          "-Wall",
+          "-Wextra",
+          "-Wformat=2",
+          "-Wshadow",
+          "-Wundef",
+          "-Wstrict-prototypes",
+          "-Wmissing-prototypes",
+          "-Wcast-align",
+          "-Werror"
+        ]
+      },
+      "sources": [
+        "64bit/src64/mpport/libc/math_aarch64.c",
+        "64bit/src64/mpport/modmowio.c",
+        "64bit/src64/mpport/mphalport.c",
+        "64bit/src64/mpport/mpport_file64.c",
+        "64bit/src64/mpport/mpport_headers64.c",
+        "64bit/src64/mpport/mpport_main.c",
+        "third_party/micropython/py/argcheck.c",
+        "third_party/micropython/py/asmarm.c",
+        "third_party/micropython/py/asmbase.c",
+        "third_party/micropython/py/asmrv32.c",
+        "third_party/micropython/py/asmthumb.c",
+        "third_party/micropython/py/asmx64.c",
+        "third_party/micropython/py/asmx86.c",
+        "third_party/micropython/py/asmxtensa.c",
+        "third_party/micropython/py/bc.c",
+        "third_party/micropython/py/binary.c",
+        "third_party/micropython/py/builtinevex.c",
+        "third_party/micropython/py/builtinhelp.c",
+        "third_party/micropython/py/builtinimport.c",
+        "third_party/micropython/py/compile.c",
+        "third_party/micropython/py/cstack.c",
+        "third_party/micropython/py/emitbc.c",
+        "third_party/micropython/py/emitcommon.c",
+        "third_party/micropython/py/emitglue.c",
+        "third_party/micropython/py/emitinlinerv32.c",
+        "third_party/micropython/py/emitinlinethumb.c",
+        "third_party/micropython/py/emitinlinextensa.c",
+        "third_party/micropython/py/emitnarm.c",
+        "third_party/micropython/py/emitndebug.c",
+        "third_party/micropython/py/emitnrv32.c",
+        "third_party/micropython/py/emitnthumb.c",
+        "third_party/micropython/py/emitnx64.c",
+        "third_party/micropython/py/emitnx86.c",
+        "third_party/micropython/py/emitnxtensa.c",
+        "third_party/micropython/py/emitnxtensawin.c",
+        "third_party/micropython/py/formatfloat.c",
+        "third_party/micropython/py/frozenmod.c",
+        "third_party/micropython/py/gc.c",
+        "third_party/micropython/py/lexer.c",
+        "third_party/micropython/py/malloc.c",
+        "third_party/micropython/py/map.c",
+        "third_party/micropython/py/modarray.c",
+        "third_party/micropython/py/modbuiltins.c",
+        "third_party/micropython/py/modcmath.c",
+        "third_party/micropython/py/modcollections.c",
+        "third_party/micropython/py/moderrno.c",
+        "third_party/micropython/py/modgc.c",
+        "third_party/micropython/py/modio.c",
+        "third_party/micropython/py/modmath.c",
+        "third_party/micropython/py/modmicropython.c",
+        "third_party/micropython/py/modstring.c",
+        "third_party/micropython/py/modstruct.c",
+        "third_party/micropython/py/modsys.c",
+        "third_party/micropython/py/modthread.c",
+        "third_party/micropython/py/modweakref.c",
+        "third_party/micropython/py/mpprint.c",
+        "third_party/micropython/py/mpstate.c",
+        "third_party/micropython/py/mpz.c",
+        "third_party/micropython/py/nativeglue.c",
+        "third_party/micropython/py/nlr.c",
+        "third_party/micropython/py/nlraarch64.c",
+        "third_party/micropython/py/nlrmips.c",
+        "third_party/micropython/py/nlrpowerpc.c",
+        "third_party/micropython/py/nlrrv32.c",
+        "third_party/micropython/py/nlrrv64.c",
+        "third_party/micropython/py/nlrsetjmp.c",
+        "third_party/micropython/py/nlrthumb.c",
+        "third_party/micropython/py/nlrx64.c",
+        "third_party/micropython/py/nlrx86.c",
+        "third_party/micropython/py/nlrxtensa.c",
+        "third_party/micropython/py/obj.c",
+        "third_party/micropython/py/objarray.c",
+        "third_party/micropython/py/objattrtuple.c",
+        "third_party/micropython/py/objbool.c",
+        "third_party/micropython/py/objboundmeth.c",
+        "third_party/micropython/py/objcell.c",
+        "third_party/micropython/py/objclosure.c",
+        "third_party/micropython/py/objcode.c",
+        "third_party/micropython/py/objcomplex.c",
+        "third_party/micropython/py/objdeque.c",
+        "third_party/micropython/py/objdict.c",
+        "third_party/micropython/py/objenumerate.c",
+        "third_party/micropython/py/objexcept.c",
+        "third_party/micropython/py/objfilter.c",
+        "third_party/micropython/py/objfloat.c",
+        "third_party/micropython/py/objfun.c",
+        "third_party/micropython/py/objgenerator.c",
+        "third_party/micropython/py/objgetitemiter.c",
+        "third_party/micropython/py/objint.c",
+        "third_party/micropython/py/objint_longlong.c",
+        "third_party/micropython/py/objint_mpz.c",
+        "third_party/micropython/py/objlist.c",
+        "third_party/micropython/py/objmap.c",
+        "third_party/micropython/py/objmodule.c",
+        "third_party/micropython/py/objnamedtuple.c",
+        "third_party/micropython/py/objnone.c",
+        "third_party/micropython/py/objobject.c",
+        "third_party/micropython/py/objpolyiter.c",
+        "third_party/micropython/py/objproperty.c",
+        "third_party/micropython/py/objrange.c",
+        "third_party/micropython/py/objreversed.c",
+        "third_party/micropython/py/objringio.c",
+        "third_party/micropython/py/objset.c",
+        "third_party/micropython/py/objsingleton.c",
+        "third_party/micropython/py/objslice.c",
+        "third_party/micropython/py/objstr.c",
+        "third_party/micropython/py/objstringio.c",
+        "third_party/micropython/py/objstrunicode.c",
+        "third_party/micropython/py/objtemplate.c",
+        "third_party/micropython/py/objtuple.c",
+        "third_party/micropython/py/objtype.c",
+        "third_party/micropython/py/objzip.c",
+        "third_party/micropython/py/opmethods.c",
+        "third_party/micropython/py/pairheap.c",
+        "third_party/micropython/py/parse.c",
+        "third_party/micropython/py/parsenum.c",
+        "third_party/micropython/py/parsenumbase.c",
+        "third_party/micropython/py/persistentcode.c",
+        "third_party/micropython/py/profile.c",
+        "third_party/micropython/py/pystack.c",
+        "third_party/micropython/py/qstr.c",
+        "third_party/micropython/py/reader.c",
+        "third_party/micropython/py/repl.c",
+        "third_party/micropython/py/ringbuf.c",
+        "third_party/micropython/py/runtime.c",
+        "third_party/micropython/py/runtime_utils.c",
+        "third_party/micropython/py/scheduler.c",
+        "third_party/micropython/py/scope.c",
+        "third_party/micropython/py/sequence.c",
+        "third_party/micropython/py/showbc.c",
+        "third_party/micropython/py/smallint.c",
+        "third_party/micropython/py/stackctrl.c",
+        "third_party/micropython/py/stream.c",
+        "third_party/micropython/py/unicode.c",
+        "third_party/micropython/py/vm.c",
+        "third_party/micropython/py/vstr.c",
+        "third_party/micropython/py/warning.c",
+        "third_party/micropython/shared/readline/readline.c",
+        "third_party/micropython/shared/runtime/gchelper_generic.c",
+        "third_party/micropython/shared/runtime/interrupt_char.c",
+        "third_party/micropython/shared/runtime/pyexec.c"
+      ]
+    }
+  },
+  "boundaries": {
+    "x86_64": {
+      "build64/upy/argcheck.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_TypeError",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/bc.o": {
+        "imports": [
+          "mp_raise_TypeError",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/binary.o": {
+        "imports": [
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/builtinevex.o": {
+        "imports": [
+          "mp_raise_TypeError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/builtinimport.o": {
+        "imports": [
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/compile.o": {
+        "imports": [
+          "mp_obj_new_exception_msg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/cstack.o": {
+        "imports": [
+          "mp_raise_recursion_depth"
+        ],
+        "definitions": []
+      },
+      "build64/upy/emitbc.o": {
+        "imports": [
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/lexer.o": {
+        "imports": [
+          "mp_raise_NotImplementedError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/malloc.o": {
+        "imports": [
+          "m_malloc_fail"
+        ],
+        "definitions": []
+      },
+      "build64/upy/modbuiltins.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_StopIteration",
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/modstruct.o": {
+        "imports": [
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/modsys.o": {
+        "imports": [
+          "mp_raise_msg",
+          "mp_raise_type_arg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/mpport/modmowio.o": {
+        "imports": [
+          "mp_raise_ValueError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/mpport/mpport_file64.o": {
+        "imports": [
+          "mp_raise_OSError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/obj.o": {
+        "imports": [
+          "mp_raise_TypeError",
+          "mp_raise_TypeError_int_conversion",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objarray.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_TypeError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objdict.o": {
+        "imports": [
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg",
+          "mp_raise_type_arg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objexcept.o": {
+        "imports": [],
+        "definitions": [
+          "mp_obj_exception_make_new",
+          "mp_obj_new_exception",
+          "mp_obj_new_exception_args",
+          "mp_obj_new_exception_msg",
+          "mp_obj_new_exception_msg_varg",
+          "mp_obj_new_exception_msg_vlist"
+        ]
+      },
+      "build64/upy/objfloat.o": {
+        "imports": [
+          "mp_raise_ValueError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objgenerator.o": {
+        "imports": [
+          "mp_obj_new_exception_msg",
+          "mp_raise_StopIteration",
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objint.o": {
+        "imports": [
+          "mp_raise_TypeError_int_conversion",
+          "mp_raise_ValueError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objlist.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objnamedtuple.o": {
+        "imports": [
+          "mp_raise_msg",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objobject.o": {
+        "imports": [
+          "mp_raise_TypeError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objrange.o": {
+        "imports": [
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objset.o": {
+        "imports": [
+          "mp_raise_msg",
+          "mp_raise_type_arg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objslice.o": {
+        "imports": [
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objstr.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg",
+          "mp_raise_msg_varg",
+          "mp_raise_type_arg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objstrunicode.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_msg",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objtuple.o": {
+        "imports": [
+          "mp_raise_NotImplementedError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/objtype.o": {
+        "imports": [
+          "mp_raise_TypeError",
+          "mp_raise_msg",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/parse.o": {
+        "imports": [
+          "mp_obj_new_exception_msg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/parsenum.o": {
+        "imports": [
+          "mp_obj_new_exception_msg",
+          "mp_obj_new_exception_msg_varg",
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/qstr.o": {
+        "imports": [
+          "m_malloc_fail",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/runtime.o": {
+        "imports": [
+          "mp_obj_exception_make_new",
+          "mp_obj_new_exception",
+          "mp_obj_new_exception_msg",
+          "mp_obj_new_exception_msg_vlist"
+        ],
+        "definitions": [
+          "m_malloc_fail",
+          "mp_raise_NotImplementedError",
+          "mp_raise_OSError",
+          "mp_raise_OSError_with_filename",
+          "mp_raise_StopIteration",
+          "mp_raise_TypeError",
+          "mp_raise_TypeError_int_conversion",
+          "mp_raise_ValueError",
+          "mp_raise_msg",
+          "mp_raise_msg_varg",
+          "mp_raise_recursion_depth",
+          "mp_raise_type_arg"
+        ]
+      },
+      "build64/upy/sequence.o": {
+        "imports": [
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/upy/stackctrl.o": {
+        "imports": [
+          "mp_raise_recursion_depth"
+        ],
+        "definitions": []
+      },
+      "build64/upy/stream.o": {
+        "imports": [
+          "mp_raise_OSError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/vm.o": {
+        "imports": [
+          "mp_obj_new_exception_msg"
+        ],
+        "definitions": []
+      },
+      "build64/upy/vstr.o": {
+        "imports": [
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      }
+    },
+    "aarch64": {
+      "build64/aarch64-upy/argcheck.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_TypeError",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/bc.o": {
+        "imports": [
+          "mp_raise_TypeError",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/binary.o": {
+        "imports": [
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/builtinevex.o": {
+        "imports": [
+          "mp_raise_TypeError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/builtinimport.o": {
+        "imports": [
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/compile.o": {
+        "imports": [
+          "mp_obj_new_exception_msg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/cstack.o": {
+        "imports": [
+          "mp_raise_recursion_depth"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/emitbc.o": {
+        "imports": [
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/lexer.o": {
+        "imports": [
+          "mp_raise_NotImplementedError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/malloc.o": {
+        "imports": [
+          "m_malloc_fail"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/modbuiltins.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_StopIteration",
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/modstruct.o": {
+        "imports": [
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/modsys.o": {
+        "imports": [
+          "mp_raise_msg",
+          "mp_raise_type_arg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/mpport/modmowio.o": {
+        "imports": [
+          "mp_raise_ValueError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/mpport/mpport_file64.o": {
+        "imports": [
+          "mp_raise_OSError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/obj.o": {
+        "imports": [
+          "mp_raise_TypeError",
+          "mp_raise_TypeError_int_conversion",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objarray.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_TypeError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objdict.o": {
+        "imports": [
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg",
+          "mp_raise_type_arg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objexcept.o": {
+        "imports": [],
+        "definitions": [
+          "mp_obj_exception_make_new",
+          "mp_obj_new_exception",
+          "mp_obj_new_exception_args",
+          "mp_obj_new_exception_msg",
+          "mp_obj_new_exception_msg_varg",
+          "mp_obj_new_exception_msg_vlist"
+        ]
+      },
+      "build64/aarch64-upy/objfloat.o": {
+        "imports": [
+          "mp_raise_ValueError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objgenerator.o": {
+        "imports": [
+          "mp_obj_new_exception_msg",
+          "mp_raise_StopIteration",
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objint.o": {
+        "imports": [
+          "mp_raise_TypeError_int_conversion",
+          "mp_raise_ValueError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objlist.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objnamedtuple.o": {
+        "imports": [
+          "mp_raise_msg",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objobject.o": {
+        "imports": [
+          "mp_raise_TypeError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objrange.o": {
+        "imports": [
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objset.o": {
+        "imports": [
+          "mp_raise_msg",
+          "mp_raise_type_arg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objslice.o": {
+        "imports": [
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objstr.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_TypeError",
+          "mp_raise_ValueError",
+          "mp_raise_msg",
+          "mp_raise_msg_varg",
+          "mp_raise_type_arg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objstrunicode.o": {
+        "imports": [
+          "mp_raise_NotImplementedError",
+          "mp_raise_msg",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objtuple.o": {
+        "imports": [
+          "mp_raise_NotImplementedError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/objtype.o": {
+        "imports": [
+          "mp_raise_TypeError",
+          "mp_raise_msg",
+          "mp_raise_msg_varg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/parse.o": {
+        "imports": [
+          "mp_obj_new_exception_msg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/parsenum.o": {
+        "imports": [
+          "mp_obj_new_exception_msg",
+          "mp_obj_new_exception_msg_varg",
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/qstr.o": {
+        "imports": [
+          "m_malloc_fail",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/runtime.o": {
+        "imports": [
+          "mp_obj_exception_make_new",
+          "mp_obj_new_exception",
+          "mp_obj_new_exception_msg",
+          "mp_obj_new_exception_msg_vlist"
+        ],
+        "definitions": [
+          "m_malloc_fail",
+          "mp_raise_NotImplementedError",
+          "mp_raise_OSError",
+          "mp_raise_OSError_with_filename",
+          "mp_raise_StopIteration",
+          "mp_raise_TypeError",
+          "mp_raise_TypeError_int_conversion",
+          "mp_raise_ValueError",
+          "mp_raise_msg",
+          "mp_raise_msg_varg",
+          "mp_raise_recursion_depth",
+          "mp_raise_type_arg"
+        ]
+      },
+      "build64/aarch64-upy/sequence.o": {
+        "imports": [
+          "mp_raise_ValueError"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/stackctrl.o": {
+        "imports": [
+          "mp_raise_recursion_depth"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/stream.o": {
+        "imports": [
+          "mp_raise_OSError",
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/vm.o": {
+        "imports": [
+          "mp_obj_new_exception_msg"
+        ],
+        "definitions": []
+      },
+      "build64/aarch64-upy/vstr.o": {
+        "imports": [
+          "mp_raise_msg"
+        ],
+        "definitions": []
+      }
+    }
+  },
+  "messages": [
+    {
+      "id": "mp64-7ec8345865c41c8d",
+      "text": "%c needs int or char",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1594,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1594,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-559c045dc74ddf10",
+      "text": "%q index out of range",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 510,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 510,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-9be4a8834ea84756",
+      "text": "%q indices must be integers, not %s",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 491,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 491,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-57d01b0ecce22d54",
+      "text": "'%q' argument required",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 96,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 96,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-004bd86ac57d5caa",
+      "text": "'%s' object doesn't support item assignment",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 600,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 600,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-7a8267ac31e60be0",
+      "text": "'%s' object doesn't support item deletion",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 586,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 586,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-86065df1b2cacc9e",
+      "text": "'%s' object has no attribute '%q'",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1255,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1293,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1255,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1293,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-e66c8eefb91ef2b2",
+      "text": "'%s' object isn't an iterator",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1380,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1417,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1380,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1417,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-8d46c2d36fd7acb9",
+      "text": "'%s' object isn't callable",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 885,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 723,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 885,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 723,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-df496f42c0a12616",
+      "text": "'%s' object isn't iterable",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1344,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1344,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-f439d23fdacadce4",
+      "text": "'%s' object isn't subscriptable",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 593,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 593,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-691d305f3ac07176",
+      "text": "'=' alignment not allowed in string format specifier",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1428,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1428,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-7f390b40159546d4",
+      "text": "'await' outside function",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2775,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2775,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-4351e28067f2d551",
+      "text": "'break'/'continue' outside loop",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1031,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1031,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-885266e29cfb19ac",
+      "text": "'return' outside function",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1040,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1040,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-cbfd89be2e4f328e",
+      "text": "'yield' outside function",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2750,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2750,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-1af1101568022840",
+      "text": "* arg after **",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2421,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2421,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-22eff6929d0d5fa2",
+      "text": "*x must be assignment target",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2261,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2261,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-9a053770d63b976c",
+      "text": "3-arg pow() not supported",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/modbuiltins.c",
+          "line": 372,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/modbuiltins.c",
+          "line": 372,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-2c011840ef2553da",
+      "text": "LHS of keyword arg must be an id",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2454,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2454,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-5a1976c6fe6e4313",
+      "text": "__init__() should return None, not '%s'",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 365,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 365,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-e9928801ff7386dd",
+      "text": "arg is an empty sequence",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/modbuiltins.c",
+          "line": 271,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/modbuiltins.c",
+          "line": 271,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-82f027268d9f3139",
+      "text": "arg must be user-type",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objobject.c",
+          "line": 52,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objobject.c",
+          "line": 52,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-26db460979cbd2d3",
+      "text": "argument has wrong type",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1086,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1086,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-34f6df0115a569f1",
+      "text": "argument name reused",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2930,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2930,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-44b17aca8200d2d9",
+      "text": "argument num/types mismatch",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 141,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 141,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-4478aed79eab826d",
+      "text": "async for/with outside async function",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1990,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1990,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-1c43d4e333ea182a",
+      "text": "attributes not supported",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1150,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1150,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-5654c098e136edfd",
+      "text": "bad conversion specifier",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1069,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1069,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-cc99e3fe4757a79d",
+      "text": "bad typecode",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/binary.c",
+          "line": 149,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/binary.c",
+          "line": 149,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-05af50e5a052f0b5",
+      "text": "buffer too small",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/modstruct.c",
+          "line": 146,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/modstruct.c",
+          "line": 155,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/modstruct.c",
+          "line": 242,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/modstruct.c",
+          "line": 252,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 473,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/modstruct.c",
+          "line": 146,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/modstruct.c",
+          "line": 155,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/modstruct.c",
+          "line": 242,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/modstruct.c",
+          "line": 252,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 473,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-2d80ba10b021b3a2",
+      "text": "bytecode overflow",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/emitbc.c",
+          "line": 393,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/emitbc.c",
+          "line": 393,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-1fca7251202daabd",
+      "text": "bytes value out of range",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 323,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 323,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-8146257c86c9389f",
+      "text": "call super().__init__() first",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 178,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 178,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-55e188be88c805b3",
+      "text": "can't add special method to already-subclassed class",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1142,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1142,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-7a6d62629c02b151",
+      "text": "can't assign to expression",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 496,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 610,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2154,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 496,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 610,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2154,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-686ad9b5dfbcf16d",
+      "text": "can't convert %s to float",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 414,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 414,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-9c2daa7fce9fd435",
+      "text": "can't convert %s to int",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1765,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1765,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-3a942adeb9a30f80",
+      "text": "can't convert '%q' object to %q implicitly",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 2364,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 2364,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-3028ee73efac79bf",
+      "text": "can't convert NaN to int",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 151,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 151,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-d4581e7359d68036",
+      "text": "can't convert inf to int",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 149,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 149,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-3cb0cae95d1948b5",
+      "text": "can't create '%q' instances",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1055,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1055,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-8a9a3ed4513119fb",
+      "text": "can't declare nonlocal in outer code",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1290,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1290,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-bccbb970802ed06e",
+      "text": "can't delete expression",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1016,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1016,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-dc1525fa56aef884",
+      "text": "can't import name %q",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1593,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1593,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-3e010dc5b62e045e",
+      "text": "can't perform relative import",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/builtinimport.c",
+          "line": 321,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/builtinimport.c",
+          "line": 321,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-45ae6c974574e65a",
+      "text": "can't send non-None value to a just-started generator",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objgenerator.c",
+          "line": 185,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objgenerator.c",
+          "line": 185,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-cb84a7215a221722",
+      "text": "can't set attribute",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objnamedtuple.c",
+          "line": 90,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objnamedtuple.c",
+          "line": 90,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-9412e8e33799a7eb",
+      "text": "can't switch from automatic field numbering to manual field specification",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1128,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1128,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-71f0f5ae8348986b",
+      "text": "can't switch from manual field specification to automatic field numbering",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1158,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1158,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-ad19c7ea50a15385",
+      "text": "chr() arg not in range(0x110000)",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/modbuiltins.c",
+          "line": 141,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/modbuiltins.c",
+          "line": 141,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-395c147c828dc493",
+      "text": "complex values not supported",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objfloat.c",
+          "line": 296,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/parsenum.c",
+          "line": 448,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objfloat.c",
+          "line": 296,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/parsenum.c",
+          "line": 448,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-6920a1cd1be0056d",
+      "text": "default 'except' must be last",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1622,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1622,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-dbf55abd564fc901",
+      "text": "dict update sequence has wrong length",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objdict.c",
+          "line": 410,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objdict.c",
+          "line": 410,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-9d40d79e4b1108b4",
+      "text": "divide by zero",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objfloat.c",
+          "line": 258,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 686,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objfloat.c",
+          "line": 258,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 686,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-1210da595f8c9124",
+      "text": "empty separator",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 628,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 733,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 628,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 733,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-a4af085cee1d19d9",
+      "text": "exceptions must derive from BaseException",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1519,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1519,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-95b14a669977bbbf",
+      "text": "expected ':' after format specifier",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1114,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1114,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-4f0f1855cdfdbc1b",
+      "text": "expecting just a value for set",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2621,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2621,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-9f45459a87cb08b8",
+      "text": "expecting key:value for dict",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2611,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2611,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-5a7ce5ff06061e38",
+      "text": "extra keyword arguments given",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 129,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 129,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-d97ab867128f6dea",
+      "text": "extra positional arguments given",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 121,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 121,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-8779d8e7d1082d3f",
+      "text": "float too big",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 169,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 169,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-3e252ccb456473a6",
+      "text": "format needs a dict",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1503,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1503,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-67c20d9ef2354e2f",
+      "text": "format string didn't convert all arguments",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1672,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1672,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-4e1260a1d26e716e",
+      "text": "format string needs more arguments",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1584,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1584,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-3b0fa2bc128977c7",
+      "text": "function doesn't take keyword arguments",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 44,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 44,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-cd994efe97cc996f",
+      "text": "function expected at most %d arguments, got %d",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 72,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 72,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-ae45776c1dab2761",
+      "text": "function got multiple values for argument '%q'",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 218,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objnamedtuple.c",
+          "line": 136,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 218,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objnamedtuple.c",
+          "line": 136,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-d96156b9012e71d2",
+      "text": "function missing %d required positional arguments",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 64,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 64,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-a082ac6136142f35",
+      "text": "function missing keyword-only argument",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 293,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 293,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-c1c72466c525515c",
+      "text": "function missing required keyword argument '%q'",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 285,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 285,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-f755f9774001c195",
+      "text": "function missing required positional argument #%d",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 261,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 261,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-bfff3df2b000e6f6",
+      "text": "function takes %d positional arguments but %d were given",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 54,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 101,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objnamedtuple.c",
+          "line": 102,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 54,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 101,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objnamedtuple.c",
+          "line": 102,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-3e4ef02b3bfdbc0c",
+      "text": "generator already executing",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objgenerator.c",
+          "line": 166,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objgenerator.c",
+          "line": 337,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objgenerator.c",
+          "line": 166,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objgenerator.c",
+          "line": 337,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-4e22c98f233d9ed5",
+      "text": "generator ignored GeneratorExit",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objgenerator.c",
+          "line": 316,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objgenerator.c",
+          "line": 316,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-f447bdc1634b7faa",
+      "text": "generator raised StopIteration",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objgenerator.c",
+          "line": 248,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1496,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objgenerator.c",
+          "line": 248,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1496,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-f8dbf572f59eebfb",
+      "text": "identifier redefined as global",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1253,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1253,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-34430c0143d9b4ff",
+      "text": "identifier redefined as nonlocal",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1273,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1273,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-2c16c3df16763b6d",
+      "text": "import * not at module level",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1203,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1203,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-c32ac289097f92ec",
+      "text": "incomplete format",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1576,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1576,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-de7732ebefdf9c54",
+      "text": "incomplete format key",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1512,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1512,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-d9acefa182936221",
+      "text": "int() arg 2 must be >= 2 and <= 36",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/parsenum.c",
+          "line": 80,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/parsenum.c",
+          "line": 80,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-8c4853baeee5c2e6",
+      "text": "integer needed",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1601,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1601,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-db26b2948442e930",
+      "text": "invalid format specifier",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1251,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1251,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-2acdaaeec1a3edca",
+      "text": "invalid micropython decorator",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 844,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 871,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 844,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 871,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-cab55a6f6670f8d1",
+      "text": "invalid syntax",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2864,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2896,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/parse.c",
+          "line": 1375,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2864,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2896,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/parse.c",
+          "line": 1375,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-bc1ea07764c661d7",
+      "text": "invalid syntax for integer with base %d",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/parsenum.c",
+          "line": 187,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/parsenum.c",
+          "line": 187,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-17df3188e874caea",
+      "text": "invalid syntax for number",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/parsenum.c",
+          "line": 500,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/parsenum.c",
+          "line": 500,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-063010972d1a51e6",
+      "text": "issubclass() arg 1 must be a class",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1500,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1500,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-49460790bb257510",
+      "text": "issubclass() arg 2 must be a class or a tuple of classes",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1486,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1486,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-0ad807ca8727b0e0",
+      "text": "join expects a list of str/bytes objects consistent with self object",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 549,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 549,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-0135e48e59d153c2",
+      "text": "keyword argument(s) not implemented - use normal args instead",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 146,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/argcheck.c",
+          "line": 146,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-be643d8785298df4",
+      "text": "local variable referenced before assignment",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/vm.c",
+          "line": 383,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/vm.c",
+          "line": 383,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-4d26cc407166100e",
+      "text": "long int not supported in this build",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 335,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 335,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-69d59575c8ae9afe",
+      "text": "malformed f-string",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/parse.c",
+          "line": 1371,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/parse.c",
+          "line": 1371,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-1a8d3233f32a4c52",
+      "text": "math domain error",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "64bit/src64/mpport/modmowio.c",
+          "line": 97,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "64bit/src64/mpport/modmowio.c",
+          "line": 97,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-52e2c9e05e2bc78e",
+      "text": "memory allocation failed, allocating %lu bytes",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1694,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1694,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-1501901e31c3a936",
+      "text": "memory allocation failed, heap is locked",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1690,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1690,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-bfafddb711088b43",
+      "text": "multiple *x in assignment",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 508,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 508,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-809e3271ef7e42f1",
+      "text": "multiple bases have instance lay-out conflict",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1292,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1292,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-72028c26b5e48681",
+      "text": "must use keyword argument for key function",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/modbuiltins.c",
+          "line": 530,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/modbuiltins.c",
+          "line": 530,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-ff1dc7da7372bb1f",
+      "text": "name '%q' isn't defined",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 255,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 255,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-1debb9503908f164",
+      "text": "name too long",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/qstr.c",
+          "line": 321,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/qstr.c",
+          "line": 321,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-1fa18bbbe20c0b9f",
+      "text": "need more than %d values to unpack",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 983,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1050,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 983,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1050,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-bedb5a1df04d3ca5",
+      "text": "negative shift count",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 458,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 475,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 458,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 475,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-308c4bca291f8a64",
+      "text": "no active exception to reraise",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/vm.c",
+          "line": 1188,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/vm.c",
+          "line": 1188,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-b465ebc3b65bead5",
+      "text": "no binding for nonlocal found",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1270,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 1270,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-a8a06743691aac9e",
+      "text": "no module named '%q'",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/builtinimport.c",
+          "line": 456,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/builtinimport.c",
+          "line": 456,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-aa08b5866711ace6",
+      "text": "non-default argument follows default argument",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 715,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 715,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-4afc37a2e8d555da",
+      "text": "not a constant",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/parse.c",
+          "line": 840,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/parse.c",
+          "line": 840,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-ce9089dc139bddb6",
+      "text": "object '%s' isn't a tuple or list",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 462,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 462,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-4c327a8cbf7a1431",
+      "text": "object not in sequence",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/sequence.c",
+          "line": 203,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/sequence.c",
+          "line": 203,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-8fea0000be8709d0",
+      "text": "object of type '%s' has no len()",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 545,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 545,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-a080cf4de4464457",
+      "text": "object with buffer protocol required",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 624,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 624,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-e13666a70548d37f",
+      "text": "only slices with step=1 (aka None) are supported",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objarray.c",
+          "line": 469,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 497,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstrunicode.c",
+          "line": 196,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtuple.c",
+          "line": 189,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objarray.c",
+          "line": 469,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 497,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objstrunicode.c",
+          "line": 196,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objtuple.c",
+          "line": 189,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-5c14f71237b74747",
+      "text": "opcode",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/vm.c",
+          "line": 1330,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/vm.c",
+          "line": 1330,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-4cdf114bae6a16ab",
+      "text": "ord() expected a character, but string of length %d found",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/modbuiltins.c",
+          "line": 361,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/modbuiltins.c",
+          "line": 361,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-3346c49c54cba377",
+      "text": "pop from an empty set",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objset.c",
+          "line": 364,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objset.c",
+          "line": 364,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-59ca32d75f1032fa",
+      "text": "pop from empty list",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objlist.c",
+          "line": 265,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objlist.c",
+          "line": 265,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-54b2530af7de2531",
+      "text": "popitem(): dictionary is empty",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objdict.c",
+          "line": 359,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objdict.c",
+          "line": 359,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-6b23ca288494b135",
+      "text": "positional arg after **",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2470,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2470,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-d3b0f6af958002b0",
+      "text": "positional arg after keyword arg",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2474,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2474,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-eea974b760aedc5f",
+      "text": "requested length %d but object has length %d",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 476,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/obj.c",
+          "line": 476,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-01d5bfb321c75178",
+      "text": "rsplit(None,n)",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 727,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 727,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-935e016572d47563",
+      "text": "sign not allowed in string format specifier",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1272,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1272,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-223fde4bcf9a4776",
+      "text": "sign not allowed with integer format specifier 'c'",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1280,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1280,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-0c2beebe7f74e0fc",
+      "text": "single '}' encountered in format string",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1030,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1030,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-c74228dc2bf69687",
+      "text": "slice step can't be zero",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objslice.c",
+          "line": 138,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objslice.c",
+          "line": 138,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-329071a96ea4b96a",
+      "text": "small int overflow",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 341,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 347,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 357,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 365,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 341,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 347,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 357,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objint.c",
+          "line": 365,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-6191e1e6a0ec1c39",
+      "text": "stream operation not supported",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/stream.c",
+          "line": 108,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/stream.c",
+          "line": 108,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-dff5a2f22741de8e",
+      "text": "string argument without an encoding",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objarray.c",
+          "line": 206,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 268,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objarray.c",
+          "line": 206,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 268,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-19ff6e327ab1f77f",
+      "text": "string index out of range",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstrunicode.c",
+          "line": 146,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstrunicode.c",
+          "line": 165,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstrunicode.c",
+          "line": 146,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objstrunicode.c",
+          "line": 165,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-296afa73422c3399",
+      "text": "string indices must be integers, not %s",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstrunicode.c",
+          "line": 136,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstrunicode.c",
+          "line": 136,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-621c4fe4af52b975",
+      "text": "substring not found",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 797,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 797,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-52327fdd5b38b28b",
+      "text": "super() can't find self",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2344,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2344,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-976d7d30b6c0fa7b",
+      "text": "too many args",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2432,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/compile.c",
+          "line": 2432,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-32ae1c333d137c59",
+      "text": "too many values to unpack (expected %d)",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 989,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 989,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-9501aa44341937d9",
+      "text": "tuple index out of range",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1133,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1162,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1133,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1162,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-1e1bf22fe9175dc5",
+      "text": "type '%q' isn't an acceptable base type",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1199,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1199,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-220aa067dafc82ae",
+      "text": "type object '%q' has no attribute '%q'",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1238,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 1238,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-0a2da4d64644ff28",
+      "text": "type takes 1 or 3 arguments",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1042,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 1042,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-769bc4baab391a90",
+      "text": "unexpected indent",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/parse.c",
+          "line": 1364,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/parse.c",
+          "line": 1364,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-8ecaaca0461bf5bc",
+      "text": "unexpected keyword argument '%q'",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 230,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objnamedtuple.c",
+          "line": 128,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/bc.c",
+          "line": 230,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objnamedtuple.c",
+          "line": 128,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-e0a27f9db64ed55e",
+      "text": "unicode name escapes",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/lexer.c",
+          "line": 595,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/lexer.c",
+          "line": 595,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-04766f48cf903574",
+      "text": "unindent doesn't match any outer indent level",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/parse.c",
+          "line": 1367,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/parse.c",
+          "line": 1367,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-984af10ace733158",
+      "text": "unknown format code '%c' for object of type '%s'",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1344,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1416,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1452,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1344,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1416,
+          "architecture": "aarch64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1452,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-4cafbcc5718d7d8e",
+      "text": "unmatched '{' in format",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1107,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1107,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-7cb912349c08455b",
+      "text": "unreadable attribute",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 638,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objtype.c",
+          "line": 638,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-96238e545439615e",
+      "text": "unsupported format character '%c' (0x%x) at index %d",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1663,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 1663,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-6081dd1293e911c0",
+      "text": "unsupported type for %q: '%s'",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 374,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 374,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-a6e69dda85e3c899",
+      "text": "unsupported types for %q: '%s', '%s'",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 681,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/runtime.c",
+          "line": 681,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-be57b4ba642162ec",
+      "text": "wrong number of arguments",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 332,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objstr.c",
+          "line": 332,
+          "architecture": "aarch64"
+        }
+      ]
+    },
+    {
+      "id": "mp64-f1609fb5d1d5d84c",
+      "text": "zero step",
+      "classification": "builtin_error",
+      "policy": "render_only; capture console mode; preserve arguments",
+      "translation": "pending",
+      "sites": [
+        {
+          "path": "third_party/micropython/py/objrange.c",
+          "line": 105,
+          "architecture": "x86_64"
+        },
+        {
+          "path": "third_party/micropython/py/objrange.c",
+          "line": 105,
+          "architecture": "aarch64"
+        }
+      ]
+    }
+  ]
+}

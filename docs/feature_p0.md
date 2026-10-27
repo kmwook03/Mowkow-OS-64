@@ -1,5 +1,28 @@
 # P0 이식 조사와 호스트 시제품
 
+2026-10-27 후속 8차: [출처 저장 축소·typed 인수 고갈 검증](feature_p0_mp_compact.md)에서
+589,889바이트 후보와 실제 args 손실·원문 절단 시 수치/qstr 보존을 검증했다.
+이탈한 비interned 문자열은 소유권 문제가 남아 explicit reject한다. 다음은 그 GC 수명
+보존 검증이다. production 적용·전체 메시지/P0는 계속 미완료다.
+
+2026-10-27 후속 7차: [함수 identity 보존 생성 경계](feature_p0_mp_boundary.md)가
+vendor 소스 수정 없이 호스트 실제 코어에서 통과했다. 원본 alias/weak 정의와 strong
+공개 wrapper로 슬롯·내부 호출을 통일하고 emergency 사용자 재사용의 옛 출처를 제거했다.
+다음은 생산용 출처/typed 인수 저장·고갈 검증이다. 전체 메시지 번역/P0는 미완료다.
+
+2026-10-27 후속 6차: [MicroPython 무할당 표시·약한 출처 수명 시제품](feature_p0_mp_lifetime.md)을
+검증했다. 256개 GC 수명·실제 free=0/heap-lock의 무할당 본문 표시는 통과했지만,
+make_new 래핑의 함수 주소 검사 불일치와 비상 객체의 사용자 오역을 재현했다.
+다음은 identity 보존 빌드 경계 대안이다. vendor 무수정 전체 판정과 P0는 계속 미완료다.
+
+2026-10-26 후속 5차: [MicroPython 활성 오류·출처 수명 감사](feature_p0_micropython_audit.md)를
+완료했다. 양 아키텍처 활성 문구 154개를 목록화하고 기존 시제품의 65번째 등록 중단과
+실제 free=0에서 비상 객체 재사용·설명 손실을 재현했다. 다음은 무할당 표시·GC 연동
+출처 수명 시제품이다. vendor 무수정 전체 가능 여부와 P0 전체는 여전히 미완료다.
+
+2026-10-26 후속 4차: [실제 파일 경계 연결](feature_p0_nano_storage.md)과 일회용
+IDE/AHCI의 한글 열기·저장·종료/재부팅 검증을 완료했다. 아래 시점별 한계와 구분한다.
+
 2026-10-26 후속 3차: [양 아키텍처 freestanding nano ELF 링크](feature_p0_nano_link.md)를
 완료했다. 새 private libc/POSIX/curses를 실제 편집 루프와 host fixture에서 검증했다.
 파일 열기·저장은 readiness 검사로 거부하며 실제 OS 실행·P0 전체는 미완료다.
@@ -172,9 +195,10 @@ Ctrl-A는 `pyexec_mode_kind=RAW`로 바꾸고 friendly 루프를 반환하지만
 가능했다. 전체 내장 예외·수명·메모리 고갈까지 만족하는 생산용 해법의 입증은
 아직 끝나지 않았다.** 다음 제약은 P5의 영어 fallback으로 숨기면 안 된다.
 
-- 같은 오브젝트 파일 안의 호출은 `--wrap`을 우회한다. 실제로 `mp_raise_OSError`
-  내부의 inline arg1 생성자는 일반 `_args` wrapper를 지나지 않았다. 별도
-  상위 경계를 감싸는 이유이며 다른 생산자도 목록화해야 한다.
+- 같은 오브젝트 파일 안의 직접 호출은 `--wrap`을 우회한다. 이와 별개로
+  `mp_raise_OSError`의 inline arg1 생성자는 `_args`가 아니라 직접
+  `mp_obj_exception_make_new`를 호출한다. 따라서 `_args` wrapper를 지나지 않는다.
+  두 원인을 구분해야 하며, 5차 감사에서 파일명/재귀 경계와 실제 심볼을 추가 기록했다.
 - 위 이유로 코어를 먼저 `ld -r`로 합치면 생성 경계를 대부분 놓친다. AArch64의
   foundation relocatable 링크를 포함해 최종 링크 전후 순서를 검증해야 한다.
 - 레지스트리는 **64개를 GC root로 보존하는 실험용**이다. 초과하면 assert로
@@ -194,8 +218,9 @@ Ctrl-A는 `pyexec_mode_kind=RAW`로 바꾸고 friendly 루프를 반환하지만
    metadata/checked read/sync와 64KiB 사전 검사는 2026-10-26 연결했다. 제한과 실제
    SYS_TTY/일회용 IDE·AHCI 저장 검증은 [파일 경계 기록](feature_p0_nano_storage.md)에 있다.
    기존 editor 교체와 Pi 5 UI/SD/입력 검증까지 완료한 것은 아니다.
-2. MicroPython 활성 예외 생성 경계·전체 메시지 목록을 조사하고 bounded 수명·진짜
-   메모리 고갈 시 출처 구분을 검증한다. [출력 목록](feature_p0_outputs.md)을
-   개별 메시지 catalog로 확장한다. vendor 정책 변경 여부는 재현 결과로 판단한다.
+2. MicroPython 활성 오류 154개와 기존 방식의 포화/실제 OOM 한계 조사는 5차에서
+   완료했다. 다음은 [감사의 후속 조건](feature_p0_micropython_audit.md)을 만족하는
+   무할당 표시·GC 연동 출처 수명 시제품이다. vendor 정책 변경은 아직 적용하지 않았다.
+   [출력 목록](feature_p0_outputs.md)의 나머지 개별 catalog 확장도 계속한다.
 3. 위 조건이 채워져야 P0를 완료 표시하고 P1 머꼬 `>> ` 작업으로 넘어간다.
    Pi 5 전체 UI/SD/입력 검증은 P6에서 별도로 기록한다.

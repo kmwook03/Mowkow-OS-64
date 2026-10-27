@@ -63,3 +63,40 @@ compared after shutdown and a reboot/reopen/save cycle. New Hangul, existing
 file edits, DOS, empty/no-final-newline files and the exact/oversized 64KiB
 boundaries are covered. Logs survive temporary image cleanup. See
 `docs/feature_p0_nano_storage.md` for contracts and actual results.
+
+`test_feature_mp_audit64.py` checks configured branch exclusion, concatenated
+format strings, preprocessor source locations, literal/character boundaries,
+unparsed-input rejection and actual nm invocation parsing. The separate
+`feature_mp_audit64.py --check docs/feature_p0_mp_catalog.json` command requires
+both built OS targets and inventories their configured error text and exception
+symbols. `feature_probe64.py --only micropython` additionally runs the real-core
+negative boundary/lifetime/overflow/fully-exhausted-heap probes. Expected SIGABRT
+on the prototype's 65th record is checked explicitly with child core dumps off.
+These manual P0 probes are not OS runtime acceptance or automatic check64 steps;
+see `docs/feature_p0_micropython_audit.md` for their limitations.
+
+The same manual probe also builds an independent `mp-lifetime-probe64` for
+no-surrogate message rendering, 256 live exceptions, GC release/reuse, actual
+heap-lock/free=0 allocation failures and reentrant language capture. It reproduces
+failed constructor pointer identity and stale emergency provenance; these are
+design failures, not accepted translation behavior. Coverage tests expose all
+pending active message IDs and never equate format coverage with constructor
+acceptance. See `docs/feature_p0_mp_lifetime.md`; OS/REPL integration remains open.
+
+`test_feature_mp_boundary64.py` compiles and transforms a real C object, then
+links/runs a strong wrapper to verify both a function slot and an internal call
+observe the public wrapper. It also covers invalid symbols, in-place rejection
+and empty `.text` with nonempty function sections. The manual MicroPython probe
+additionally rebuilds isolated objexcept/runtime objects for both architectures,
+checks all executable sections and relocations, and runs real host-core
+constructor/errno/filename/recursion/user/subclass/GC/emergency-generation cases.
+The production OS build/link is unchanged; AArch64 has static checks only.
+See `docs/feature_p0_mp_boundary.md` for the alias/weak-definition experiment.
+
+`test_feature_mp_origin64.py` exercises the actual compact C store with 65,536
+records plus an emergency slot, full-width values, no eviction, invalid spans,
+alignment/capacity/overlap checks and failure preservation. The manual probe
+also runs a compact strong-wrapper ELF through actual partial/fragmented GC
+exhaustion, lost tuples, truncated original messages and typed argument lifetime
+cases. Lost uninterned strings are explicit unresolved failures; the compact
+candidate does not imply complete translation. See `docs/feature_p0_mp_compact.md`.

@@ -1,5 +1,24 @@
 # P0 사용자 출력 경로 목록
 
+2026-10-27 8차: [출처 저장 축소 기록](feature_p0_mp_compact.md)에서 typed 인수의 보존과
+손실을 분리했다. 이탈한 비interned 문자열은 미해결로 표시한다. 활성 154개 문구/149개
+pending ID와 translation=pending은 유지하며 메모리 축소를 번역 완료로 세지 않는다.
+
+2026-10-27 7차: [함수 identity 보존 경계](feature_p0_mp_boundary.md)로 errno·filename·
+recursion과 사용자 생성 구분을 추가 검증했다. 기존 활성 문구의 149개 pending ID와
+translation=pending은 유지한다. 새 생성 경계의 성공을 전체 출력 번역 완료로 세지 않는다.
+
+2026-10-27 확장: [무할당 수명 시제품](feature_p0_mp_lifetime.md)의 실제 format 표를
+위 catalog와 대조하여 `build64/feature-p0/mp-lifetime-coverage.json`에 시제품 5개와
+149개 pending ID를 기록한다. 생성자·비상 객체 identity 실패는 별도이며 이 문구 수를
+번역 완료로 해석하지 않는다. 저장된 catalog의 `translation=pending`은 유지한다.
+
+2026-10-26 확장: MicroPython은 [개별 활성 오류 catalog](feature_p0_mp_catalog.json)에
+`MP_ERROR_TEXT` 154개와 양 아키텍처 위치·분류·정책·pending 상태를 기록했다.
+[감사 결과](feature_p0_micropython_audit.md)에 비매크로 생성 경계와 실제 OOM/포화
+결과를 남겼다. 전처리상 활성 목록이며 실행 coverage나 전체 출력 번역 완료가 아니다.
+커널·CRT·앱·nano·머꼬와 동적/비매크로 출력은 아래 1차 경로 목록부터 계속 확장한다.
+
 2026-10-25 조사. 항목의 번역 정책은 **P5 목표**이며 현재 번역 적용 완료 표가 아니다.
 현재 목록은 출력 경계·문구군의 1차 inventory다. P5 catalog를 만들기 전 활성
 vendor 문구를 개별 항목으로 펼치고 누락 검출을 추가해야 한다. 문자열을 stdout에서
