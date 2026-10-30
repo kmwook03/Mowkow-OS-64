@@ -34,7 +34,7 @@ static uint8_t console_token64;
 static struct MOUSE_DEC64 mouse64;
 static char serial64[8192];
 static size_t serial_length64;
-static int trace64;
+static int trace64, cursor_updates64;
 
 struct BOOT_FILE64 {
 	char name[FD64_NAME_MAX];
@@ -242,6 +242,7 @@ int init_mouse64(struct FIFO64 *fifo, struct MOUSE_DEC64 *mouse)
 	};
 	assert(irq64 == 0 && mouse == &mouse64);
 	phase_expect64(13);
+	timerctl64.count = 123;
 	for (size_t i = 0; i < sizeof(events) / sizeof(events[0]); i++) {
 		assert(fifo64_put(fifo, events[i]) == 0);
 	}
@@ -290,6 +291,7 @@ static void run_case64(int mode)
 	if (mode == BAD_FB_HEIGHT64) { info.scrny = 15; }
 	if (mode == BAD_FB_PITCH64) { info.bytes_per_scanline = 127; }
 	if (mode == BAD_FB_TYPE64) { info.framebuffer_type = 0; }
+	cursor_updates64 = 0;
 	result = setjmp(stop64);
 	if (result == 0) { kernel64_main(mode == BAD_FB_NULL64 ? NULL : &info); assert(0); }
 	const char *panic = NULL;
@@ -307,6 +309,7 @@ static void run_case64(int mode)
 	case KEYBOARD_FAIL64: panic = "ps2-keyboard status=-110"; assert(phase64 == 12); break;
 	default:
 		assert(result == 1 && reaps64 == 5 && routed64 == 1 && system64 == 2);
+		assert(cursor_updates64 == 1);
 		assert(strstr(serial64, "part-base=18446744073709551615\r\n") != NULL);
 		assert(font_installs64 == (mode != FONT_MISSING64 && mode != FONT_SHORT64));
 		if (mode == AHCI64) { assert(strstr(serial64, "DEGRADED: AHCI") == NULL); }
@@ -342,4 +345,11 @@ void platform_framebuffer_flush64(uintptr_t address, size_t bytes)
 
 void platform_framebuffer_sync64(void)
 {
+}
+
+struct TIMERCTL64 timerctl64;
+void console64_cursor_update(uint64_t ticks)
+{
+	assert(irq64 == 0 && ticks == 123);
+	cursor_updates64++;
 }

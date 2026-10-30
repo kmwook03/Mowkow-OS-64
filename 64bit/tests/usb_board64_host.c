@@ -26,7 +26,7 @@ static char serial64[16384];
 static size_t serial_used64;
 static uint8_t pixels64[800 * 600];
 static struct SHEET64 sheet64;
-static int console_token64;
+static int console_token64, cursor_updates64;
 struct MEMMAN64 memman64;
 
 static struct CONSOLE64 *console64_token(void)
@@ -112,6 +112,12 @@ int console64_post_input_key(struct CONSOLE64 *console, uint16_t key)
 	return 0;
 }
 void console64_reap_closed(void) { reaps64++; }
+void console64_cursor_update(uint64_t ticks)
+{
+	assert(ticks == 123);
+	cursor_updates64++;
+}
+uint64_t arch64_timer_ticks(void) { return 123; }
 struct SHEET64 *gui64_init(const struct BOOTINFO64 *info)
 {
 	sheet64.buf = pixels64;
@@ -320,10 +326,11 @@ int main(void)
 		memset(quarantined64, 0, sizeof(quarantined64));
 		memset(enum_port64, 0, sizeof(enum_port64));
 		memset(starts64, 0, sizeof(starts64)); memset(polls64, 0, sizeof(polls64));
-		mouse_events64 = loops64 = beats64 = reaps64 = 0;
+		mouse_events64 = loops64 = beats64 = reaps64 = cursor_updates64 = 0;
 		clock64 = serial_used64 = 0;
 		assert(setjmp(finish64) == 0 ? (aarch64_high_main(), 0) : loops64 == 6);
 		assert(starts64[0] == 1 && starts64[1] == 1 && beats64 >= 5 && reaps64 == 6);
+		assert(cursor_updates64 == 6);
 		if (mode64 == MOUSE_PREFIX64 || mode64 == MOUSE_CONFIG64) {
 			assert(quarantined64[keyboard_controller64 ^ 1U] == 1);
 			assert(polls64[keyboard_controller64] == 6 && mouse_events64 == 0);

@@ -529,6 +529,7 @@ static void keywin_off(struct SHEET64 *sht)
 {
 	struct GUI64_WIN *win = find_win(sht);
 
+	if (win != NULL) { console_cursor_focus64(win->console, 0); }
 	if (win != NULL && win->decorated != 0) {
 		change_wtitle64(sht, 0);
 	}
@@ -538,6 +539,7 @@ static void keywin_on(struct SHEET64 *sht)
 {
 	struct GUI64_WIN *win = find_win(sht);
 
+	if (win != NULL) { console_cursor_focus64(win->console, 1); }
 	if (win != NULL && win->decorated != 0) {
 		change_wtitle64(sht, 1);
 	}
@@ -650,6 +652,7 @@ static void gui64_bind_console_locked64(struct SHEET64 *sht, struct CONSOLE64 *c
 
 	if (win != NULL) {
 		win->console = con;
+		console_cursor_focus64(con, gui_context64.key_win == sht);
 	}
 }
 

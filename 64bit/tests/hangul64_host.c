@@ -96,8 +96,8 @@ static void init_console64(struct CONSOLE64 *con, struct DISPLAY64 *display,
 	con->raw_mode = raw;
 	con->lang_hangul = 1;
 	hangul64_init(&con->composing);
-	color_fg = 7;
-	color_bg = 0;
+	con->color_fg = 7;
+	con->color_bg = 0;
 	shift64 = 0;
 	ctrl64 = 0;
 }

@@ -3,12 +3,13 @@
 
 #include <keyboard64.h>
 
-static const uint8_t hangul_font64[HANGUL64_FONT_SIZE];
+static uint8_t hangul_font64[HANGUL64_FONT_SIZE];
 static int commands64, wait_checks64;
 
 void console_dispatch_command64(struct CONSOLE64 *con, const char *line)
 {
 	assert(con == console_self64() && line[0] != '\0');
+	assert(!con->caret_wanted && !con->caret_drawn);
 	commands64++;
 }
 
@@ -268,6 +269,199 @@ static void resize_waits64(void)
 	puts("Console state: RESIZE ordering, generation wrap and wait/wake interleavings: PASS");
 }
 
+static void caret_pixels64(void)
+{
+	struct CONSOLE64 *con = console64_active();
+	struct CONSOLE64 *other;
+	uint8_t *original = malloc(con->vram_size);
+
+	assert(original != NULL);
+	current64 = con->task;
+	console64_cursor_update(100);
+	console64_set_raw(1);
+	assert(console64_cursor_con(con, 0, 1) == 0);
+	console64_move(1, 2);
+	/* Distinct colors in every scanline, including padding. */
+	for (size_t i = 0; i < con->vram_size; i++) { con->vram[i] = (uint8_t) (i % 16); }
+	memcpy(original, con->vram, con->vram_size);
+	assert(console64_cursor_con(con, 1, 2) == 0);
+	assert(con->caret_drawn && con->caret_saved_width == 16);
+	for (size_t i = 0; i < con->vram_size; i++) {
+		size_t start = 31U * con->stride + 16U;
+		uint8_t expected = original[i];
+
+		if (i >= start && i < start + 16) { expected ^= 7U; }
+		assert(con->vram[i] == expected);
+	}
+	console64_cursor_update(149);
+	assert(con->caret_drawn);
+	console64_cursor_update(150);
+	assert(!con->caret_drawn && memcmp(original, con->vram, con->vram_size) == 0);
+	console64_cursor_update(200);
+	assert(con->caret_drawn);
+	console64_cursor_update(350); /* missed periods preserve parity */
+	assert(!con->caret_drawn);
+	key64(con, KEY64_LEFT);
+	assert(con->caret_drawn && con->caret_saved_x == 16 && con->caret_saved_y == 31);
+	console64_cursor_update(UINT64_MAX - 20U);
+	console_cursor_activity64(con);
+	console64_cursor_update(28);
+	assert(con->caret_drawn); /* 49 ticks across uint64 wrap */
+	console64_cursor_update(29);
+	assert(!con->caret_drawn);
+	assert(memcmp(original, con->vram, con->vram_size) == 0);
+	console64_move(1, 2);
+	assert(con->caret_drawn);
+	other = console64_create();
+	assert(other != NULL && !con->caret_drawn && other->caret_drawn);
+	assert(memcmp(original, con->vram, con->vram_size) == 0);
+	select64(con);
+	assert(con->caret_drawn && !other->caret_drawn);
+	assert(console64_cursor_con(con, 3, 1) == -22);
+	assert(console64_cursor_con(con, 1, 0) == -22);
+	assert(console64_cursor_con(NULL, 1, 1) == -22);
+	console64_move(1, con->width / 8U - 1U);
+	assert(console64_cursor_con(con, 1, 2) == 0 && con->caret_saved_width == 8);
+	assert(console64_cursor_con(con, 0, 1) == 0);
+	assert(memcmp(original, con->vram, con->vram_size) == 0);
+	console64_move(1, 2);
+	console64_set_attr(0, 7);
+	console64_write("AAAA", 4);
+	assert(!con->caret_drawn && con->dirty_valid);
+	assert(console64_cursor_con(con, 1, 1) == 0 && !con->caret_drawn);
+	console64_flush();
+	assert(con->caret_drawn && con->caret_saved_x == 16 && con->cursor_x == 48);
+	assert(console64_cursor_con(con, 0, 1) == 0);
+	for (size_t i = 0; i < 32; i++) { assert(con->vram[31U * con->stride + 16U + i] == 7); }
+	assert(console64_cursor_con(con, 1, 1) == 0);
+	assert(gui_toggle_window_checked64() == 0 && !con->caret_drawn && !con->caret_valid);
+	console64_move(1, 2);
+	console64_flush();
+	assert(con->caret_drawn);
+	/* Process cleanup targets the app's console even when another has focus. */
+	select64(other);
+	current64 = other->task;
+	console64_set_attr(2, 9);
+	console64_set_raw_con(con, 0);
+	assert(!con->raw_mode && !con->caret_wanted && !con->caret_drawn);
+	assert(other->color_fg == 2 && other->color_bg == 9);
+	select64(con);
+	current64 = con->task;
+	console_prompt64(con);
+	assert(con->caret_drawn);
+	other->close_ready = 1;
+	console64_reap_closed();
+	free(original);
+	puts("Console caret: exact pixels, 49/50 ticks, wrap, focus, raw/resize/exit: PASS");
+}
+
+static void caret_ime64(void)
+{
+	struct CONSOLE64 *con = console64_active();
+	uint8_t *original = malloc(con->vram_size);
+	uint32_t last_row = (con->height / 16U - 1U) * 16U;
+
+	assert(original != NULL);
+	console_cursor_wait64(con, 0);
+	console_clear_screen64(con);
+	con->lang_hangul = 1;
+	console_cursor_wait64(con, 1);
+	key64(con, 0x13);
+	key64(con, 0x25);
+	assert(con->caret_drawn && con->caret_saved_width == 16 && con->caret_saved_x == 0);
+	assert(console64_cursor_con(con, 0, 1) == 0);
+	memcpy(original, con->vram, con->vram_size);
+	for (uint64_t tick = 0; tick < 500; tick += 50) {
+		console64_cursor_update(tick);
+		assert(console64_cursor_con(con, 1, 1) == 0);
+		assert(console64_cursor_con(con, 0, 1) == 0);
+		assert(memcmp(original, con->vram, con->vram_size) == 0);
+	}
+	console_cursor_wait64(con, 1);
+	key64(con, 0x39); /* commit syllable with a space */
+	assert(con->composing.state == 0 && con->input_len == 4);
+	assert(memcmp(con->input_line, "가 ", 4) == 0 && con->caret_saved_width == 8);
+	key64(con, 0x13);
+	key64(con, 0x0e); /* cancel preedit */
+	assert(con->composing.state == 0 && con->caret_saved_width == 8);
+	console_cursor_wait64(con, 0);
+	console_clear_screen64(con);
+	console64_move(0, con->width / 8U - 1U);
+	console64_write("A", 1);
+	console_cursor_wait64(con, 1);
+	assert(con->caret_saved_x == 0 && con->caret_saved_y == 31);
+	key64(con, 0x13); /* two-cell reservation wraps without corrupting old row */
+	assert(con->caret_saved_x == 0 && con->caret_saved_y == 31);
+	key64(con, 0x0e);
+	console_cursor_wait64(con, 0);
+	console_clear_screen64(con);
+	console64_move(last_row / 16U, 0);
+	console64_write("A", 1);
+	console_cursor_wait64(con, 1);
+	console_newline64(con); /* scroll must move body, never the saved underline */
+	assert(con->caret_drawn);
+	console_cursor_wait64(con, 0);
+	for (uint32_t x = 0; x < con->width; x++) {
+		assert(con->vram[last_row * con->stride + x] == 0);
+		assert(con->vram[(last_row + 15U) * con->stride + x] == 0);
+	}
+	con->input_len = 0;
+	console_prompt64(con);
+	free(original);
+	puts("Console caret: Hangul preedit/commit/cancel, edge/wrap and scrolling: PASS");
+}
+
+static void toggle64(struct CONSOLE64 *con)
+{
+	key64(con, 0x2a);
+	key64(con, 0x39);
+	key64(con, 0xaa);
+}
+
+static void input_mode64(void)
+{
+	struct CONSOLE64 *con = console64_active();
+	struct CONSOLE64 *other = console64_create();
+	char line[4];
+	static const uint16_t switches[] = { 0x2a, 0x39, 0xaa, 0x1c };
+
+	assert(other != NULL);
+	con->language_generation = UINT32_MAX;
+	con->lang_hangul = 1;
+	assert(console64_input_mode_con(con) == 0x1ffffffffLL);
+	toggle64(con); /* a background console consumes its own queued keys */
+	assert(console64_input_mode_con(con) == 0 && console64_input_mode_con(other) == 1);
+	console64_set_raw(1);
+	toggle64(con);
+	assert(console64_input_mode_con(con) == 3);
+	console64_set_raw(0);
+	for (size_t i = 0; i < sizeof(switches) / sizeof(switches[0]); i++) {
+		assert(console64_post_input_key(con, switches[i]) == 0);
+	}
+	assert(console64_read_line(line, sizeof(line)) == 0);
+	assert(console64_input_mode_con(con) == 4 && !con->caret_wanted && !con->caret_drawn);
+	for (size_t i = 0; i < sizeof(switches) / sizeof(switches[0]); i++) {
+		assert(console64_post_input_key(con, switches[i]) == 0);
+	}
+	assert(console64_read_con(con, line, sizeof(line)) == 1 && line[0] == '\n');
+	assert(console64_input_mode_con(con) == 7 && !con->caret_wanted);
+	console64_repl_set_active(1);
+	for (size_t i = 0; i < sizeof(switches) / sizeof(switches[0]); i++) {
+		assert(console64_post_input_key(con, switches[i]) == 0);
+	}
+	assert(console64_repl_getchar() == '\r');
+	assert(console64_input_mode_con(con) == 8 && !con->caret_wanted);
+	console64_repl_set_active(0);
+	assert(console64_input_mode_con(NULL) == -22);
+	other->close_ready = 1;
+	assert(console64_input_mode_con(other) == -22);
+	console64_reap_closed();
+	select64(con);
+	current64 = con->task;
+	console_prompt64(con);
+	puts("Console input mode: per-owner cooked/raw/readline/REPL, generation wrap: PASS");
+}
+
 static void close_during_capture64(void)
 {
 	struct CONSOLE64 *con = console_self64();
@@ -398,10 +592,14 @@ int main(void)
 {
 	lifecycle_checks64();
 	initialize64();
+	memset(hangul_font64, 0xff, sizeof(hangul_font64));
 	console64_set_hangul_font(hangul_font64);
 	mode_sequences64();
 	capture64();
 	resize_waits64();
+	caret_pixels64();
+	caret_ime64();
+	input_mode64();
 	focus_close64();
 	return 0;
 }

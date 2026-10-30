@@ -248,6 +248,20 @@ void console64_flush(void)
 	flush_calls++;
 }
 
+int console64_cursor_con(struct CONSOLE64 *con, int visible, unsigned int cells)
+{
+	CHECK64(con == process.console);
+	CHECK64(visible == 0 || visible == 1);
+	CHECK64(cells == 1 || cells == 2);
+	return -16; /* Verify signed error propagation from the owning console. */
+}
+
+int64_t console64_input_mode_con(struct CONSOLE64 *con)
+{
+	if (con != process.console) { abi_error = 1; }
+	return ((uint64_t) UINT32_MAX << 1) | 1U;
+}
+
 uint64_t arch64_timer_ticks(void)
 {
 	return timerctl64.count;
@@ -503,10 +517,20 @@ static int test_tty64(void)
 	CHECK64(call64(SYS_TTY, TTY_FLUSH, 0, 0, 0, 0) == 0 && flush_calls == 1);
 	CHECK64(call64(SYS_TTY, (1ULL << 32) | TTY_FLUSH, 0, 0, 0, 0) == ERROR64);
 	CHECK64(flush_calls == 1);
+	CHECK64(call64(SYS_TTY, TTY_INPUT_MODE, 0, 0, 0, 0) == 0x1ffffffffULL);
+	CHECK64(call64(SYS_TTY, TTY_CURSOR, 1, 2, 0, 0) == (uint64_t) -16);
+	CHECK64(call64(SYS_TTY, TTY_CURSOR, 0, 1, 0, 0) == (uint64_t) -16);
+	CHECK64(call64(SYS_TTY, TTY_CURSOR, 2, 1, 0, 0) == (uint64_t) -22);
+	CHECK64(call64(SYS_TTY, TTY_CURSOR, 1, 0, 0, 0) == (uint64_t) -22);
+	CHECK64(call64(SYS_TTY, TTY_CURSOR, 1, 3, 0, 0) == (uint64_t) -22);
+	CHECK64(call64(SYS_TTY, TTY_CURSOR, UINT64_MAX, 1, 0, 0) == (uint64_t) -22);
+	CHECK64(call64(SYS_TTY, TTY_CURSOR, 1, (1ULL << 32) | 1, 0, 0) == (uint64_t) -22);
 	screen_size = 0;
 	CHECK64(call64(SYS_TTY, TTY_MOVE, 0, 0, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_TTY, TTY_CLEAR, 0, 0, 0, 0) == ERROR64);
 	process.console = NULL;
+	CHECK64(call64(SYS_TTY, TTY_INPUT_MODE, 0, 0, 0, 0) == (uint64_t) -22);
+	CHECK64(call64(SYS_TTY, TTY_CURSOR, 1, 1, 0, 0) == (uint64_t) -22);
 	CHECK64(call64(SYS_TTY, TTY_MODE, 0, 0, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_TTY, TTY_FLUSH, 0, 0, 0, 0) == ERROR64);
 	CHECK64(mode_calls == 1 && flush_calls == 1);

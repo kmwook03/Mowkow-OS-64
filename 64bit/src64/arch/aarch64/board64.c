@@ -848,6 +848,7 @@ mouse_port64:
 			}
 		}
 		/* 닫기 요청을 처리하고 잠든 console task와 window를 회수한다. */
+		console64_cursor_update(arch64_timer_ticks());
 		console64_reap_closed();
 		/* Do not stall USB polling while preserving the 500 ms heartbeat. */
 		if (poll_deadline_expired64(&heartbeat_deadline, aarch64_boot_counter64())) {

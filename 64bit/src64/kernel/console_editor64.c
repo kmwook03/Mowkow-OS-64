@@ -7,6 +7,27 @@
 #include <syscall64.h>
 #include <utf864.h>
 
+void console_toggle_language64(struct CONSOLE64 *con)
+{
+	uint64_t state = platform_irq_save64();
+
+	con->lang_hangul ^= 1;
+	con->language_generation++;
+	platform_irq_restore64(state);
+}
+
+int64_t console64_input_mode_con(struct CONSOLE64 *con)
+{
+	uint64_t state = platform_irq_save64();
+	int64_t result = -22;
+
+	if (con != NULL && con->slot_state == CONSOLE64_LIVE && !con->close_ready) {
+		result = ((uint64_t) con->language_generation << 1) | (con->lang_hangul != 0);
+	}
+	platform_irq_restore64(state);
+	return result;
+}
+
 static unsigned int composing_unicode64(struct CONSOLE64 *con)
 {
 	char utf8[4];
@@ -68,15 +89,6 @@ static int append_input64(struct CONSOLE64 *con, const char *s, int len)
 	return 1;
 }
 
-static void draw_composing64(struct CONSOLE64 *con)
-{
-	if (con->raw_mode != 0) {
-		raw_emit_preedit64(con);
-		return;
-	}
-	console_draw_preedit64(con);
-}
-
 /* hangul64_feed owns transitions; emit only committed bytes to COM1 and
  * reserve a screen slot for preedit. Raw mode preserves CHAR/PREEDIT ordering.
  */
@@ -129,11 +141,7 @@ static void apply_hangul_key64(struct CONSOLE64 *con, char key, int emit_preedit
 		console_put_char64(con, &feed.passthrough, 1);
 	}
 	if (con->composing.state != 0) {
-		if (con->cursor_x + CONSOLE64_HANGUL_W > con->width) {
-			console_newline64(con);
-		}
-		con->cursor_x += CONSOLE64_HANGUL_W;
-		draw_composing64(con);
+		console_reserve_preedit64(con);
 	}
 }
 
@@ -219,8 +227,10 @@ uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 		return 0;
 	}
 	count = 0;
+	console_cursor_wait64(con, 1);
 	for (;;) {
 		key = console_wait_key64(con);
+		if ((key & 0x80U) == 0) { console_cursor_activity64(con); }
 		if (keyboard64_track_modifier(key) != 0) {
 			continue;
 		}
@@ -232,6 +242,7 @@ uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 		}
 		if (key == 0x1c) {
 			dst[count++] = '\n';
+			console_cursor_wait64(con, 0);
 			console_put_char64(con, "\n", 1);
 			return count;
 		}
@@ -243,12 +254,17 @@ uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 			continue;
 		}
 		c = keymap64_translate((uint8_t) key, keyboard64_shift(), 0);
+		if (c == ' ' && keyboard64_shift()) {
+			console_toggle_language64(con);
+			continue;
+		}
 		if (c == '\0') {
 			continue;
 		}
 		dst[count++] = c;
 		console_put_char64(con, &c, 1);
 		if (count == len) {
+			console_cursor_wait64(con, 0);
 			return count;
 		}
 	}
@@ -297,7 +313,7 @@ static void raw_process_key64(struct CONSOLE64 *con, uint16_t key)
 	}
 	if (keyboard64_shift() != 0 && c == ' ') {
 		flush_composing64(con);
-		con->lang_hangul ^= 1;
+		console_toggle_language64(con);
 		return;
 	}
 	if (keyboard64_ctrl() != 0) {
@@ -321,7 +337,9 @@ void console64_process_input_key(struct CONSOLE64 *con, uint16_t key)
 {
 	char c;
 
-	if (con == NULL || keyboard64_track_modifier(key) != 0) {
+	if (con == NULL) { return; }
+	if ((key & 0x80U) == 0) { console_cursor_activity64(con); }
+	if (keyboard64_track_modifier(key) != 0) {
 		return;
 	}
 	if (con->raw_mode != 0) {
@@ -349,7 +367,7 @@ void console64_process_input_key(struct CONSOLE64 *con, uint16_t key)
 	}
 	if (keyboard64_shift() != 0 && c == ' ') {
 		flush_composing64(con);
-		con->lang_hangul ^= 1;
+		console_toggle_language64(con);
 		return;
 	}
 	if (con->lang_hangul != 0 && console64_hangul_font() != NULL) {
@@ -363,6 +381,7 @@ static void console_submit_line64(struct CONSOLE64 *con)
 {
 	flush_composing64(con);
 	con->input_line[con->input_len] = '\0';
+	console_cursor_wait64(con, 0);
 	console_newline64(con);
 	if (con->input_len == 0) {
 		console_prompt64(con);
@@ -377,6 +396,9 @@ static void console_submit_line64(struct CONSOLE64 *con)
 void console64_process_key(struct CONSOLE64 *con, uint16_t key)
 {
 	char c;
+
+	if (con == NULL) { return; }
+	if ((key & 0x80U) == 0) { console_cursor_activity64(con); }
 
 	if (keyboard64_track_modifier(key) != 0) {
 		return;
@@ -426,6 +448,10 @@ void console64_process_key(struct CONSOLE64 *con, uint16_t key)
 		if (c == '\0') {
 			return;
 		}
+		if (keyboard64_shift() && c == ' ') {
+			console_toggle_language64(con);
+			return;
+		}
 		if (keyboard64_ctrl() != 0) {
 			if (c >= 'a' && c <= 'z') {
 				c = (char) (c - 'a' + 1);
@@ -450,7 +476,7 @@ void console64_process_key(struct CONSOLE64 *con, uint16_t key)
 	}
 	if (keyboard64_shift() != 0 && c == ' ') {
 		flush_composing64(con);
-		con->lang_hangul ^= 1;
+		console_toggle_language64(con);
 		return;
 	}
 	if (con->lang_hangul != 0 && console64_hangul_font() != NULL) {
@@ -515,12 +541,19 @@ int console64_hangul_smoke(void)
 void console64_set_raw_con(struct CONSOLE64 *con, int on)
 {
 	int was_raw;
+	uint64_t state;
 
 	if (con == NULL) {
 		return;
 	}
+	state = platform_irq_save64();
+	console_cursor_wait64(con, 0);
 	was_raw = con->raw_mode;
 	con->raw_mode = on != 0;
+	con->caret_x = con->cursor_x;
+	con->caret_y = con->cursor_y;
+	con->caret_cells = 1;
+	con->caret_valid = 1;
 	con->raw_queue_head = 0;
 	con->raw_queue_tail = 0;
 	con->dirty_valid = 0;
@@ -528,13 +561,17 @@ void console64_set_raw_con(struct CONSOLE64 *con, int on)
 		/* 앱이 조합 중인 채로 나가도, 색을 바꿔 놓고 나가도 콘솔이 그 상태를
 		   물려받지 않게 한다. */
 		hangul64_init(&con->composing);
-		console64_set_attr(CONSOLE64_FG_DEFAULT, CONSOLE64_BG_DEFAULT);
+		con->color_fg = CONSOLE64_FG_DEFAULT;
+		con->color_bg = CONSOLE64_BG_DEFAULT;
 		if (was_raw != 0) {
 			/* 앱이 남긴 화면과 화면 한복판의 커서를 그대로 물려받으면
 			   콘솔이 망가진 것처럼 보인다. */
 			console_clear_screen64(con);
 		}
+	} else {
+		console_cursor_wait64(con, 1);
 	}
+	platform_irq_restore64(state);
 }
 
 void console64_set_raw(int on)
@@ -590,9 +627,11 @@ int64_t console64_read_line(char *dst, uint64_t max)
 	con->line_result = 0;
 	con->input_len = 0;
 	con->line_full_warned = 0;
+	console_cursor_wait64(con, 1);
 	while (con->line_done == 0) {
 		console64_process_key(con, console_wait_key64(con));
 	}
+	console_cursor_wait64(con, 0);
 	con->line_capture = 0;
 	flush_composing64(con);
 	console_newline64(con);
@@ -618,8 +657,10 @@ int console64_repl_getchar(void)
 	struct CONSOLE64 *con = console_self64();
 	char c;
 
+	console_cursor_wait64(con, 1);
 	for (;;) {
 		if (console_repl_pop64(con, &c)) {
+			console_cursor_wait64(con, 0);
 			return (unsigned char) c;
 		}
 		console64_process_key(con, console_wait_key64(con));

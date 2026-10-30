@@ -150,6 +150,7 @@ void console64_repl_set_active(int active)
 	   두면 콘솔 1에서 py를 띄웠는데 콘솔 0이 REPL 모드가 된다. */
 	struct CONSOLE64 *con = console_self64();
 
+	console_cursor_wait64(con, 0);
 	con->repl_active = active;
 	con->repl_queue_head = 0;
 	con->repl_queue_tail = 0;

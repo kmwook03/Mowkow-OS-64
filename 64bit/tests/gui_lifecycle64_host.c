@@ -80,6 +80,11 @@ void io_out8(uint16_t port, uint8_t value)
 
 		render_checked64 = 1;
 		assert(con->render_users != 0 && irq64 == 0);
+		assert(!con->caret_drawn);
+		console64_cursor_update(50);
+		console_cursor_focus64(con, 0);
+		console_cursor_focus64(con, 1);
+		assert(!con->caret_drawn && con->render_users != 0);
 		assert(gui_toggle_window_checked64() == -16);
 		con->close_ready = 1;
 		assert(gui_close_console_checked64(con) == -16);

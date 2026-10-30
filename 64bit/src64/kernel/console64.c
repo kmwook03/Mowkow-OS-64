@@ -49,6 +49,9 @@ static void console64_init_with_sheet(const struct BOOTINFO64 *boot_info,
 	con->cursor_y = 0;
 	con->input_len = 0;
 	con->lang_hangul = 1;
+	con->color_fg = CONSOLE64_FG_DEFAULT;
+	con->color_bg = CONSOLE64_BG_DEFAULT;
+	con->caret_focused = 1;
 	hangul64_init(&con->composing);
 	if (sht != NULL) {
 		gui64_bind_console(sht, con);
@@ -144,6 +147,13 @@ void console64_reap_closed(void)
 	platform_irq_restore64(irq_state);
 }
 
+void console64_cursor_update(uint64_t ticks)
+{
+	for (uint32_t i = 0; i < CONSOLE64_MAX; i++) {
+		console_cursor_tick64(&console_table[i], ticks);
+	}
+}
+
 struct CONSOLE64 *console64_create(void)
 {
 	struct CONSOLE64 *con = NULL;
@@ -156,7 +166,10 @@ struct CONSOLE64 *console64_create(void)
 		}
 	}
 	if (con == NULL) { goto out; }
-	*con = (struct CONSOLE64) { .slot_state = CONSOLE64_RESERVED, .lang_hangul = 1 };
+	*con = (struct CONSOLE64) {
+		.slot_state = CONSOLE64_RESERVED, .lang_hangul = 1,
+		.color_fg = CONSOLE64_FG_DEFAULT, .color_bg = CONSOLE64_BG_DEFAULT
+	};
 	hangul64_init(&con->composing);
 	if (gui_prepare_console64(con, "터미널") != 0 || console64_start_task(con) != 0) {
 		con->close_ready = 1;
@@ -193,7 +206,7 @@ int console_stop_checked64(struct CONSOLE64 *con)
 		con->pending_stack = 0;
 		con->pending_stack_size = 0;
 	}
-	if (con->task == NULL) { return 0; }
+	if (con->task == NULL) { console_cursor_detach64(con); return 0; }
 	stack = con->task->stack_base;
 	size = con->task->stack_size;
 	old_state = con->slot_state;
@@ -205,6 +218,7 @@ int console_stop_checked64(struct CONSOLE64 *con)
 	}
 	con->task = NULL;
 	con->keys.task = NULL;
+	console_cursor_detach64(con);
 	if (status != 0 && stack != 0) {
 		con->pending_stack = stack;
 		con->pending_stack_size = size;
