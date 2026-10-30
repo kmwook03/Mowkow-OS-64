@@ -14,9 +14,10 @@ struct NANO_WINDOW64 {
 int LINES, COLS;
 WINDOW *stdscr, *curscr;
 static WINDOW windows64[NANO_WINDOWS64];
-static struct NANO_CELL64 *screen64;
+static struct NANO_CELL64 *screen64, *presented64;
 static int screen_rows64, screen_cols64, cursor_row64, cursor_col64;
 static int ended64 = 1, raw_mode64, pushed64 = ERR;
+static int cursor_visible64 = 1;
 static char input64[5];
 static int input_at64, input_size64;
 static unsigned int generation64;
@@ -69,10 +70,15 @@ static int geometry64(void)
 	struct NANO_CELL64 *cells = malloc((size_t) rows * cols * sizeof(*cells));
 
 	if (cells == NULL) { return ERR; }
+	struct NANO_CELL64 *presented = malloc((size_t) rows * cols * sizeof(*presented));
+
+	if (presented == NULL) { free(cells); return ERR; }
 	for (size_t i = 0; i < (size_t) rows * cols; i++) {
 		cells[i] = (struct NANO_CELL64) { ' ', 0, 0 };
+		presented[i] = (struct NANO_CELL64) { 0, 0, 0 };
 	}
 	free(screen64); screen64 = cells;
+	free(presented64); presented64 = presented;
 	screen_rows64 = LINES = (int) rows;
 	screen_cols64 = COLS = (int) cols;
 	generation64 = TTY_SIZE_GEN(size);
@@ -84,7 +90,9 @@ WINDOW *nano_initscr64(void)
 {
 	if (screen64 != NULL || geometry64() == ERR) { return NULL; }
 	stdscr = nano_newwin64(LINES, COLS, 0, 0);
-	if (stdscr == NULL) { free(screen64); screen64 = NULL; return NULL; }
+	if (stdscr == NULL) {
+		free(screen64); screen64 = NULL; free(presented64); presented64 = NULL; return NULL;
+	}
 	curscr = stdscr; ended64 = 0;
 	return stdscr;
 }
@@ -181,35 +189,99 @@ int nano_wnoutrefresh64(WINDOW *window)
 	return OK;
 }
 
-static int draw_cell64(const struct NANO_CELL64 *cell, int y, int x)
+static struct NANO_CELL64 output_cell64(int y, int x)
 {
-	char bytes[4];
-	int length = unicode_to_utf864(cell->scalar64, bytes, sizeof(bytes));
+	int width = nano_wcwidth64(preedit64);
 
-	if (length == 0) { errno = EILSEQ; return ERR; }
-	tty_move(y, x);
-	tty_attr((cell->attrs64 & A_REVERSE) ? 0 : ((cell->attrs64 & A_BOLD) ? 15 : 7),
-		(cell->attrs64 & A_REVERSE) ? 7 : 0);
-	return nano_write64(1, bytes, (size_t) length) == length ? OK : ERR;
+	/* Composition is output-only: window and editor bytes stay untouched. */
+	if (preedit64 != 0 && y == cursor_row64 && cursor_col64 <= screen_cols64 - width) {
+		if (x == cursor_col64) { return (struct NANO_CELL64) { preedit64, A_REVERSE, 0 }; }
+		if (width == 2 && x == cursor_col64 + 1) {
+			return (struct NANO_CELL64) { 0, A_REVERSE, 1 };
+		}
+		/* Composition can cover the first half of the following wide glyph. */
+		if (x == cursor_col64 + width && screen64[y * screen_cols64 + x].tail64) {
+			return (struct NANO_CELL64) { ' ', 0, 0 };
+		}
+	}
+	return screen64[y * screen_cols64 + x];
+}
+
+static int changed64(struct NANO_CELL64 cell, int y, int x)
+{
+	struct NANO_CELL64 previous = presented64[y * screen_cols64 + x];
+
+	return cell.scalar64 != previous.scalar64 || cell.attrs64 != previous.attrs64 ||
+		cell.tail64 != previous.tail64;
+}
+
+static int draw_run64(int y, int *column)
+{
+	char bytes[256];
+	size_t used = 0;
+	int first = *column, x = first;
+	attr_t attrs = output_cell64(y, x).attrs64;
+
+	while (x < screen_cols64) {
+		struct NANO_CELL64 cell = output_cell64(y, x);
+		char encoded[4];
+		int length;
+
+		if (cell.tail64 || cell.attrs64 != attrs) { break; }
+		length = unicode_to_utf864(cell.scalar64, encoded, sizeof(encoded));
+		if (length == 0) { errno = EILSEQ; return ERR; }
+		if ((size_t) length > sizeof(bytes) - used) { break; }
+		memcpy(bytes + used, encoded, (size_t) length); used += (size_t) length;
+		x += nano_wcwidth64(cell.scalar64) == 2 ? 2 : 1;
+	}
+	tty_move(y, first);
+	tty_attr((attrs & A_REVERSE) ? 0 : ((attrs & A_BOLD) ? 15 : 7),
+		(attrs & A_REVERSE) ? 7 : 0);
+	if (nano_write64(1, bytes, used) != (long) used) { return ERR; }
+	for (int at = first; at < x; at++) {
+		presented64[y * screen_cols64 + at] = output_cell64(y, at);
+	}
+	*column = x;
+	return OK;
+}
+
+static int cursor_cells64(void)
+{
+	uint32_t scalar = preedit64 != 0 ? preedit64 :
+		screen64[cursor_row64 * screen_cols64 + cursor_col64].scalar64;
+	int width = nano_wcwidth64(scalar);
+
+	return width == 2 && cursor_col64 + 1 < screen_cols64 ? 2 : 1;
 }
 
 int nano_doupdate64(void)
 {
 	if (screen64 == NULL || ended64) { return ERR; }
+	if (TTY_SIZE_GEN(tty_size()) != generation64) { return OK; }
+	/* Hide the kernel underline while submitting body pixels. The final move
+	 * publishes the application caret, independently of the output position.
+	 */
+	if (tty_cursor(0, 1) < 0) { errno = EIO; return ERR; }
 	for (int y = 0; y < screen_rows64; y++) {
-		for (int x = 0; x < screen_cols64; x++) {
-			const struct NANO_CELL64 *cell = &screen64[y * screen_cols64 + x];
+		int dirty = 0;
 
-			if (!cell->tail64 && draw_cell64(cell, y, x) == ERR) { return ERR; }
+		for (int x = 0; x < screen_cols64 && !dirty; x++) {
+			dirty = changed64(output_cell64(y, x), y, x);
+		}
+		if (!dirty) { continue; }
+		/* Repaint changed rows in bounded attribute runs. This also preserves
+		 * complete status lines in the serial drawing trace used by tools.
+		 */
+		for (int x = 0; x < screen_cols64;) {
+			struct NANO_CELL64 cell = output_cell64(y, x);
+
+			if (cell.tail64) { x++; continue; }
+			if (draw_run64(y, &x) == ERR) { return ERR; }
 		}
 	}
-	/* Composition is output-only: it never modifies the saved cell matrix. */
-	if (preedit64 != 0 && cursor_col64 <= screen_cols64 - nano_wcwidth64(preedit64)) {
-		struct NANO_CELL64 cell = { preedit64, A_REVERSE, 0 };
-
-		if (draw_cell64(&cell, cursor_row64, cursor_col64) == ERR) { return ERR; }
-	}
-	tty_move(cursor_row64, cursor_col64); tty_flush();
+	tty_move(cursor_row64, cursor_col64);
+	if (tty_cursor(cursor_visible64, cursor_cells64()) < 0) { errno = EIO; return ERR; }
+	tty_flush();
 	return OK;
 }
 int nano_wrefresh64(WINDOW *window)
@@ -225,6 +297,7 @@ int nano_wrefresh64(WINDOW *window)
 }
 int nano_endwin64(void)
 {
+	tty_cursor(0, 1);
 	tty_raw(0); raw_mode64 = 0; ended64 = 1; preedit64 = 0; return OK;
 }
 bool nano_isendwin64(void) { return ended64 != 0; }
@@ -276,6 +349,40 @@ int nano_ungetch64(int code)
 }
 static int key64(unsigned int payload, unsigned int mods)
 {
+	/* Extended key codes are nano 9.3's definitions.h fallback values. */
+	if (mods & (TTY_MOD_CTRL | TTY_MOD_ALT)) {
+		int code;
+
+		switch (payload) {
+		case 0x14b: code = 1; break;
+		case 0x14d: code = 2; break;
+		case 0x148: code = 3; break;
+		case 0x150: code = 4; break;
+		case 0x147: code = 5; break;
+		case 0x14f: code = 6; break;
+		case 0x149: code = 7; break;
+		case 0x151: code = 8; break;
+		case 0x152: code = 12; break;
+		case 0x153: code = 13; break;
+		default: return ERR;
+		}
+		return 0x400 + code + (mods & TTY_MOD_ALT ? 0x20 : 0) +
+			(mods & TTY_MOD_SHIFT ? 0x10 : 0);
+	}
+	if (mods & TTY_MOD_SHIFT) {
+		switch (payload) {
+		case 0x148: return 0x453;
+		case 0x150: return 0x454;
+		case 0x14b: return KEY_SLEFT;
+		case 0x14d: return KEY_SRIGHT;
+		case 0x147: return KEY_SHOME;
+		case 0x14f: return KEY_SEND;
+		case 0x149: return KEY_SPREVIOUS;
+		case 0x151: return KEY_SNEXT;
+		case 0x153: return KEY_SDC;
+		default: return ERR;
+		}
+	}
 	switch (payload) {
 	case 0x148: return mods & TTY_MOD_CTRL ? 0x403 : KEY_UP;
 	case 0x150: return mods & TTY_MOD_CTRL ? 0x404 : KEY_DOWN;
@@ -325,17 +432,34 @@ int nano_wgetch64(WINDOW *window)
 		/* The raw TTY sends LF for Enter; nano's nonl input expects CR.
 		 * Convert before Ctrl-key decoding so Ctrl-J remains a distinct key. */
 		if (payload == '\n' && !(mods & TTY_MOD_CTRL)) { payload = '\r'; }
+		if (payload == '\t' && (mods & TTY_MOD_SHIFT)) { return KEY_BTAB; }
 		if ((mods & TTY_MOD_CTRL) && payload >= '@' && payload <= 127) { payload &= 31; }
 		input_size64 = unicode_to_utf864(payload, input64 + 1, 4);
 		if (input_size64 == 0) { errno = EILSEQ; return ERR; }
-		if (mods & TTY_MOD_ALT) { input64[0] = 27; input_size64++; input_at64 = 1; return 27; }
+		/* A shortcut can commit the IME's preceding Unicode text while its
+		 * modifier is held. That committed text is not a Meta key sequence.
+		 */
+		if ((mods & TTY_MOD_ALT) && payload < 128) {
+			input64[0] = 27; input_size64++; input_at64 = 1; return 27;
+		}
 		input_at64 = 2; input_size64++; return (unsigned char) input64[1];
 	}
 }
 int nano_raw64(void) { tty_raw(1); raw_mode64 = 1; return OK; }
 int nano_noecho64(void) { return raw_mode64 ? OK : ERR; }
 int nano_nonl64(void) { return raw_mode64 ? OK : ERR; }
-int nano_curs_set64(int visible) { (void) visible; errno = ENOSYS; return ERR; }
+int nano_curs_set64(int visible)
+{
+	if (visible < 0 || visible > 2) { errno = EINVAL; return ERR; }
+	int previous = cursor_visible64;
+
+	/* Both curses visible styles use the OS's blinking underline. */
+	if (tty_cursor(visible != 0, screen64 == NULL ? 1 : cursor_cells64()) < 0) {
+		errno = EIO; return ERR;
+	}
+	cursor_visible64 = visible != 0;
+	return previous;
+}
 int nano_halfdelay64(int tenths) { (void) tenths; errno = ENOSYS; return ERR; }
 int nano_napms64(int milliseconds) { (void) milliseconds; errno = ENOSYS; return ERR; }
 int nano_typeahead64(int fd) { if (fd == -1) { return OK; } errno = ENOSYS; return ERR; }

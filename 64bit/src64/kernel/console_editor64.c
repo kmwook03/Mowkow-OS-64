@@ -148,7 +148,7 @@ static void apply_hangul_key64(struct CONSOLE64 *con, char key, int emit_preedit
 static void flush_composing64(struct CONSOLE64 *con)
 {
 	if (con->composing.state != 0) {
-		/* Preserve raw's commit-only protocol for Enter/mode/control flush. */
+		/* Preserve raw's commit-only protocol before mode/movement/shortcuts. */
 		apply_hangul_key64(con, '\0', 0);
 	}
 }
@@ -278,8 +278,9 @@ static void raw_process_key64(struct CONSOLE64 *con, uint16_t key)
 		return;                     /* 브레이크 코드 */
 	}
 	if ((key & KEY64_EXT) != 0) {
+		/* Commit at the old caret before the application moves or selects. */
+		flush_composing64(con);
 		if (key == KEY64_KPENTER) {
-			flush_composing64(con);
 			console_raw_push64(con, TTY_KIND_CHAR, '\n');
 		} else {
 			console_raw_push64(con, TTY_KIND_KEY, key);
@@ -316,11 +317,12 @@ static void raw_process_key64(struct CONSOLE64 *con, uint16_t key)
 		console_toggle_language64(con);
 		return;
 	}
-	if (keyboard64_ctrl() != 0) {
+	/* App shortcuts remain usable in Hangul mode (nano uses Meta-U/Meta-E). */
+	if (keyboard64_ctrl() != 0 || keyboard64_alt() != 0) {
 		flush_composing64(con);
-		if (c >= 'a' && c <= 'z') {
+		if (keyboard64_ctrl() != 0 && c >= 'a' && c <= 'z') {
 			c = (char) (c - 'a' + 1);
-		} else if (c >= 'A' && c <= 'Z') {
+		} else if (keyboard64_ctrl() != 0 && c >= 'A' && c <= 'Z') {
 			c = (char) (c - 'A' + 1);
 		}
 		console_raw_push64(con, TTY_KIND_CHAR, (unsigned char) c);

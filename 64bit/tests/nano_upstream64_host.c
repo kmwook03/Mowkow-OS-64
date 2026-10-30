@@ -1,9 +1,11 @@
 #include <assert.h>
 #include <setjmp.h>
 #include <stdint.h>
+#include "config.h"
 #include "prototypes.h"
 #include <syscall.h>
 #include <utf864.h>
+#include "nano_message64.h"
 
 void *host_malloc64(size_t size) __asm__("malloc");
 void host_free64(void *ptr) __asm__("free");
@@ -16,6 +18,9 @@ static int exit_status64, raw64, file_opens64, file_writes64;
 static int allocations_before_failure64 = -1;
 static unsigned rows64 = 25, cols64 = 80, generation64 = 1;
 static int row64, col64, fg64, bg64, flushes64, checkpoints64;
+static int screen_writes64;
+static int cursor_visible64, cursor_width64, cursor_calls64;
+static long input_mode64 = 1;
 static uint32_t cells64[32][100];
 static size_t event_at64;
 static uint64_t preedit_size64;
@@ -26,14 +31,20 @@ static const struct NANO_EVENT64 events64[] = {
 	{ 2, 0x3131, 0 }, { 2, 0xd55c, 0 }, { 2, 0, 0 },
 	{ 1, 0xd55c, 0 }, { 2, 0xae00, 0 }, { 1, 0xae00, 0 }, { 5, 1, 0 },
 	{ 1, 'u', 4 }, { 5, 2, 0 }, { 1, 'e', 4 }, { 5, 3, 0 },
-	{ 1, 23, 0 }, { 1, 0xd55c, 0 }, { 1, 10, 0 }, { 5, 4, 0 },
-	{ 1, 28, 0 }, { 1, 0xd55c, 0 }, { 1, 10, 0 },
-	{ 1, 0xac00, 0 }, { 1, 10, 0 }, { 1, 'y', 0 }, { 5, 5, 0 },
+	{ 1, 23, 0 }, { 2, 0xd55c, 0 }, { 2, 0, 0 },
+	{ 1, 0xd55c, 0 }, { 1, 10, 0 }, { 5, 4, 0 },
+	{ 1, 28, 0 }, { 2, 0xd55c, 0 }, { 1, 0xd55c, 0 }, { 1, 10, 0 },
+	{ 2, 0xac00, 0 }, { 1, 0xac00, 0 }, { 1, 10, 0 },
+	{ 1, 'y', 0 }, { 5, 5, 0 },
 	{ 4, 0, 0 }, { 5, 6, 0 },
-	{ 1, 15, 0 }, { 1, 'P', 0 }, { 1, '0', 0 }, { 1, '.', 0 },
+	{ 1, 15, 0 }, { 2, 0xac00, 0 }, { 2, 0, 0 },
+	{ 1, 'P', 0 }, { 1, '0', 0 }, { 1, '.', 0 },
 	{ 1, 'T', 0 }, { 1, 'X', 0 }, { 1, 'T', 0 }, { 1, 10, 0 }, { 5, 7, 0 },
 	{ 1, 24, 0 },
 };
+static const struct NANO_EVENT64 *scenario64 = events64;
+static size_t scenario_size64 = sizeof(events64) / sizeof(events64[0]);
+static int extended64, input_failure64;
 
 void *native_malloc64(size_t size)
 {
@@ -59,6 +70,7 @@ int __wrap_nano_fclose64(FILE *stream)
 	return result;
 }
 static void storage_boundaries64(void);
+static void unicode_boundaries64(void);
 
 static long file_call_fixture64(long operation, long arg0, long arg1, long arg2)
 {
@@ -123,6 +135,7 @@ static void checkpoint64(unsigned int point)
 	assert(strcmp(openfile->filetop->data, expected[point]) == 0);
 	if (point < 7) { assert(file_opens64 == 0 && file_writes64 == 0); }
 	if (point == 1) {
+		unicode_boundaries64();
 		assert(cells64[1][0] == 0xd55c && cells64[1][1] == 0);
 		assert(cells64[1][2] == 0xae00 && cells64[1][3] == 0);
 	}
@@ -138,19 +151,29 @@ static void checkpoint64(unsigned int point)
 
 static unsigned long event64(void)
 {
-	if (event_at64 == 0) { storage_boundaries64(); }
+	if (input_failure64) { return (unsigned long) -5; }
+	if (extended64 == 2 && event_at64 == 1) {
+		assert(cells64[1][0] == 0xac00 && cells64[1][1] == 0);
+		assert(cells64[1][2] == ' ' && cells64[1][3] == 'B');
+		assert(cursor_visible64 && cursor_width64 == 2);
+	}
+	if (event_at64 == 0 && !extended64) { storage_boundaries64(); }
 	for (;;) {
-		assert(event_at64 < sizeof(events64) / sizeof(events64[0]));
-		struct NANO_EVENT64 event = events64[event_at64++];
+		assert(event_at64 < scenario_size64);
+		struct NANO_EVENT64 event = scenario64[event_at64++];
 
 		if (event.kind64 == 5) { checkpoint64(event.payload64); continue; }
-		if (event.kind64 == 2) {
-			if (event_at64 == 1 || events64[event_at64 - 2].kind64 != 2) {
+		if (event.kind64 == 2 && openfile != NULL) {
+			if (event_at64 == 1 || scenario64[event_at64 - 2].kind64 != 2) {
 				preedit_size64 = openfile->totsize;
 				preedit_undo64 = openfile->undotop;
 			} else {
 				assert(openfile->totsize == preedit_size64);
 				assert(openfile->undotop == preedit_undo64);
+			}
+			if (event_at64 > 1 && scenario64[event_at64 - 2].kind64 == 2 &&
+				scenario64[event_at64 - 2].payload64 != 0) {
+				assert(cursor_visible64 && cursor_width64 == 2);
 			}
 		}
 		if (event.kind64 == 4) {
@@ -173,6 +196,11 @@ static long tty64(long operation, long a1, long a2)
 	case TTY_ATTR: fg64 = (int) a1; bg64 = (int) a2; return 0;
 	case TTY_FLUSH: flushes64++; return 0;
 	case TTY_READKEY: return (long) event64();
+	case TTY_CURSOR:
+		assert((a1 == 0 || a1 == 1) && (a2 == 1 || a2 == 2));
+		cursor_visible64 = (int) a1; cursor_width64 = (int) a2;
+		cursor_calls64++; return 0;
+	case TTY_INPUT_MODE: return input_mode64;
 	default: assert(0); return -1;
 	}
 }
@@ -205,6 +233,8 @@ long syscall3(long nr, long a0, long a1, long a2)
 		}
 		assert(a0 == 1 || a0 == 2);
 		if (!raw64) { return a2; }
+		assert(!cursor_visible64);
+		screen_writes64++;
 		assert(fg64 >= 0 && bg64 >= 0);
 		const char *text = (const char *) a1;
 		size_t at = 0;
@@ -301,6 +331,96 @@ static void libc_boundaries64(void)
 	nano_optind64 = 0;
 }
 
+static void messages64(void)
+{
+	assert(strcmp(nano_message64("Write to File"), "저장할 파일") == 0);
+	input_mode64 = 0; errno = EIO;
+	nano_message_begin64(1);
+	assert(errno == EIO);
+	assert(strcmp(nano_message64("Error writing %s: %s"), "Error writing %s: %s") == 0);
+	assert(strcmp(nano_strerror64(EIO), "Input/output error") == 0);
+	input_mode64 = 1; /* An already started error must retain its snapshot. */
+	nano_message_begin64(0);
+	assert(strcmp(nano_message64("New File"), "New File") == 0);
+	nano_message_end64(); nano_message_end64();
+	assert(strcmp(nano_message64("New File"), "새 파일") == 0);
+	nano_message_begin64(1);
+	assert(strcmp(nano_message64("Error writing %s: %s"), "%s 저장 오류: %s") == 0);
+	assert(strcmp(nano_strerror64(EIO), "입출력 오류") == 0);
+	nano_message_end64();
+	input_mode64 = -22;
+	nano_message_begin64(1);
+	assert(strcmp(nano_message64("Out of memory"), "Out of memory") == 0);
+	nano_message_end64(); input_mode64 = 1;
+}
+
+static void unicode_boundaries64(void)
+{
+	static const char *const samples[] = {
+		"가", "\xc2\x80", "\xe0\xa0\x80", "\xf0\x90\x80\x80", "\xf4\x8f\xbf\xbf",
+		"\xc0\xaf", "\xed\xa0\x80", "\xe0\x80\x80", "\xf4\x90\x80\x80", "\xff",
+	};
+
+	for (size_t i = 0; i < sizeof(samples) / sizeof(samples[0]); i++) {
+		for (size_t n = 1; n <= strlen(samples[i]); n++) {
+			char *tight = malloc(n + 1);
+			uint32_t scalar;
+			size_t consumed;
+			wchar_t wide;
+
+			assert(tight != NULL);
+			memcpy(tight, samples[i], n); tight[n] = 0;
+			int result = utf8_decode64(tight, n, &scalar, &consumed);
+
+			assert(char_length(tight) == (int) consumed);
+			assert(mbtowide(&wide, tight) == (result == 0 ? (int) consumed : -1));
+			if (result == 0) { assert((uint32_t) wide == scalar); }
+			size_t at = 0;
+
+			while (at < n) {
+				size_t next = step_right(tight, at);
+
+				assert(next > at && next <= n && step_left(tight, next) == at);
+				at = next;
+			}
+			free(tight);
+		}
+	}
+	for (unsigned int first = 1; first < 256; first++) {
+		for (unsigned int second = 1; second < 256; second++) {
+			char bytes[] = { (char) first, (char) second, 0 };
+			uint32_t scalar;
+			size_t consumed;
+			wchar_t wide;
+			int result = utf8_decode64(bytes, 2, &scalar, &consumed);
+
+			assert(char_length(bytes) == (int) consumed);
+			assert(mbtowide(&wide, bytes) == (result == 0 ? (int) consumed : -1));
+			assert(step_left(bytes, consumed) == 0);
+		}
+	}
+	unsigned int seed = 12345;
+	for (int trial = 0; trial < 10000; trial++) {
+		char bytes[13];
+
+		for (size_t i = 0; i < 12; i++) {
+			seed = seed * 1664525U + 1013904223U; bytes[i] = (char) (seed >> 24);
+		}
+		bytes[12] = 0;
+		for (size_t at = 0; bytes[at] != 0;) {
+			size_t next = step_right(bytes, at);
+
+			assert(next > at && next <= 12 && step_left(bytes, next) == at);
+			at = next;
+		}
+	}
+	char *display = display_string("A가\xe3\033\177\xc2\x80", 0, COLS, TRUE, FALSE);
+
+	assert(strcmp(display, "A가\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd") == 0);
+	assert(breadth(display) == 7);
+	free(display);
+}
+
 static void storage_boundaries64(void)
 {
 	FILE *sentinel = (FILE *) (uintptr_t) 1, *stream;
@@ -338,6 +458,30 @@ static void storage_boundaries64(void)
 	read_file(stream, 3, "IN.TXT", FALSE);
 	assert(strcmp(openfile->filetop->data, "한글") == 0);
 	assert(openfile->filetop->next != NULL && openfile->filetop->next->data[0] == 0);
+	goto_line_posx(1, 0);
+	do_delete();
+	assert(strcmp(openfile->filetop->data, "글") == 0 && openfile->modified);
+	do_undo();
+	assert(strcmp(openfile->filetop->data, "한글") == 0);
+	do_right();
+	assert(openfile->current_x == 3);
+	do_backspace();
+	assert(strcmp(openfile->filetop->data, "글") == 0 && openfile->current_x == 0);
+	do_undo();
+	openfile->current_x = 0;
+	cut_text();
+	assert(openfile->filetop->data[0] == 0 && strcmp(cutbuffer->data, "한글") == 0);
+	paste_text();
+	assert(strcmp(openfile->filetop->data, "한글") == 0);
+	discard_until(NULL);
+	openfile->current = openfile->filetop;
+	openfile->current_x = 3;
+	openfile->mark = openfile->filetop; openfile->mark_x = 0;
+	assert(write_region_to_file("P0.TXT", NULL, OVERWRITE));
+	assert(saved_size64 == 4 && memcmp(saved64, "한\n", 4) == 0);
+	assert(strcmp(openfile->filetop->data, "한글") == 0 && openfile->modified);
+	assert(openfile->mark == openfile->filetop && openfile->current_x == 3);
+	openfile->mark = NULL; openfile->current_x = 0;
 	/* Use this real loaded buffer for serialization/failure tests, then restore
 	 * a fresh buffer before the interactive undo/search/replace scenario. */
 	linestruct *loaded = openfile->filetop;
@@ -392,11 +536,25 @@ static void storage_boundaries64(void)
 	assert(open_file("IN.TXT", TRUE, &stream) == 3 && fclose(stream) == 0);
 	/* Free loaded nodes and reset the actual editor buffer to its initial state. */
 	free_lines(openfile->filetop);
+	discard_until(NULL);
 	openfile->filetop = make_new_node(NULL); openfile->filetop->data = copy_of("");
 	openfile->filebot = openfile->current = openfile->edittop = openfile->filetop;
 	openfile->totsize = 0; openfile->current_x = 0; openfile->modified = FALSE;
 	free(openfile->filename); openfile->filename = copy_of("");
 	free(openfile->statinfo); openfile->statinfo = NULL;
+	openfile->last_saved = NULL;
+	static const unsigned char damaged[] = { 'A', 0, 27, 127, 0xe3, 0x80, 'Z', '\n' };
+	memcpy(source64, damaged, sizeof(damaged)); source_size64 = sizeof(damaged);
+	assert(open_file("IN.TXT", TRUE, &stream) == 3);
+	read_file(stream, 3, "IN.TXT", FALSE);
+	assert(write_file("P0.TXT", NULL, OVERWRITE, TRUE));
+	assert(saved_size64 == sizeof(damaged) && memcmp(saved64, damaged, sizeof(damaged)) == 0);
+	free_lines(openfile->filetop);
+	free(openfile->statinfo); openfile->statinfo = NULL;
+	free(openfile->filename); openfile->filename = copy_of("");
+	openfile->filetop = make_new_node(NULL); openfile->filetop->data = copy_of("");
+	openfile->filebot = openfile->current = openfile->edittop = openfile->filetop;
+	openfile->totsize = 0; openfile->current_x = 0; openfile->modified = FALSE;
 	openfile->last_saved = NULL;
 	file_opens64 = file_writes64 = sync_calls64 = 0;
 	saved_exists64 = 0; saved_size64 = 0;
@@ -412,6 +570,8 @@ static void curses_boundaries64(void)
 	assert(nano_waddnstr64(window, "한A", -1) == OK);
 	assert(nano_wrefresh64(window) == OK && cells64[1][0] == 0xd55c);
 	assert(cells64[1][1] == 0 && cells64[1][2] == 'A');
+	int writes = screen_writes64;
+	assert(nano_wrefresh64(window) == OK && screen_writes64 == writes);
 	assert(nano_wmove64(window, 0, 1) == OK && nano_waddch64(window, 'X') == OK);
 	assert(nano_wrefresh64(window) == OK);
 	assert(cells64[1][0] == ' ' && cells64[1][1] == 'X');
@@ -432,11 +592,25 @@ static void curses_boundaries64(void)
 	assert(event_at64 == 0);
 	assert(nano_ungetch64('q') == OK && nano_ungetch64('r') == ERR);
 	assert(nano_wgetch64(window) == 'q' && event_at64 == 0);
-	assert(nano_curs_set64(1) == ERR && errno == ENOSYS);
+	assert(nano_wmove64(window, 0, 0) == OK);
+	assert(nano_waddnstr64(window, "A한B", -1) == OK && nano_wclrtoeol64(window) == OK);
+	assert(nano_wmove64(window, 0, 0) == OK && nano_nodelay64(window, FALSE) == OK);
+	static const struct NANO_EVENT64 composition[] = { { 2, 0xac00, 0 }, { 1, 'x', 0 } };
+	scenario64 = composition; scenario_size64 = 2; extended64 = 2;
+	assert(nano_wgetch64(window) == 'x');
+	assert(cells64[1][0] == 'A' && cells64[1][1] == 0xd55c);
+	assert(cells64[1][2] == 0 && cells64[1][3] == 'B' && cursor_width64 == 1);
+	assert(nano_curs_set64(1) == 1 && cursor_visible64 == 1);
+	assert(nano_curs_set64(0) == 1 && cursor_visible64 == 0);
+	assert(nano_curs_set64(2) == 0 && cursor_visible64 == 1);
+	assert(nano_curs_set64(3) == ERR && errno == EINVAL);
 	assert(nano_halfdelay64(1) == ERR && nano_napms64(10) == ERR);
 	assert(nano_endwin64() == OK && raw64 == 0);
 	rows64 = 6; cols64 = 9; generation64++;
 	allocations_before_failure64 = 0;
+	assert(nano_wrefresh64(stdscr) == ERR && LINES == 5 && COLS == 8);
+	allocations_before_failure64 = -1;
+	allocations_before_failure64 = 1;
 	assert(nano_wrefresh64(stdscr) == ERR && LINES == 5 && COLS == 8);
 	allocations_before_failure64 = -1;
 	assert(nano_wrefresh64(stdscr) == OK && LINES == 6 && COLS == 9);
@@ -446,13 +620,30 @@ static void curses_boundaries64(void)
 
 int main(int argc, char **arguments)
 {
-	(void) arguments;
-	if (argc > 1) { curses_boundaries64(); return 0; }
+	if (argc > 1 && strcmp(arguments[1], "curses") == 0) {
+		curses_boundaries64(); return 0;
+	}
+	messages64();
 	libc_boundaries64();
 	char *argv[] = { "nano", NULL };
+	static const struct NANO_EVENT64 exit_only[] = { { 1, 24, 0 } };
+
+	if (argc > 1) {
+		extended64 = 1; scenario64 = exit_only; scenario_size64 = 1;
+		if (strcmp(arguments[1], "tiny") == 0) { rows64 = 1; cols64 = 1; }
+		if (strcmp(arguments[1], "inputfail") == 0) { input_failure64 = 1; }
+		if (strcmp(arguments[1], "oom") == 0) { allocations_before_failure64 = 0; }
+	}
 
 	if (setjmp(exited64) == 0) { nano_entry64(1, argv); assert(0); }
+	if (input_failure64 || (argc > 1 && strcmp(arguments[1], "oom") == 0)) {
+		assert(exit_status64 == 1 && raw64 == 0 && !cursor_visible64);
+		assert(file_opens64 == 0 && file_writes64 == 0);
+		return 0;
+	}
 	assert(exit_status64 == 0 && raw64 == 0);
+	assert(cursor_calls64 > 0 && !cursor_visible64);
+	if (extended64) { return 0; }
 	assert(checkpoints64 == 7 && flushes64 > 10);
 	assert(event_at64 == sizeof(events64) / sizeof(events64[0]));
 	assert(file_opens64 == 1 && file_writes64 > 0);

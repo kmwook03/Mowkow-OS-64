@@ -6,6 +6,7 @@
 #include "include/nano_utf64.h"
 #include "include/nano_curses64.h"
 #include "include/nano_posix64.h"
+#include "include/nano_message64.h"
 #include "config.h"
 #include "revision.h"
 #include "libc/ctype.h"

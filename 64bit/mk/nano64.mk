@@ -1,6 +1,6 @@
 # Private freestanding nano foundation; no hosted configure or generated config.
 # Each header is audited directly, with the same strict policy as the CRT.
-# These archives are not a complete nano executable or a runtime acceptance gate.
+# The archives and executable use the same inventory on both architectures.
 X64_AR ?= x86_64-elf-ar
 A64_AR ?= aarch64-none-elf-ar
 NANO64_COMPAT_BUILD = $(BUILD64_DIR)/nano-compat
@@ -35,7 +35,7 @@ nano64-compat : $(NANO64_COMPAT_BUILD)/x86_64/compat64.a \
 
 -include $(NANO64_X64_OBJS:.o=.d) $(NANO64_A64_OBJS:.o=.d)
 
-# Standalone P0 artifacts, deliberately absent from image payload discovery.
+# Build once, then install the same ELF under the public editor name.
 NANO64_STAGE = $(BUILD64_DIR)/nano-upstream
 NANO64_STAGE_STAMP = $(NANO64_STAGE)/.prepared.json
 NANO64_VENDOR_INPUTS = $(wildcard third_party/nano/src/*) third_party/nano/source.json
@@ -93,6 +93,14 @@ $(NANO64_APP_BUILD)/aarch64/nano.elf : $(NANO64_A64_VENDOR_OBJS) $(NANO64_A64_PO
 
 .PHONY : nano64-apps
 nano64-apps : $(NANO64_APP_BUILD)/x86_64/nano.elf $(NANO64_APP_BUILD)/aarch64/nano.elf
+
+$(BUILD64_DIR)/app/나노/나노.elf : $(NANO64_APP_BUILD)/x86_64/nano.elf
+	@$(MKDIR) $(dir $@)
+	$(COPY) $< $@
+
+$(A64_APP_BUILD_DIR)/나노.elf : $(NANO64_APP_BUILD)/aarch64/nano.elf
+	@$(MKDIR) $(dir $@)
+	$(COPY) $< $@
 
 -include $(NANO64_X64_PORT_OBJS:.o=.d) $(NANO64_A64_PORT_OBJS:.o=.d) \
 	$(NANO64_X64_VENDOR_OBJS:.o=.d) $(NANO64_A64_VENDOR_OBJS:.o=.d)

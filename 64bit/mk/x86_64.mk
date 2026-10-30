@@ -129,7 +129,7 @@ $(BUILD64_DIR)/app/$(1)/$(1).elf : $(BUILD64_DIR)/app/$(1)/$(1).o $$(APP64_CRT_O
 	$$(X64_CC) $$(APP64_LDFLAGS) -Wl,-Map=$(BUILD64_DIR)/app/$(1)/$(1).map -o $$@ $(BUILD64_DIR)/app/$(1)/$(1).o $$(APP64_CRT_OBJS)
 endef
 
-$(foreach app,$(APP64_NAMES),$(eval $(call APP64_RULES,$(app))))
+$(foreach app,$(APP64_SINGLE_NAMES),$(eval $(call APP64_RULES,$(app))))
 
 # -- 이미지 만들기 --
 # 부트 섹터, 2단계 로더, 커널은 예약 영역에 넣고 나머지는 파일로 넣는다.

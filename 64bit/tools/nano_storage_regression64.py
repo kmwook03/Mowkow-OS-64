@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Exercise private upstream nano storage on disposable IDE/AHCI images.
+"""Exercise the shipped GNU nano storage on disposable IDE/AHCI images.
 
-Requires built x86_64 and nano64-apps artifacts, QEMU and mtools mcopy. The
-normal image/editor are unchanged. Logs survive; temporary images are removed.
+Requires built x86_64 artifacts, QEMU and mtools mcopy.
+Logs survive; temporary images are removed.
 """
 from __future__ import annotations
 
@@ -31,18 +31,18 @@ class NanoConsole(Console):
     def edit(self, filename: str, insertion: str = "", end: bool = False,
              extra_options: str = "") -> None:
         before = len(self.text())
-        self.type(f"nano9 {extra_options}{filename}")
+        self.type(f"나노 {extra_options}{filename}")
         self._send(["ret"])
-        self.wait_text(before, "^X Exit")
+        self.wait_text(before, "^X 종료")
         if end:
             self._send(["ctrl", "e"])
         if insertion:
             self.type(insertion)
         before_save = len(self.text())
         self._send(["ctrl", "o"])
-        self.wait_text(before_save, "Write to File")
+        self.wait_text(before_save, "저장할 파일")
         self._send(["ret"])
-        self.wait_text(before_save, "Wrote ")
+        self.wait_text(before_save, "줄 저장됨")
         self._send(["ctrl", "x"])
         self._wait_after(before, PROMPT, CMD_TIMEOUT, "nano exit")
         result = self.text()[before:]
@@ -53,18 +53,18 @@ class NanoConsole(Console):
 
     def oversized_save(self) -> None:
         before = len(self.text())
-        self.type("nano9 EXACT.TXT")
+        self.type("나노 EXACT.TXT")
         self._send(["ret"])
-        self.wait_text(before, "^X Exit")
+        self.wait_text(before, "^X 종료")
         self._send(["ctrl", "e"])
         self.type("x")
         before_save = len(self.text())
         self._send(["ctrl", "o"])
-        self.wait_text(before_save, "Write to File")
+        self.wait_text(before_save, "저장할 파일")
         self._send(["ret"])
         self.wait_text(before_save, "Save exceeds 64 KiB; file was not changed")
         self._send(["ctrl", "x"])
-        self.wait_text(before_save, "Save modified buffer?")
+        self.wait_text(before_save, "변경한 내용을 저장할까요?")
         self.type("n")
         self._wait_after(before, PROMPT, CMD_TIMEOUT, "oversized save discard")
         if self.text()[before:].count("exit 0\n") != 1:
@@ -86,7 +86,7 @@ def run(ahci: bool, log: Path) -> None:
         fixtures = {"SEED.TXT": "시작\n".encode(), "DOS.TXT": b"one\r\ntwo\r\n",
                     "NOEND.TXT": b"tail", "EMPTY.TXT": b"", "ALIAS.TXT": b"keep\n",
                     "EXACT.TXT": b"a" * 65535 + b"\n", "LARGE.TXT": b"b" * 65537}
-        specs = [f"nano9={ROOT / 'build64/nano-app/x86_64/nano.elf'}",
+        specs = [f"나노={ROOT / 'build64/app/나노/나노.elf'}",
                  f"cat={ROOT / 'build64/app/cat/cat.elf'}"]
         for name, content in fixtures.items():
             (folder / name).write_bytes(content)
@@ -106,7 +106,7 @@ def run(ahci: bool, log: Path) -> None:
             console.edit("EXACT.TXT")
             console.oversized_save()
             before = len(console.text())
-            console.type("nano9 LARGE.TXT")
+            console.type("나노 LARGE.TXT")
             console._send(["ret"])
             console.wait_text(before, "Only regular files up to 64 KiB can be opened")
             console._send(["ctrl", "x"])
