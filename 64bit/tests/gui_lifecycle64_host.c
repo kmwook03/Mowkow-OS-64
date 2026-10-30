@@ -80,6 +80,11 @@ void io_out8(uint16_t port, uint8_t value)
 
 		render_checked64 = 1;
 		assert(con->render_users != 0 && irq64 == 0);
+		assert(!con->caret_drawn);
+		console64_cursor_update(50);
+		console_cursor_focus64(con, 0);
+		console_cursor_focus64(con, 1);
+		assert(!con->caret_drawn && con->render_users != 0);
 		assert(gui_toggle_window_checked64() == -16);
 		con->close_ready = 1;
 		assert(gui_close_console_checked64(con) == -16);
@@ -221,6 +226,17 @@ static void verify64(void)
 {
 	assert(irq64 == 0);
 	assert(gui_context64.ready);
+	assert(gui_context64.status != NULL);
+	if (gui_context64.mode == GUI64_MODE_FULL) {
+		assert(gui_context64.status->height == -1);
+		assert(gui_context64.taskbar == NULL || gui_context64.taskbar->height == -1);
+		assert(gui_context64.console->bysize == gui_context64.scrny);
+	} else {
+		assert(gui_context64.status->height == gui_context64.ctl->top - 1);
+	}
+	assert(gui_context64.status->buf == gui_context64.status_buf);
+	assert(gui_context64.status->vy0 == gui_context64.work_height);
+	assert(gui_context64.work_height + 28 == gui_context64.scrny);
 	for (int h = 0; h <= gui_context64.ctl->top; h++) {
 		struct SHEET64 *sheet = gui_context64.ctl->sheets[h];
 		assert(sheet->height == h && sheet->flags != 0 && sheet->buf != NULL);
@@ -229,6 +245,8 @@ static void verify64(void)
 		struct GUI64_WIN *win = &gui_context64.wins[i];
 		assert(win->buffer == win->sht->buf && win->buffer_size == win->sht->buf_size);
 		assert(win->published || win->sht->height == -1);
+		assert(win->sht->vy0 + win->sht->bysize <=
+			(win->decorated ? gui_context64.work_height : gui_context64.scrny));
 	}
 	for (int y = 0; y < HEIGHT64; y++) {
 		for (int x = WIDTH64; x < STRIDE64; x++) { assert(vram64[y * STRIDE64 + x] == 0xa5); }
@@ -267,16 +285,23 @@ static void init_failures64(void)
 {
 	struct BOOTINFO64 info = info64();
 	for (int kind = 0; kind < 3; kind++) {
-		for (int stage = 1; stage <= (kind == 0 ? 5 : 4); stage++) {
+		for (int stage = 1; stage <= 5; stage++) {
 			struct SHEET64 *sheet;
 			no_failures64();
 			if (kind == 0) { fail_alloc64 = alloc_calls64 + stage; }
 			if (kind == 1) { fail_sheet64 = sheet_calls64 + stage; }
 			if (kind == 2) { fail_bind64 = bind_calls64 + stage; }
 			sheet = gui64_init(&info);
-			if ((kind == 0 && stage == 5) || (kind != 0 && stage == 4)) {
+			if (stage == 5) {
 				assert(sheet != NULL && gui_context64.taskbar == NULL);
 				console64_init_on_sheet(&info, sheet);
+				assert(gui_context64.status->height == -1);
+				assert(console64_active()->height == 240);
+				assert(gui_toggle_window_checked64() == 0);
+				assert(gui_context64.status->height == gui_context64.ctl->top - 1);
+				console_toggle_language64(console64_active());
+				gui_update_status64();
+				assert(gui_context64.status_mode == 2); /* default Hangul -> English */
 				cleanup64();
 			} else { assert(sheet == NULL && live64 == 0 && !gui64_available()); }
 			no_failures64();
@@ -287,7 +312,7 @@ static void init_failures64(void)
 		}
 	}
 	no_failures64();
-	fail_sheet64 = sheet_calls64 + 3;
+	fail_sheet64 = sheet_calls64 + 4;
 	fail_free64 = 1;
 	assert(gui64_init(&info) == NULL && live64 != 0 && !gui64_available());
 	no_failures64();

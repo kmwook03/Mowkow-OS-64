@@ -14,7 +14,7 @@ def run_fixture64(fixture_name: str, extra_sources: tuple[str, ...] = ()) -> Non
     compiler = os.environ.get("HOST_CC", "cc")
     source = ROOT / "64bit" / "src64"
     flags = ["-O2", "-std=c11", "-Wall", "-Wextra", "-Werror",
-             "-fsanitize=undefined", "-fno-sanitize-recover=all",
+             "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-no-pie",
              "-ffunction-sections", "-fdata-sections",
              "-idirafter", str(source / "include")]
     with tempfile.TemporaryDirectory(prefix="gui-lifecycle64-") as temporary:
@@ -44,7 +44,10 @@ def run_fixture64(fixture_name: str, extra_sources: tuple[str, ...] = ()) -> Non
              "-Wl,--gc-sections", "-o", str(executable)],
             check=True, cwd=ROOT,
         )
-        subprocess.run([str(executable)], check=True, cwd=ROOT, timeout=15)
+        subprocess.run(
+            [str(executable)], check=True, cwd=ROOT, timeout=30,
+            env={**os.environ, "ASAN_OPTIONS": "detect_leaks=0"},
+        )
 
 
 class ConsoleState64Test(unittest.TestCase):

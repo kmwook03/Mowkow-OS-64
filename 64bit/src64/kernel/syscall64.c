@@ -267,6 +267,9 @@ static uint64_t syscall_tty64(struct PROCESS64 *process,
 	uint64_t cols;
 
 	if (process->console == NULL) {
+		if (frame->rdi == TTY_CURSOR || frame->rdi == TTY_INPUT_MODE) {
+			return (uint64_t) -22;
+		}
 		return (uint64_t) -1;
 	}
 	switch (frame->rdi) {
@@ -310,6 +313,12 @@ static uint64_t syscall_tty64(struct PROCESS64 *process,
 	case TTY_FLUSH:
 		console64_flush();
 		break;
+	case TTY_CURSOR:
+		if (row > 1 || col < 1 || col > 2) { return (uint64_t) -22; }
+		return (uint64_t) console64_cursor_con(process->console, (int) row,
+			(unsigned int) col);
+	case TTY_INPUT_MODE:
+		return (uint64_t) console64_input_mode_con(process->console);
 	default:
 		return (uint64_t) -1;
 	}

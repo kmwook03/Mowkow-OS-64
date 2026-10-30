@@ -90,6 +90,16 @@ void tty_flush(void)
 	syscall1(SYS_TTY, TTY_FLUSH);
 }
 
+long tty_cursor(int visible, int cells)
+{
+	return syscall3(SYS_TTY, TTY_CURSOR, visible, cells);
+}
+
+long tty_input_mode(void)
+{
+	return syscall1(SYS_TTY, TTY_INPUT_MODE);
+}
+
 /* A zero/oversized count cannot advance safely, even after a partial write. */
 static int write_all64(const char *s, size_t len)
 {

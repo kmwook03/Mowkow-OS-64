@@ -299,7 +299,7 @@ static void guarded_console64(void)
 	con.cursor_y = 19;
 	scroll_if_needed64(&con);
 	for (int y = 1; y < 4; y++) { assert(pixels[y * 23 + 1] == 7); }
-	for (int y = 4; y < 20; y++) { assert(pixels[y * 23 + 1] == color_bg); }
+	for (int y = 4; y < 20; y++) { assert(pixels[y * 23 + 1] == con.color_bg); }
 	saved = con;
 	console64_attach_sheet(&con, sheet, 2, 1, 16, 19);
 	assert(memcmp(&con, &saved, sizeof(con)) == 0);

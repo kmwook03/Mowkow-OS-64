@@ -139,6 +139,7 @@ void gui64_bind_console(struct SHEET64 *sheet, struct CONSOLE64 *con)
 {
 	assert(sheet != NULL && con != NULL);
 }
+void gui_update_status64(void) { }
 struct SHEET64 *gui64_init(const struct BOOTINFO64 *info)
 {
 	assert(info != NULL);
@@ -326,7 +327,7 @@ int main(void)
 	assert(boot->dirty_valid != 0);
 	int before = refreshes64;
 	console64_flush();
-	assert(refreshes64 == before + 1 && boot->dirty_valid == 0);
+	assert(refreshes64 == before + 2 && boot->dirty_valid == 0 && boot->caret_drawn);
 	console64_set_raw(0);
 	assert(console64_is_raw() == 0 && boot->cursor_x == 0 && boot->composing.state == 0);
 	console64_write("A", 1);

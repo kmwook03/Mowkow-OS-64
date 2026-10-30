@@ -36,6 +36,16 @@
 #define TTY_CLEAR   4   /* rsi=행, rdx=열, r10=행 수, r8=열 수 */
 #define TTY_ATTR    5   /* rsi=글자색, rdx=배경색 (팔레트 인덱스) */
 #define TTY_FLUSH   6   /* 모아 둔 갱신 영역을 화면에 올린다 */
+#define TTY_CURSOR  7   /* rsi=표시 희망(0/1), rdx=폭(1/2칸); 오류 -22 */
+#define TTY_INPUT_MODE 8 /* 호출자 콘솔의 모드/세대; 오류 -22 */
+
+/* Raw caret uses the last TTY_MOVE, independently of subsequent output.
+ * Raw entry defaults to visible/one cell; resize hides it until TTY_MOVE.
+ * TTY_CURSOR changes visibility/width without moving it. Exit hides it until
+ * cooked input resumes. INPUT_MODE is always nonnegative on success.
+ */
+#define TTY_INPUT_HANGUL(v) ((unsigned int) ((v) & 1U))
+#define TTY_INPUT_GEN(v) ((unsigned int) (((v) >> 1) & 0xffffffffUL))
 
 /*
  * TTY_SIZE의 반환값. 칸 너비는 8픽셀이라 한글 한 글자가 두 칸이다.

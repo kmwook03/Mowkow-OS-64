@@ -44,9 +44,19 @@ struct CONSOLE64 {
 	uint16_t height;
 	uint16_t cursor_x;
 	uint16_t cursor_y;
+	/* Output position above; raw caret stays at the last TTY_MOVE request.
+	 * Only the outer renderer restores/saves the underline, under irq-save.
+	 */
+	uint16_t caret_x, caret_y, caret_cells;
+	uint16_t caret_saved_x, caret_saved_y, caret_saved_width;
+	uint8_t caret_saved[CONSOLE64_HANGUL_W];
+	int caret_wanted, caret_phase, caret_focused, caret_drawn, caret_valid;
+	uint64_t caret_activity;
+	uint8_t color_fg, color_bg;
 	char input_line[CONSOLE64_LINE_MAX];
 	uint16_t input_len;
 	int lang_hangul;
+	uint32_t language_generation;
 	struct HANGUL64 composing;
 	struct SHEET64 *sheet;
 	uint16_t ox;
@@ -110,6 +120,16 @@ void console_clear_screen64(struct CONSOLE64 *con);
 void console_prompt64(struct CONSOLE64 *con);
 void console_draw_preedit64(struct CONSOLE64 *con);
 void console_erase_preedit64(struct CONSOLE64 *con);
+void console_reserve_preedit64(struct CONSOLE64 *con);
+/* These short transactions never sleep. Tick/focus defer pixel access while
+ * a renderer is preempted. Caller holds the GUI guard before lifecycle changes.
+ */
+void console_cursor_focus64(struct CONSOLE64 *con, int focused);
+void console_cursor_wait64(struct CONSOLE64 *con, int waiting);
+void console_cursor_activity64(struct CONSOLE64 *con);
+void console_cursor_tick64(struct CONSOLE64 *con, uint64_t ticks);
+void console_cursor_detach64(struct CONSOLE64 *con);
+void console_toggle_language64(struct CONSOLE64 *con);
 /* line aliases the editor buffer; callees must snapshot it before readline. */
 void console_dispatch_command64(struct CONSOLE64 *con, const char *line);
 /* pump/wait run in task context; pump may sleep with IRQs disabled and restores

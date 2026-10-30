@@ -206,9 +206,27 @@ static void puts_progress64(void)
 	assert(arguments64[2] == INT_MAX - 1L);
 }
 
+static void tty_wrappers64(void)
+{
+	long reply = -22;
+
+	reset64(&reply, 1);
+	assert(tty_cursor(-1, 2) == -22 && calls64 == 1 && number64 == SYS_TTY);
+	assert(arguments64[0] == 7 && arguments64[1] == -1 && arguments64[2] == 2);
+	reply = 0x1ffffffffL;
+	reset64(&reply, 1);
+	assert(tty_input_mode() == reply && calls64 == 1 && number64 == SYS_TTY);
+	assert(arguments64[0] == 8);
+	assert(TTY_INPUT_HANGUL(reply) == 1 && TTY_INPUT_GEN(reply) == 0xffffffffU);
+	reply = -22;
+	reset64(&reply, 1);
+	assert(tty_input_mode() == -22);
+}
+
 int main(void)
 {
 	io_wrappers64();
 	puts_progress64();
+	tty_wrappers64();
 	return 0;
 }

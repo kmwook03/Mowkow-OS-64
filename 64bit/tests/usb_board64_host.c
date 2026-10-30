@@ -26,7 +26,7 @@ static char serial64[16384];
 static size_t serial_used64;
 static uint8_t pixels64[800 * 600];
 static struct SHEET64 sheet64;
-static int console_token64;
+static int console_token64, cursor_updates64, system_keys64, console_keys64;
 struct MEMMAN64 memman64;
 
 static struct CONSOLE64 *console64_token(void)
@@ -104,14 +104,23 @@ struct CONSOLE64 *console64_active(void) { return console64_token(); }
 void console64_init_on_sheet(const struct BOOTINFO64 *info, struct SHEET64 *sheet)
 {
 	assert(info->bpp == 32 && sheet == &sheet64);
+	assert(sheet->bysize == 600);
 }
 int console64_start_task(struct CONSOLE64 *console) { assert(console != NULL); return 0; }
 int console64_post_input_key(struct CONSOLE64 *console, uint16_t key)
 {
 	(void) console; (void) key;
+	assert(key != 0x57);
+	console_keys64++;
 	return 0;
 }
 void console64_reap_closed(void) { reaps64++; }
+void console64_cursor_update(uint64_t ticks)
+{
+	assert(ticks == 123);
+	cursor_updates64++;
+}
+uint64_t arch64_timer_ticks(void) { return 123; }
 struct SHEET64 *gui64_init(const struct BOOTINFO64 *info)
 {
 	sheet64.buf = pixels64;
@@ -120,6 +129,11 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *info)
 	return &sheet64;
 }
 struct CONSOLE64 *gui64_focused_console(void) { return console64_token(); }
+int gui64_handle_key(uint16_t key)
+{
+	system_keys64++;
+	return key == 0x57;
+}
 void gui64_mouse_event(int32_t dx, int32_t dy, int32_t buttons)
 {
 	(void) dx; (void) dy; (void) buttons;
@@ -296,7 +310,15 @@ int xhci64_keyboard_poll(uintptr_t base, uint32_t slot,
 {
 	assert(base == 0x1000 && slot == 1 && hid->endpoint_address == 0x81);
 	assert(selected64 == keyboard_controller64 && poll_port_valid64());
-	(void) report; polls64[selected64]++;
+	polls64[selected64]++;
+	if (mode64 == NORMAL64) {
+		memset(report, 0, 8);
+		/* F11 press/release, then two ordinary press/release pairs. */
+		if (polls64[selected64] == 1) { report[2] = 0x44; }
+		if (polls64[selected64] == 3) { report[2] = 4; }
+		if (polls64[selected64] == 5) { report[2] = 5; }
+		return 8;
+	}
 	return mode64 == KEY_POLL64 ? -3 : 0;
 }
 int xhci64_hid_poll(uintptr_t base, uint32_t slot,
@@ -320,10 +342,13 @@ int main(void)
 		memset(quarantined64, 0, sizeof(quarantined64));
 		memset(enum_port64, 0, sizeof(enum_port64));
 		memset(starts64, 0, sizeof(starts64)); memset(polls64, 0, sizeof(polls64));
-		mouse_events64 = loops64 = beats64 = reaps64 = 0;
+		mouse_events64 = loops64 = beats64 = reaps64 = cursor_updates64 = 0;
+		system_keys64 = console_keys64 = 0;
 		clock64 = serial_used64 = 0;
 		assert(setjmp(finish64) == 0 ? (aarch64_high_main(), 0) : loops64 == 6);
 		assert(starts64[0] == 1 && starts64[1] == 1 && beats64 >= 5 && reaps64 == 6);
+		assert(cursor_updates64 == 6);
+		if (mode64 == NORMAL64) { assert(system_keys64 == 6 && console_keys64 == 5); }
 		if (mode64 == MOUSE_PREFIX64 || mode64 == MOUSE_CONFIG64) {
 			assert(quarantined64[keyboard_controller64 ^ 1U] == 1);
 			assert(polls64[keyboard_controller64] == 6 && mouse_events64 == 0);

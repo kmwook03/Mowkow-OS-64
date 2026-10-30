@@ -9,7 +9,8 @@
 
 struct CONSOLE64;
 
-/* 컴포지터를 세우고 바탕화면 + 콘솔 시트를 만든다.
+/* 컴포지터를 세우고 바탕화면 + 콘솔 시트를 만든다. 초기 전체화면은 화면
+   전체 높이를 쓰고, 창 모드의 배치는 하단 상태 영역을 제외한다.
    콘솔 시트를 돌려주며, 실패하면 NULL (호출자는 LFB 직접 그리기로 되돌아간다). */
 struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info);
 int gui64_available(void);
@@ -44,6 +45,8 @@ void gui64_raise_bottom_window(void);
    커널 메인 루프와 raw 모드 키 대기 루프가 둘 다 먼저 부른다 -- 그래야
    앱이 콘솔을 쥐고 있는 동안에도 포인터가 살아 있다. */
 int gui64_handle_system_event(const struct EVENT64 *event);
+/* Shared keyboard shortcuts, also used by USB boards without PS/2 decoding. */
+int gui64_handle_key(uint16_t key);
 
 /* init_mouse64에 넘길 디코더. 소유자는 gui64다. */
 struct MOUSE_DEC64 *gui64_mouse_dec(void);
