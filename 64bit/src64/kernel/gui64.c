@@ -19,11 +19,12 @@
 #include <sheet64.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <syscall64.h>
 #include <window64.h>
 
-/* 창 크기와 위치는 화면 비례다. 높이와 위치는 800x600일 때 예전의 고정값
-   (400, (64,80))과 같은 값이 나오도록 고른 비율이고, 너비만 그 4/5에서
-   다시 70%로 줄인 14/25다. */
+/* Window width uses 14/25 of the screen; height uses 2/3 of the workspace
+ * above the footer. Positions retain the existing screen-relative cascade.
+ */
 #define GUI64_WIN_W_NUM 14
 #define GUI64_WIN_W_DEN 25
 #define GUI64_WIN_H_NUM 2
@@ -47,10 +48,11 @@
 #define GUI64_MAX_WINS 8
 #define GUI64_TITLE_MAX 24
 
-/* 작업 표시줄. 커서 바로 아래에 예약된 띠라서 창을 아무리 올려도 그 위로는
-   못 간다 (raise_win). 전체 화면 모드에서는 숨는다 -- 콘솔 0의 전체 화면이
-   작업 표시줄까지 덮는다는 게 계획의 결정이다. */
+/* Window mode shares one footer between the optional taskbar and IME badge.
+ * Fullscreen hides both and returns the entire screen to the console.
+ */
 #define GUI64_BAR_H        28
+#define GUI64_STATUS_W     32
 #define GUI64_BAR_ENTRY_W 128
 #define GUI64_BAR_ENTRY_H  22
 #define GUI64_BAR_GAP       4
@@ -86,6 +88,7 @@ struct GUI_ALLOCATION64 {
 struct GUI_CONTEXT64 {
 	struct SHTCTL64 *ctl;
 	struct SHEET64 *back, *console, *cursor, *taskbar;
+	struct SHEET64 *status;
 	uint8_t *back_buf, *console_buf, *taskbar_buf;
 	size_t screen_size, console_buf_size, taskbar_buf_size;
 	struct GUI64_WIN wins[GUI64_MAX_WINS];
@@ -93,8 +96,12 @@ struct GUI_CONTEXT64 {
 	struct SHEET64 *key_win, *drag;
 	int32_t mmx, mmy, btn_prev;
 	uint8_t cursor_buf[GUI64_CURSOR_SIZE * GUI64_CURSOR_SIZE];
+	uint8_t status_buf[GUI64_STATUS_W * GUI64_BAR_H];
+	struct CONSOLE64 *status_owner;
+	int64_t status_mode;
+	const uint8_t *status_font;
 	struct MOUSE_DEC64 mdec;
-	int32_t mx, my, scrnx, scrny, win_w, win_h, win_x, win_y;
+	int32_t mx, my, scrnx, scrny, work_height, win_w, win_h, win_x, win_y;
 	int mode, ready;
 	/* Failed/post-commit frees retain ownership here until a later retry. */
 	struct GUI_ALLOCATION64 retired[GUI64_MAX_WINS];
@@ -102,14 +109,16 @@ struct GUI_CONTEXT64 {
 
 static struct GUI_CONTEXT64 gui_context64 = { .mmx = -1 };
 
+static void gui_status_update64(void);
+
 static int gui_release_init64(void)
 {
 	uint8_t **buffers[] = { &gui_context64.taskbar_buf,
 		&gui_context64.console_buf, &gui_context64.back_buf };
 	size_t sizes[] = { gui_context64.taskbar_buf_size,
 		gui_context64.console_buf_size, gui_context64.screen_size };
-	struct SHEET64 *sheets[] = { gui_context64.taskbar, gui_context64.cursor,
-		gui_context64.console, gui_context64.back };
+	struct SHEET64 *sheets[] = { gui_context64.taskbar, gui_context64.status,
+		gui_context64.cursor, gui_context64.console, gui_context64.back };
 	int status;
 
 	for (size_t i = 0; i < sizeof(sheets) / sizeof(sheets[0]); i++) {
@@ -246,6 +255,9 @@ static void raise_win(struct SHEET64 *sht)
 	if (gui_context64.taskbar != NULL && gui_context64.taskbar->height >= 0) {
 		sheet64_updown(gui_context64.taskbar, gui_context64.ctl->top);
 	}
+	if (gui_context64.status != NULL && gui_context64.status->height >= 0) {
+		sheet64_updown(gui_context64.status, gui_context64.ctl->top);
+	}
 	if (gui_context64.cursor != NULL) {
 		sheet64_updown(gui_context64.cursor, gui_context64.ctl->top);
 	}
@@ -263,7 +275,9 @@ static void taskbar_redraw(void)
 	uint8_t bg, fg;
 	struct SURFACE64 surface = sheet64_surface(gui_context64.taskbar);
 	struct SURFACE64 text;
+	int32_t available = gui_context64.scrnx - GUI64_STATUS_W;
 
+	gui_status_update64();
 	if (gui_context64.taskbar == NULL || gui_context64.taskbar->height < 0) {
 		return;
 	}
@@ -272,7 +286,7 @@ static void taskbar_redraw(void)
 	boxfill64(&surface, COL64_FFFFFF, 0, 0, gui_context64.scrnx - 1, 0);
 	for (i = 0; i < gui_context64.win_count; i++) {
 		taskbar_entry_rect(i, &x0, &y0);
-		if (x0 + GUI64_BAR_ENTRY_W > gui_context64.scrnx) {
+		if (x0 + GUI64_BAR_ENTRY_W > available) {
 			break;
 		}
 		if (!gui_context64.wins[i].published) { continue; }
@@ -299,16 +313,15 @@ static void taskbar_redraw(void)
 
 static void taskbar_show(int on)
 {
-	if (gui_context64.taskbar == NULL) {
-		return;
-	}
 	if (on != 0) {
-		if (gui_context64.taskbar->height < 0) {
+		if (gui_context64.taskbar != NULL) {
 			sheet64_updown(gui_context64.taskbar, gui_context64.ctl->top);
-			sheet64_updown(gui_context64.cursor, gui_context64.ctl->top);
 		}
+		sheet64_updown(gui_context64.status, gui_context64.ctl->top);
+		sheet64_updown(gui_context64.cursor, gui_context64.ctl->top);
 		taskbar_redraw();
 	} else {
+		sheet64_updown(gui_context64.status, -1);
 		sheet64_updown(gui_context64.taskbar, -1);
 	}
 }
@@ -346,14 +359,19 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	xsize = framebuffer.width;
 	ysize = framebuffer.height;
 	stride = framebuffer.pitch;
+	if (xsize < GUI64_STATUS_W || ysize <= GUI64_BAR_H) { goto fail; }
+	gui_context64.work_height = ysize - GUI64_BAR_H;
 	gui_context64.win_w = (xsize * GUI64_WIN_W_NUM / GUI64_WIN_W_DEN) & ~7;
-	gui_context64.win_h = (ysize * GUI64_WIN_H_NUM / GUI64_WIN_H_DEN) & ~7;
+	gui_context64.win_h = (gui_context64.work_height * GUI64_WIN_H_NUM / GUI64_WIN_H_DEN) & ~7;
 	if (gui_context64.win_w < GUI64_PAD_W + 16 ||
 		gui_context64.win_h < GUI64_PAD_H + 16) { goto fail; }
 	gui_context64.scrnx = xsize;
 	gui_context64.scrny = ysize;
 	gui_context64.win_x = xsize * GUI64_WIN_X_NUM / GUI64_WIN_X_DEN;
 	gui_context64.win_y = ysize * GUI64_WIN_Y_NUM / GUI64_WIN_Y_DEN;
+	if (gui_context64.win_y > gui_context64.work_height - gui_context64.win_h) {
+		gui_context64.win_y = gui_context64.work_height - gui_context64.win_h;
+	}
 	gui_context64.screen_size = (size_t) xsize * (size_t) ysize;
 	gui_context64.console_buf_size = gui_context64.screen_size;
 	gui_context64.taskbar_buf_size = (size_t) xsize * GUI64_BAR_H;
@@ -391,6 +409,17 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	gui_context64.my = (ysize - GUI64_CURSOR_SIZE) / 2;
 	gui_context64.cursor->vx0 = gui_context64.mx;
 	gui_context64.cursor->vy0 = gui_context64.my;
+	/* The fixed badge needs no allocation; its sheet is mandatory. A partial
+	 * init still uses the normal reverse cleanup before direct-console fallback.
+	 */
+	gui_context64.status = sheet64_alloc(gui_context64.ctl);
+	if (gui_context64.status == NULL) { goto fail; }
+	if (sheet64_setbuf(gui_context64.status, gui_context64.status_buf,
+		sizeof(gui_context64.status_buf), GUI64_STATUS_W, GUI64_STATUS_W,
+		GUI64_BAR_H, -1) != 0) { goto fail; }
+	gui_context64.status->vx0 = xsize - GUI64_STATUS_W;
+	gui_context64.status->vy0 = gui_context64.work_height;
+	gui_context64.status_mode = -1;
 	/* Preserve the optional taskbar policy, retaining any failed free. */
 	gui_context64.taskbar_buf = (uint8_t *) memman64_alloc_4k(&memman64,
 		gui_context64.taskbar_buf_size);
@@ -418,6 +447,7 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	sheet64_updown(gui_context64.console, 1);
 	sheet64_updown(gui_context64.cursor, 2);
 	gui_context64.ready = 1;
+	taskbar_show(0);
 	(void) gui_reclaim64();
 	result = gui_context64.console;
 	goto out;
@@ -475,6 +505,7 @@ int gui_toggle_window_checked64(void)
 	}
 	width = gui_context64.mode == GUI64_MODE_FULL ? gui_context64.win_w :
 		gui_context64.scrnx;
+	/* The footer belongs only to window mode; fullscreen covers the desktop. */
 	height = gui_context64.mode == GUI64_MODE_FULL ? gui_context64.win_h :
 		gui_context64.scrny;
 	ox = gui_context64.mode == GUI64_MODE_FULL ? GUI64_PAD_X : 0;
@@ -563,6 +594,7 @@ static void taskbar_press(int32_t bx, int32_t by)
 	for (i = 0; i < gui_context64.win_count; i++) {
 		if (!gui_context64.wins[i].published) { continue; }
 		taskbar_entry_rect(i, &x0, &y0);
+		if (x0 + GUI64_BAR_ENTRY_W > gui_context64.scrnx - GUI64_STATUS_W) { break; }
 		if (x0 <= bx && bx < x0 + GUI64_BAR_ENTRY_W &&
 				y0 <= by && by < y0 + GUI64_BAR_ENTRY_H) {
 			focus_win(gui_context64.wins[i].sht);
@@ -608,6 +640,9 @@ int gui_prepare_console64(struct CONSOLE64 *con, const char *title)
 	int step = slot * GUI64_CASCADE;
 	sht->vx0 = gui_context64.win_x + step;
 	sht->vy0 = gui_context64.win_y + step;
+	if (sht->vy0 > gui_context64.work_height - gui_context64.win_h) {
+		sht->vy0 = gui_context64.work_height - gui_context64.win_h;
+	}
 	gui_context64.wins[slot] = (struct GUI64_WIN) {
 		.sht = sht, .buffer = surface.pixels, .buffer_size = surface.size,
 		.decorated = 1, .is_console = 1, .console = con
@@ -653,6 +688,7 @@ static void gui64_bind_console_locked64(struct SHEET64 *sht, struct CONSOLE64 *c
 	if (win != NULL) {
 		win->console = con;
 		console_cursor_focus64(con, gui_context64.key_win == sht);
+		gui_status_update64();
 	}
 }
 
@@ -673,6 +709,43 @@ static struct CONSOLE64 *gui64_focused_console_locked64(void)
 		return NULL;
 	}
 	return win->console;
+}
+
+/* GUI guard -> console snapshot -> sheet guard. No allocation or sleep. */
+static void gui_status_update64(void)
+{
+	struct CONSOLE64 *owner;
+	const uint8_t *font = console64_hangul_font();
+	struct SURFACE64 surface;
+	int64_t mode;
+	const char *label;
+	uint8_t background, foreground;
+
+	if (!gui_context64.ready || gui_context64.status == NULL ||
+		gui_context64.mode == GUI64_MODE_FULL) { return; }
+	owner = gui64_focused_console_locked64();
+	mode = console64_input_mode_con(owner);
+	if (gui_context64.status_owner == owner && gui_context64.status_mode == mode &&
+		gui_context64.status_font == font) { return; }
+	gui_context64.status_owner = owner;
+	gui_context64.status_mode = mode;
+	gui_context64.status_font = font;
+	label = mode < 0 ? "--" : TTY_INPUT_HANGUL(mode) ? "한" : "영";
+	background = mode < 0 ? COL64_C6C6C6 : COL64_000084;
+	foreground = mode < 0 ? COL64_848484 : COL64_FFFFFF;
+	surface = sheet64_surface(gui_context64.status);
+	boxfill64(&surface, background, 0, 0, GUI64_STATUS_W - 1, GUI64_BAR_H - 1);
+	boxfill64(&surface, COL64_FFFFFF, 0, 0, GUI64_STATUS_W - 1, 0);
+	putstr64(&surface, 8, 6, foreground, label);
+	sheet64_refresh(gui_context64.status, 0, 0, GUI64_STATUS_W, GUI64_BAR_H);
+}
+
+void gui_update_status64(void)
+{
+	uint64_t state = platform_irq_save64();
+
+	gui_status_update64();
+	platform_irq_restore64(state);
 }
 
 /* 클릭 지점에서 가장 위에 있는 시트를 찾는다. 커서 시트는 항상 맨 위이므로
@@ -811,6 +884,7 @@ static void on_press(int32_t mx, int32_t my)
 	if (sht == NULL) {
 		return;
 	}
+	if (sht == gui_context64.status) { return; }
 	if (sht == gui_context64.taskbar) {
 		taskbar_press(bx, by);
 		return;
@@ -875,7 +949,8 @@ static void gui64_mouse_event_locked64(int32_t dx, int32_t dy, int32_t btn)
 			((int64_t) gui_context64.drag->vx0 + gui_context64.mx - gui_context64.mmx + 2) & ~(int64_t) 3,
 			INT32_MIN, INT32_MAX);
 		int32_t ny = gui64_clip_coordinate(
-			(int64_t) gui_context64.drag->vy0 + gui_context64.my - gui_context64.mmy, INT32_MIN, INT32_MAX);
+			(int64_t) gui_context64.drag->vy0 + gui_context64.my - gui_context64.mmy,
+			0, gui_context64.work_height - gui_context64.drag->bysize);
 		gui_context64.mmx = gui_context64.mx;
 		gui_context64.mmy = gui_context64.my;
 		sheet64_slide(gui_context64.drag, nx, ny);
@@ -896,6 +971,16 @@ static void gui64_raise_bottom_window_locked64(void)
 	if (win != NULL && win->published) { raise_win(win->sht); }
 }
 
+int gui64_handle_key(uint16_t key)
+{
+	uint64_t state = platform_irq_save64();
+	int handled = key == 0x57; /* F11 raises a window without changing input ownership. */
+
+	if (handled) { gui64_raise_bottom_window_locked64(); }
+	platform_irq_restore64(state);
+	return handled;
+}
+
 /*
  * 마우스와 창 관리 키는 콘솔이 어떤 모드든 똑같이 동작해야 한다.
  * 커널 메인 루프와 raw 모드의 키 대기 루프가 둘 다 이 함수를 먼저 부른다.
@@ -912,10 +997,7 @@ static int gui64_handle_system_event_locked64(const struct EVENT64 *event)
 		}
 		return 1;
 	}
-	if (event->type == EVENT64_KEYBOARD && event->data == 0x57) {   /* F11 */
-		gui64_raise_bottom_window();
-		return 1;
-	}
+	if (event->type == EVENT64_KEYBOARD) { return gui64_handle_key((uint16_t) event->data); }
 	return 0;
 }
 

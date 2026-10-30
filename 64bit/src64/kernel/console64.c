@@ -7,6 +7,7 @@
 #include <kstring64.h>
 #include <memory64.h>
 #include <mtask64.h>
+#include <sheet64.h>
 
 /* Slot 0 is reserved for boot; slot_state also reserves incomplete cleanup. */
 static struct CONSOLE64 console_table[CONSOLE64_MAX];
@@ -54,8 +55,11 @@ static void console64_init_with_sheet(const struct BOOTINFO64 *boot_info,
 	con->caret_focused = 1;
 	hangul64_init(&con->composing);
 	if (sht != NULL) {
+		struct SURFACE64 surface = sheet64_surface(sht);
+
 		gui64_bind_console(sht, con);
-		console64_attach_sheet(con, sht, 0, 0, con->width, con->height);
+		console64_attach_sheet(con, sht, 0, 0,
+			(uint16_t) surface.width, (uint16_t) surface.height);
 	} else {
 		console_clear_screen64(con);
 	}
@@ -144,6 +148,7 @@ void console64_reap_closed(void)
 			console64_destroy(con);
 		}
 	}
+	gui_update_status64();
 	platform_irq_restore64(irq_state);
 }
 

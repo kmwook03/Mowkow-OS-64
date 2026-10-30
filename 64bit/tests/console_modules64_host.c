@@ -139,6 +139,7 @@ void gui64_bind_console(struct SHEET64 *sheet, struct CONSOLE64 *con)
 {
 	assert(sheet != NULL && con != NULL);
 }
+void gui_update_status64(void) { }
 struct SHEET64 *gui64_init(const struct BOOTINFO64 *info)
 {
 	assert(info != NULL);
