@@ -282,8 +282,8 @@ static int bounds_and_display64(void)
 	con.width = 64;
 	con.height = 16;
 	con.stride = 64;
-	color_fg = 7;
-	color_bg = 0;
+	con.color_fg = 7;
+	con.color_bg = 0;
 	for (size_t i = 0; i < sizeof(sequences) / sizeof(sequences[0]); i++) {
 		for (size_t n = 1; n <= strlen(sequences[i]); n++) {
 			char *input = end - n;

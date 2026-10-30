@@ -4,6 +4,12 @@
 /* Share bounded string builders with the kernel; no syscall/app ABI change. */
 #include "../../../src64/include/string_copy64.h"
 
+#include "../../../src64/include/file_api64.h"
+
+/* Additive file operations preserve errno-style results, unlike legacy open. */
+long file_call64(unsigned int operation, unsigned long arg0,
+	unsigned long arg1, unsigned long arg2);
+
 #define O_CREAT 1
 #define O_TRUNC 2
 
@@ -36,6 +42,12 @@ void tty_clear(int row, int col, int rows, int cols);
 void tty_attr(int fg, int bg);
 /* raw 모드에서는 그린 것이 여기서야 화면에 올라간다 (curses의 doupdate). */
 void tty_flush(void);
+/* Show/hide without moving; cells is 1 or 2. Returns 0 or negative errno. */
+long tty_cursor(int visible, int cells);
+/* Calling app's console, independent of GUI focus. Negative on failure. */
+long tty_input_mode(void);
+#define TTY_INPUT_HANGUL(v) ((unsigned int) ((v) & 1U))
+#define TTY_INPUT_GEN(v) ((unsigned int) (((v) >> 1) & 0xffffffffUL))
 
 /* 칸 너비는 8픽셀. 한글 한 글자는 두 칸을 쓴다.
    세대 값이 달라졌으면 크기가 바뀌고 화면이 지워진 것이니 다시 그려야 한다. */

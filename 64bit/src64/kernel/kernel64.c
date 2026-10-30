@@ -27,6 +27,7 @@ static void process_event64(const struct EVENT64 *event)
 	struct CONSOLE64 *con;
 
 	if (event->type == EVENT64_TIMER) {
+		console64_cursor_update(timerctl64.count);
 		return;
 	}
 	/* 마우스와 F11은 창 계층이 먼저 가져간다. 남은 키만 포커스가 있는

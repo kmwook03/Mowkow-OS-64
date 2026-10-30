@@ -1,0 +1,1045 @@
+Changes between v9.2 and v9.3:
+------------------------------
+
+Benno Schulenberg (51):
+      build: do not call define_key() when compiling against PDCurses
+      build: do not call tgetstr() when compiling against PDCurses
+      build: exclude a workaround for spurious keycodes when not needed
+      build: fix compilation when configured with --enable-tiny
+      build: list for distribution only the M4 files that are in nano's repo
+      build: prevent compilation failures when cross-compiling for Windows
+      bump version numbers and add a news item for the 9.3 release
+      copyright: update the years for significantly changed files
+      docs: complete the enumeration of the newly rebindable keys
+      docs: improve the description of --mouse
+      docs: improve the description of the --cutfromcursor option
+      docs: say thanks to the Latvian and Georgian translators
+      docs: slightly reword three descriptions in the cheatsheet
+      feedback: make a linter message more concise
+      gnulib: update to its current upstream state
+      help: add a second blank line, to divide the toggles into three groups
+      help: reshuffle the toggles to divide them into four groups
+      input: do not discard a multibyte character when <Alt> is being held
+      input: recognize the operator keys from the numeric keypad
+      minibar: don't call display_string() twice to make the filename fit
+      minibar: properly convert also upper control codes in a filename
+      syntax: c: colorize also the _fast and _least integer types from C99
+      syntax: c: restore the coloring of 'long', that was accidentally lost
+      syntax: javascript: recognize also the .ts extension of Typescript files
+      syntax: po: recognize the obsolete marker (#~) only at start-of-line
+      tweaks: add `const` markers before two string constants
+      tweaks: drop two unneeded symbol definitions
+      tweaks: elide an unneeded auxiliary variable
+      tweaks: elide a parameter that is purposeless after the previous commit
+      tweaks: factor out a repeated code fragment into its own function
+      tweaks: improve a comment, and add a symbol to make a statement clearer
+      tweaks: initialize a variable, to invert an 'if' and elide an 'else'
+      tweaks: move and change some conditions, to make two fragments the same
+      tweaks: move an intervening fragment of code out of the way
+      tweaks: normalize the indentation after the previous change
+      tweaks: preferably initialize a single variable per line
+      tweaks: put the thirteen togglable flags first in the enumeration
+      tweaks: rearrange a fragment of code, to be more concise
+      tweaks: reduce the scope of another variable
+      tweaks: reduce the scope of three variables to their respective areas
+      tweaks: rename a variable, to be more meaningful
+      tweaks: rename a variable, to reduce the number of occurrences of "lint"
+      tweaks: reshuffle a fragment, placing it together with similar code
+      tweaks: reshuffle one of the toggles, to group them better
+      tweaks: reshuffle the flags, grouping related ones together
+      tweaks: reshuffle three declarations, for esthetics
+      tweaks: reshuffle two assignments, to elide an 'if'
+      tweaks: return a keycode as soon as it needs no further parsing
+      tweaks: use separate function for adding toggles to the list of shortcuts
+      tweaks: use the flag itself for determining the order of the toggles
+      weeding: remove two old workarounds for ancient libvte bugs
+
+
+Changes between v9.1 and v9.2:
+------------------------------
+
+Benno Schulenberg (35):
+      bindings: add a blind ^T toggle in the WhereIs and GotoLine menus
+      bump version numbers and add a news item for the 9.2 release
+      copyright: update the years for significantly changed files
+      docs: add a reference to the texi manual, via `info` and online
+      docs: explicitly mention in the man page how to save and exit
+      docs: fix a typo in NEWS
+      docs: implement the renaming of --multibuffer to --newbuffer
+      docs: improve the description of the `flipnewbuffer` bindable function
+      docs: in the FAQ, adjust the description of the Ctrl+T toggle
+      docs: in the FAQ, adjust the wording in the item about multiple buffers
+      docs: mention in the FAQ how to get the ^W^T combo back
+      docs: reword and reshuffle the line about saving-and-exiting
+      docs: say thanks to the Italian, Kazakh, and Arabic translators
+      files: compare either only full names or bare names, not full with bare
+      gnulib: update to its current upstream state
+      options: add --newbuffer as a more fitting synonym of --multibuffer
+      screen: do a full refresh for Shift+Home and Shift+End when needed
+      startup: do not crash when a section of a history file is overlong
+      tweaks: adjust the style of a comment and the order of a comparison
+      tweaks: avoid a false positive when doing static analysis
+      tweaks: don't call unlink_node() nor splice_node() for history items
+      tweaks: don't renumber all history items -- "renumber" only the last
+      tweaks: drop an unneeded null-dereference guard
+      tweaks: drop four null-dereference guards that are no longer needed
+      tweaks: drop several unneeded elses, and correct an indentation
+      tweaks: drop three assignments of function results, as they are not used
+      tweaks: elide an auxiliary variable that is no longer needed
+      tweaks: elide an unneeded auxiliary variable
+      tweaks: exclude three error checks from a normal build
+      tweaks: invert two ifs, to reduce duplication of code
+      tweaks: rename a variable while inverting its logic
+      tweaks: rename the internal flag, to match the new name of the option
+      tweaks: replace an if with an else
+      tweaks: reshuffle two declarations and rename the function in one of them
+      tweaks: treat temp file for speller in similar way as for formatter
+
+Vincent Yang (1):
+      startup: quit when standard output is not a TTY, to avoid user confusion
+
+
+Changes between v9.0 and v9.1:
+------------------------------
+
+Benno Schulenberg (83):
+      build: fix compilation when configured with --enable-tiny
+      bump version numbers and add a news item for the 9.1 release
+      docs: add an `xclip` example binding for copying text to system clipboard
+      docs: fix a typo made a month ago, in commit 269b96b7
+      docs: italicize 'nanorc' in the rnano manpage, like in the other manpages
+      docs: mention that M-Ins and M-Del are valid keynames
+      docs: more precisely describe what --restricted forbids and allows
+      docs: move the notices in the main man page to after the description
+      docs: prevent highlighted words in the man pages from getting hyphenated
+      docs: prevent some keywords and compound keywords from getting hyphenated
+      docs: remove all mention of the old Mac file format
+      docs: remove the description of the `flipgoto` toggle
+      docs: replace the e.g. and i.e. abbreviations with plain English words
+      docs: reword a description to make it clearer what typeface applies
+      docs: use curly double quotes when scare quotes are meant
+      files: allow editing a file named ~ (a lone tilde)
+      files: always make a backup when the WriteOut prompt says "[Backup]"
+      files: do not call chmod() and chown() on a .save emergency file
+      files: don't bother updating notes when closing the buffer right after
+      files: drop an unneeded call of real_dir_from_tilde()
+      files: for a backup, use the full timestamp, not just the seconds
+      files: make get_full_path() work properly also for nonexistent files
+      files: remove the code for reading and writing old Mac files
+      files: report an error when the given filename ends in a slash
+      files: use the correct timestamp for the backup file
+      gnulib: update to its current upstream state
+      help: further improve and modernize the Spellcheck help text
+      help: remember, clear, and restore the value of 'spotlighted'
+      help: reshuffle the Backup toggle, to keep Append and Prepend paired
+      help: unabbreviate three words, in three different help items
+      help: use a better word in the Spellcheck help text
+      history: don't leave NUL bytes in the string of anchors
+      linting: properly check for a negative return value from read()
+      menus: remove the ^T toggle between the Where-Is and Go-To-Line menus
+      rcfile: allow rebinding M-Ins and M-Del
+      search: place the viewport flush left when a match easily fits within it
+      spelling: properly check for a negative return value from read()
+      syntax: c: add several missing C++23 keywords
+      syntax: c: colorize hexadecimal and binary numbers, and boolean constants
+      syntax: default: colorize the release motto for the 9.* series too
+      syntax: lua: add new keywords and drop long-deprecated ones
+      syntax: lua: colorize also multiline strings
+      syntax: lua: colorize also various backslash escapes specially
+      syntax: man: colorize also the \[xx] special-character syntax
+      tweaks: adjust the suggested max help-item length in six translator hints
+      tweaks: adjust two translator hints and add two after the previous change
+      tweaks: avoid miscompilation on macOS, where 'st_atim' is unknown
+      tweaks: check calls of stat() for success instead of for not-failure
+      tweaks: compare two syntaxes directly, instead of comparing their names
+      tweaks: condense a comment, rename a function, and reshuffle four lines
+      tweaks: don't use index 0 when no higher indexes are used
+      tweaks: drop an inconsistent space before a closing parenthesis
+      tweaks: drop most `!= '\0'` comparisons
+      tweaks: drop most `!= NULL` comparisons
+      tweaks: elide an unneeded parameter, and improve the related comment
+      tweaks: elide a parameter from write_file() and write_region_to_file()
+      tweaks: fold two fragments of code together
+      tweaks: harmonize checking the exit status of a child process
+      tweaks: harmonize seven more error checks with similar ones
+      tweaks: harmonize the form of five error messages
+      tweaks: harmonize the form of two error messages with two others
+      tweaks: harmonize three error checks with those of similar calls
+      tweaks: improve a comment, add one, and move one
+      tweaks: in the C syntax, gather all type specifiers into one regex
+      tweaks: just check for negativeness instead of for exactly minus one
+      tweaks: make three different error messages identical to an existing one
+      tweaks: modernize a URL
+      tweaks: move a condition out of a function, to avoid unneeded calls
+      tweaks: move a function, improve three comments, and rename a parameter
+      tweaks: move two assignments to where they are used
+      tweaks: normalize the indentation after the previous change
+      tweaks: remove a fragment of code that is redundant since previous commit
+      tweaks: rename a few variables, to harmonize with the general scheme
+      tweaks: rename a function, to better describe what it does
+      tweaks: rename a variable, for aptness, and remove unneeded braces
+      tweaks: rename three variables, to be more descriptive
+      tweaks: reshuffle and adjust a comment while dropping an unneeded 'else'
+      tweaks: reshuffle two lines of code, to avoid a memory leak
+      tweaks: shorten four conditions, clarify a fifth, and improve a comment
+      tweaks: slightly adjust two wordings in the main man page
+      tweaks: slightly improve a sentence in the nanorc manpage
+      tweaks: swap the two arms of an 'if', to have the positive case first
+      tweaks: unwrap some seventy lines that don't need to be wrapped
+
+G. Branden Robinson (11):
+      docs: consistently set file names in italics
+      docs: consistently use minus sign for M- notation
+      docs: favor the `\[ti]` special character over a literal `~`
+      docs: fix three unescaped hyphens before option names
+      docs: more consistently set nano's name in bold
+      docs: set "foreign" software in italics, not bold
+      docs: style function names with bold, not backticks
+      docs: swap the left and middle footer of the man pages
+      docs: sync rnano's synopsis markup with nano's
+      docs: use a better word in the description of the 'locking' option
+      docs: use groff-style special-character syntax: \[xx] instead of \(xx
+
+Vincent Yang (1):
+      syntax: c: add new C23 keywords and preprocessor directives
+
+
+Changes between v8.7 and v9.0:
+------------------------------
+
+Benno Schulenberg (92):
+      bindings: assign M-< and M-> to the sideways-scrolling functions
+      build: add move.c to the list of files that contain translatable strings
+      build: avoid three warnings when compiling against glibc-2.43
+      build: exclude whole-window sideways scrolling from the tiny version
+      bump version numbers and add a news item for the 9.0 release
+      copyright: update the years for significantly changed files
+      copyright: update the years for significantly changed files
+      copyright: update the years for the FSF
+      display: add extra variable, to avoid one-way toggling of SOLO_SIDESCROLL
+      display: begin looking for new start matches at the correct place
+      display: correct the previous commit -- the -1 is needed when going left
+      display: draw the "<" marker only if part of the line is onscreen
+      display: for narrow windows, fall back to single-line sidescrolling
+      display: let option --jumpyscrolling affect also sideways scrolling
+      display: put cursor at CUSHION columns from edge when scrolling sideways
+      display: redraw the screen also when 'brink' is not what it should be
+      display: store `brink` per buffer, to keep the viewport stable
+      display: when scrolling sideways, refresh edit window only if mark is on
+      docs: add an Exit Status section to the man page and the manual
+      docs: add a notice about the changed sideways scrolling behavior
+      docs: add a section about the recording and replaying of keyboard macros
+      docs: add ^B among the list of keystrokes for --modernbindings
+      docs: add notices about the reassignment of the M-< and M-> keystrokes
+      docs: adjust the cheatsheet for the new functions and changed bindings
+      docs: adjust the description of `scrollright` for the changed behavior
+      docs: adjust the description of `scrollright` for the improved behavior
+      docs: advise the use of --sysconfdir=/etc when configuring nano
+      docs: copy the 8.7.1 news item from the release branch
+      docs: document the new bindable `scrollleft` and `scrollright` functions
+      docs: document the new --solosidescroll and 'set solosidescroll' options
+      docs: explain what "overlong" means for --breaklonglines
+      docs: in the cheatsheet, place Ctrl+L in the Special movement section
+      docs: mention that M-Left, M-Right, M-Up, and M-Down are valid keynames
+      docs: reshuffle the --solosidescroll option to match the order in --help
+      docs: trim stuff that is more than four years old from the changelog
+      docs: use rebindable names M-Up and M-Down instead of Alt+Up and Alt+Down
+      feedback: prevent interpretation of %s and similar in a filename
+      files: include also the slash when re-adding the filename to the path
+      gnulib: update to a recent version, to allow compiling against glibc-2.43
+      gnulib: update to its current upstream state
+      help: group the sideways scrolling keystrokes with the horizontal movers
+      history: create the ~/.local directory with limited access rights
+      input: allow `recordmacro` and `runmacro` to continue cuts and copies
+      input: prevent also a string bind from breaking a chain of cuts or copies
+      input: prevent most toggles from breaking a series of cuts or copies
+      mouse: allow clicking before the answer to place cursor at its beginning
+      moving: ignore `scrollleft` and `scrollright` when softwrapping
+      moving: ignore `scrollleft` and `scrollright` with --solosidescroll too
+      moving: make the minimum step for sideways scrolling two cells
+      moving: stay in the viewport when stepping to a longer line
+      moving: when scrolling sideways, search also upward for a longer line
+      new default feature: smooth whole-window sideways scrolling
+      new feature: bindable functions for scrolling a tabsize left or right
+      new feature: clicking in the scrollbar jumps to the corresponding line
+      options: accept --solosidescroll and 'set solosidescroll'
+      rcfile: allow rebinding M-Left, M-Right, M-Up, and M-Down
+      syntax: elisp: remove file -- something specific to Emacs is not for nano
+      syntax: groff, man: colorize also \" tail comments and \# line comments
+      syntax: guile: colorize more syntax words and procedure names
+      syntax: nanorc: colorize M-Left, M-Right, M-Up, M-Down as valid keynames
+      syntax: python: colorize also the `match` and `case` keywords
+      syntax: python: require a blank after the keyword `match`
+      syntaxes: add a license line to the files created by Mark Oteiza
+      tweaks: add a comment for an unclear fragment of code
+      tweaks: avoid having to restore the original click coordinates
+      tweaks: condense the Python coloring rules, and reword a comment
+      tweaks: condense two oververbose comments
+      tweaks: correct a comment
+      tweaks: correct and simplify the logic from the previous two commits
+      tweaks: defend against hypothetical format specifiers
+      tweaks: give the three "debugging" feedback messages a more unusual color
+      tweaks: lowercase subsequent words in section titles, to be less pompous
+      tweaks: move a function to a more logical place
+      tweaks: no need to be overpolite when giving directions
+      tweaks: normalize brace placement after the previous change
+      tweaks: reduce the scope of two variables
+      tweaks: refer to two renamed gnulib modules with their adjusted names
+      tweaks: remove an unneeded parameter from get_mouseinput()
+      tweaks: rename a type, away from a double abbreviation
+      tweaks: rename a variable, away from a double abbreviation
+      tweaks: rename a variable, for contrast, and to be more fitting
+      tweaks: rename a variable, to be more fitting
+      tweaks: rename a variable, to be more fitting and away from an abbrev
+      tweaks: rename a variable whose function has changed over time
+      tweaks: rename three functions, to be more accurate
+      tweaks: rename two functions, reword some comments, rewrap a line
+      tweaks: rename two variables, away from abbreviations
+      tweaks: reorder a list of keys, starting with singles, ending with group
+      tweaks: replace the three instances of impersonal "one" with direct "you"
+      tweaks: reshuffle or transmute a few lines, to elide an 'if'
+      tweaks: slightly adjust a wording
+      tweaks: slightly improve three comments in the sample nanorc
+
+Charles Mirabile (1):
+      macro: cancel the recording if nothing was entered between start and stop
+
+
+Changes between v8.6 and v8.7:
+------------------------------
+
+Benno Schulenberg (17):
+      build: avoid a warning when configured with --disable-multibuffer
+      bump version numbers and add a news item for the 8.7 release
+      display: regenerate the screen after a resize during a spell check
+      display: regenerate the screen only before and after waiting for input
+      display: upon resize, redraw the subwindows only when fully initialized
+      docs: add example of copy-to-clipboard-with-OSC52 to the sample nanorc
+      docs: mention that `execute` can pipe buffer or region to the command
+      gnulib: update to its current upstream state
+      moving: prevent a negative relative jump from going beyond top of buffer
+      new feature: execute a command without capturing the output
+      startup: register the handler for SIGWINCH much earlier
+      text: when blanking a line due to --autoindent, keep the mark in sync
+      tweaks: improve a few comments, drop one, and unwrap some lines
+      tweaks: improve the punctuation of one item in the sample nanorc
+      tweaks: replace a remaining double dash with a true emdash
+      tweaks: reshuffle some #ifdefs, and rename a function
+      tweaks: unwrap three lines, for esthetics
+
+
+Changes between v8.5 and v8.6:
+------------------------------
+
+Benno Schulenberg (22):
+      browser: let a refresh also reread the file list, like it used to
+      browser: redo the layout only when an actual resize occurred
+      browser: redo the layout when the window _might_ have resized
+      bump version numbers and add a news item for the 8.6 release
+      completion: don't stop looking for candidates one byte too early
+      display: when resizing, redraw the bottom bars also when in file browser
+      docs: document the ++/-- prefix feature for the `gotoline` function
+      gnulib: update to its current upstream state
+      history: do not forget anchors when line number is given on command line
+      new feature: interpret a line number prefixed with ++ or -- as relative
+      rcfile: accept also {}} in a string bind, for symmetry with {{}
+      syntax: po: colorize also the %b and %B format specifiers
+      tweaks: normalize the indentation after the previous change
+      tweaks: put two related checks together, like they are elsewhere
+      tweaks: remove a check for a symbol that never gets defined
+      tweaks: rename a parameter, and invert its logic
+      tweaks: reshuffle a condition to a better place, like it is elsewhere
+      tweaks: reshuffle a few lines, for density and to elide an 'else'
+      tweaks: reshuffle some lines, to group things better
+      tweaks: split the goto function into an interactive and command-line one
+      tweaks: swap two symbolic menu names, for giggles
+      tweaks: use a direct parameter instead of an intermediary boolean
+
+
+Changes between v8.4 and v8.5:
+------------------------------
+
+Benno Schulenberg (44):
+      anchor: change the aspect of any anchor to a dagger (†)
+      bindings: always bind ^Q in the WriteOut menu, not only for --saveonexit
+      bindings: do not list ^L twice (in main help text and help lines)
+      bindings: let ^L just center the cursor, not cycle it -- let M-% cycle it
+      bindings: lowercase an ASCII character in a locale-proof manner
+      build: fix compilation for config with --enable-tiny --enable-histories
+      build: fix compilation when configured with --disable-histories
+      build: fix compilation when configured with --disable-utf8
+      build: swap two linker arguments, to enable compilation on Cygwin
+      bump version numbers and add a news item for the 8.5 release
+      docs: add a suggested key combo for wiping all anchors to sample nanorc
+      docs: in cheatsheet, equalize the spacing in three consecutive blocks
+      docs: mention that --positionlog also saves the positions of anchors
+      docs: reword the descriptions of --operatingdir and 'set operatingdir'
+      feedback: change the appearance of anchors when they will be saved
+      feedback: change the level of a certain message, to show it is special
+      feedback: report the setting and removing of an anchor just once
+      feedback: show in mini bar the presence of an anchor on the cursor line
+      feedback: suppress "Jumped to anchor" when line numbers are active
+      feedback: suppress "Removed anchor" when the mini bar is hidden
+      gnulib: pull in the fix for a cross-compilation failure
+      gnulib: update to its current upstream state
+      history: always save the last cursor position, also for line=1,column=1
+      history: always save the positions of any anchors
+      history: reverse the order in the file-positions list, to latest first
+      menus: reshuffle an item, to avoid truncating its help-line label
+      moving: make cycling (M-%) independent from centering (^L)
+      new feature: exit with an error status (2) for ^X^Q and ^O^Q
+      new feature: save and restore anchors when the first line has an anchor
+      options: accept --whitespacedisplay and 'set whitespacedisplay'
+      syntax: default: show hard spaces with a lightgrey background
+      syntaxes: add a license line to files that were created by Mike Frysinger
+      syntaxes: use character classes instead of range expressions
+      tweaks: avoid using toupper() and tolower() where easily possible
+      tweaks: elide an auxiliary variable that is no longer needed
+      tweaks: elide the unneeded passing around of three parameters
+      tweaks: elide the unneeded use of an auxiliary function
+      tweaks: in the browser, implement M-\ and M-/ in a slightly denser way
+      tweaks: properly tag some keywords in texi doc, instead of using quotes
+      tweaks: random unimportant edits here and there
+      tweaks: rename 'use_utf8' to 'using_utf8', and make it a global variable
+      tweaks: shorten a URL, and update it to use https
+      tweaks: use reallocations, instead of new allocations plus frees
+      tweaks: use the correct modifier, to avoid a warning on 32-bit machines
+
+Peter Michaux (1):
+      build: add the 'm4/host-cpu-c-abi.m4' file to .gitignore
+
+
+Changes between v8.3 and v8.4:
+------------------------------
+
+Benno Schulenberg (40):
+      bump version numbers and add a news item for the 8.4 release
+      copyright: update the years for the FSF
+      docs: add a suggestion to the FAQ on how to configure nano for git
+      docs: change two interface colors in the sample nanorc
+      docs: improve the description of the `constantshow` bindable function
+      docs: in the FAQ, replace an old item with an item about Byte Order Marks
+      docs: replace a word that is better not used in the plural
+      docs: use proper emdashes instead of double hyphens: "--" => "\(em"
+      execute: retain what the user typed before a tool was invoked
+      feedback: warn when the cursor sits on a Byte Order Mark (BOM)
+      gnulib: update to its current upstream state
+      input: adjust file browser and help viewer for changed bracketed pastes
+      input: implement bracketed pastes in a different manner
+      input: make bracketed paste more robust against loss of closing sequence
+      input: remove a special-case workaround
+      input: remove single-keycode detection from the bracketed-paste routine
+      input: robustness is good, but dropping a key code is not a good idea
+      input: wait a bit for "~" when bracketed-paste sequence is incomplete
+      prompt: accept tabs in an external paste as literal tabs
+      prompt: beep when an external paste contains a command code
+      syntax: groff: highlight the zeroeth macro argument too
+      syntax: man: highlight some escapes, like \& and \(em, specially
+      syntax: po: colorize also a 'msgctxt' line, and the 'c++-format' flag
+      syntax: po: colorize also format specifiers like "%.6f"
+      syntax: po: colorize also format specifiers like "%<PRIu64>"
+      syntax: po: colorize also Python's "%(name)x" format specifiers
+      syntax: po: colorize also the %llu and %hhi format specifiers
+      syntax: po: colorize also the Python-specific conversion specifier "%r"
+      tweaks: add a translator hint for the three changed file-writing prompts
+      tweaks: add missing closing quotes, as reported by `mandoc -T lint ...`
+      tweaks: avoid running tolower() on an out-of-range value
+      tweaks: change the man-page markup of options that take an argument
+      tweaks: condense a fragment of code
+      tweaks: consistently use "\fR" for switching back to normal, roman font
+      tweaks: prevent some color keywords from getting hyphenated in man page
+      tweaks: prevent some more keywords from getting hyphenated
+      tweaks: remove an unwanted newline from a debugging message
+      tweaks: remove three redundant pairs of parentheses from a nanorc regex
+      tweaks: remove two commented-out lines and two unused variables
+      tweaks: swap two fragments of code, to allow unwrapping a line
+
+Brand Huntsman (1):
+      files: improve the wording of the normal file-writing prompts
+
+
+Changes between v8.2 and v8.3:
+------------------------------
+
+Benno Schulenberg (16):
+      build: fix a compilation error with gcc-15
+      bump version numbers and add a news item for the 8.3 release
+      docs: add Shift+PgUp/PgDown to the FAQ item about urxvt modified keys
+      docs: clarify the possible effects of a misuse of braced function names
+      docs: put a space after "|" and before "{enter}" in the sample nanorc
+      gnulib: update to its current upstream state
+      syntax: groff: correct the mistaken .rof extension to .roff
+      syntax: groff: recognize also the .mom extension
+      syntax: makefile: colorize also multiple targets
+      syntax: markdown: accept also digit 0 in a list marker
+      syntax: spec: colorize all canonical architecture names
+      tweaks: add a small clarifying comment
+      tweaks: add a translator hint
+      tweaks: adjust another translator hint, and add two more
+      tweaks: adjust a translator hint, and add another one
+      tweaks: drop six unneeded casts
+
+LIU Hao (1):
+      syntax: asm: add end-of-word anchors to the keywords
+
+Lukáš Zaoral (1):
+      memory: avoid a leak when linter aborts after producing parsable output
+
+
+Changes between v8.1 and v8.2:
+------------------------------
+
+Benno Schulenberg (22):
+      bindings: at a Yes-No-All prompt, accept also ^A for "All"
+      bindings: let the central numpad key (with Ctrl) center the current line
+      bump version numbers and add a news item for the 8.2 release
+      docs: do not quote the argument of 'include' statements in sample nanorc
+      docs: mention former maintainership last among an author's contributions
+      docs: mention the availability of ^Y, ^N, and ^A at a Yes-No prompt
+      docs: trim stuff that is more than four years old from the changelog
+      gnulib: update to its current upstream state
+      macro: insert it in keystroke buffer without discarding latter's contents
+      moving: for Alt+Home/Alt+End, refresh the screen when the mark is on
+      syntax: autoconf: colorize the keywords 'case', 'esac', and 'ifelse' too
+      syntax: awk: add a missing "|" between "\?" and ":"
+      syntax: awk: colorize escape sequences specially
+      syntax: awk: rewrite a regex more densely, and add the missing ~ operator
+      syntax: man: colorize also the .MT .ME .EX .EE .SY .OP and .YS macros
+      syntax: nanorc: an unquoted argument of 'include' may not contain blanks
+      tweaks: delete three redundant checks from the undo/redo code
+      tweaks: improve or rewrap six comments, and add two missing ones
+      tweaks: move a condition to the only place that needs it
+      tweaks: rename a symbol, away from an obscure abbreviation
+      tweaks: reshuffle a seldom-used function to the end of an if-else series
+      tweaks: unwrap three lines that don't need to be wrapped
+
+Collin Funk (1):
+      build: update a symbol that was renamed in gnulib
+
+
+Changes between v8.0 and v8.1:
+------------------------------
+
+Benno Schulenberg (56):
+      bindings: let ^L put the cursor line at center, then top, then bottom
+      build: check for the correct function in an #ifdef
+      build: require version 0.20 of gettext for building nano from git
+      build: use the standard `autoreconf` invocation
+      bump version numbers and add a news item for the 8.1 release
+      docs: add 'set colonparsing' to the sample nanorc
+      docs: add the Alt+Home/Alt+End shortcuts to the cheatsheet
+      docs: avert hyphenation of the technical words "ncurses" and "terminfo"
+      docs: correct the description of --bold, as function tags are unaffected
+      docs: document the new --listsyntaxes (-z) option
+      docs: don't say any more that -z was removed, as it has been repurposed
+      docs: explain the behavior of the new function `cycle`
+      docs: explain the details of --colonparsing / -@ / 'set colonparsing'
+      docs: extend the FAQ item about urxvt modified keys, with M-Home/M-End
+      docs: properly escape a literal '@' in the texi document
+      docs: remove the 'filename:linenumber' format from the synopsis
+      files: avoid mistakenly setting the column number to a given line number
+      files: look for digits and colons starting from the end of the filename
+      files: when a filename with a colon and digits exists, open that file
+      files: with --rectrict, prevent invoking the browser and toggling backups
+      general: disable the type-ahead checking that ncurses normally does
+      gnulib: update to its current upstream state
+      help: regroup the `center` item, placing it with the new `cycle`
+      help: show option -Y/--syntax in --help output also in restricted mode
+      input: drop recognition of the urxvt escape sequences for M-Home/M-End
+      input: make sure that a string-bind return value is non-negative
+      input: provide for urxvt setting a high bit or sending an extra escape
+      input: recognize the raw Xterm escape sequences for Alt+Home and Alt+End
+      minibar: do not falsely report that a new, empty file is in Mac format
+      moving: use edit_scroll() only when scrolling one row is enough
+      new feature: add bindable function `cycle` that pushes cursor line around
+      new feature: option -z lists the names of available syntaxes
+      options: remove the deprecated synonym -$ of -S/--softwrap
+      options: require --colonparsing/-@ to parse colon+number after a filename
+      rcfile: remove old bindable function 'nowrap', alias of 'breaklonglines'
+      startup: do not activate --modernbindings when name starts with "e"
+      syntaxes: mention the original author of most of the syntax files
+      syntax: man: colorize some of the things that manipulate hyphenation
+      syntax: patch: recognize also the .rej extension
+      text: do not check for <Tab> + mark while getting input but in do_tab()
+      tweaks: add a space after a '+', for consistent formatting
+      tweaks: discard a bracketed paste in the help viewer with fewer beeps
+      tweaks: drop two redundant conditions
+      tweaks: elide unhelpful occurrences of the word "will"
+      tweaks: exclude the colon-parsing code from the tiny version
+      tweaks: extend the deprecation period of 'set nowrap' and prefix 'bright'
+      tweaks: implement do_center() with a single call instead of three
+      tweaks: in FAQ, use 'id' attribute instead of empty anchor with 'name'
+      tweaks: make a comment more accurate, and unabbreviate a variable name
+      tweaks: make the inclusion condition for do_center() more strict
+      tweaks: remove the now unneeded special keycode INDENT_KEY
+      tweaks: reshuffle a declaration, adjust a comment, normalize indentation
+      tweaks: reshuffle some lines, to put vaguely related things together
+      tweaks: rewrap some lines, for more even lengths
+      tweaks: simplify a condition, to match the same condition five lines back
+      tweaks: slightly reword a phrase in the explanation of --colonparsing
+
+Jaroslav Fowkes (1):
+      syntax: fortran: fix a typo (a missing backslash)
+
+
+Changes between v7.2 and v8.0:
+------------------------------
+
+Andy Koppe (2):
+      input: scroll on mousewheel events instead of moving the cursor
+      rcfile: map the gray #rgb codes (#111 to #EEE) to the xterm grayscale
+
+Benjamin Valentin (1):
+      new feature: interpret also <filename>:<linenumber> when opening a file
+
+Benno Schulenberg (155):
+      bindings: allow speller and friends to be rebound also in restricted mode
+      bindings: in the tiny version, bind M-6 only in main, not at the prompts
+      bindings: let <Alt+Home/End> move the cursor to top/bottom of viewport
+      bindings: let M-" place/remove an anchor, and let M-' jump to one
+      bindings: let M-& show the ncurses version+patch, as a small Easter egg
+      bindings: make ^F start a forward search by default
+      bindings: make ^F start a forward search by default
+      bindings: set up modern bindings also when binary's name starts with "e"
+      bindings: show ^- instead of ^/ for 'flipgoto' when on a Linux console
+      bindings: with --modern, do not let ^Q^Q quit nano without saving
+      bindings: with --modern, use ^H for Help when the terminal allows it
+      browser: report an error instead of crashing when the folder disappears
+      browser: restore typing position at prompt after "^R name ^T ^F ^V ^C"
+      bump version numbers and add a news item for the 8.0 release
+      chars: add a helper function for stripping leading blanks from a string
+      copyright: update the years for the FSF
+      display: add a wnoutrefresh() call for NetBSD, to force a cursor update
+      display: do not attempt to draw a line that is outside the viewport
+      display: draw a new magic line rightaway when there are multiline regexes
+      display: show the help lines down to the tiniest possible terminal size
+      docs: add a caveat in the FAQ about bracketed pastes
+      docs: add a clarifying note to the description of --tabstospaces
+      docs: add an example binding for normalizing Unicode to the sample nanorc
+      docs: add a reference to the 'help-nano' mailing list
+      docs: add M-C and M-Z to the cheatsheet, and reshuffle for balance
+      docs: add ^T^S (spell check) and M-S (softwrap) to the cheatsheet
+      docs: add two examples of custom key bindings to the nanorc manpage
+      docs: adjust an example help line in the README to the current state
+      docs: adjust the cheatsheet for the changed meanings of ^F, ^B, M-F, M-B
+      docs: clarify that a fileregex is matched against the absolute filename
+      docs: delete a remark about libvte that is no longer relevant
+      docs: describe nano more specifically as a text editor
+      docs: document the <filename>:<linenumber> thing for cursor positioning
+      docs: document the new bindable functions 'toprow' and 'bottomrow'
+      docs: document the new --modernbindings option
+      docs: fix a ten-year-old typo, reported by `correctmost`
+      docs: improve the description of the 'flipexecute' bindable function
+      docs: in a synopsis, use braces around a choice of required parts
+      docs: in the sample nanorc, set the guidestripe to a soft grey
+      docs: mention backreferences (for replacements with regular expressions)
+      docs: mention how to get the old behavior of ^F, ^B, M-F, and M-B back
+      docs: mention that a restricted nano does not access the history files
+      docs: mention that 'light' background colors do not work on Linux console
+      docs: mention that --modernbindings overrides --preserve
+      docs: mention the changed meanings of ^F/^B and also in the texi manual
+      docs: mention the missing two options that override --bold
+      docs: say "mini bar", not "minibar", when referring to the actual bar
+      docs: trim stuff that is more than five years old from the changelog
+      docs: use a space after #, like everywhere else in the sample nanorc
+      editing: adjust the mark before trimming redundant blanks
+      execute: show "Older" and "Newer" in the help lines, to allow rebinding
+      feedback: drop an unnecessary warning, to not bother the user
+      feedback: lowercase a letter, as the phrase is not a full sentence
+      feedback: raise the level of "Macro is empty", to match similar messages
+      feedback: suppress filename and linecount when --zero is active
+      feedback: suppress format-conversion messages for --zero and --mini
+      files: do not allow M-U to remove text read from standard input
+      files: run `chmod` and `chown` on the descriptor, not on the filename
+      formatter: do not crash when the formatter command is empty
+      general: include the Copy function (M-6 or ^C) into the tiny version
+      general: let the constant-show toggle override the zero-interface mode
+      gnulib: update to current upstream state, to make a fresh checkout work
+      gnulib: update to its current upstream state
+      help: give the "Replace with" prompt its own help text
+      help: mention M-Home and M-End in the help text and help lines
+      help: rebalance the help items when --preserve is used
+      help: restore ^H and ^D as the primary shortcuts for Backspace and Delete
+      help: show ^F/^B as primary shortcuts for search, not as secondary
+      indicator: do not oversize the scroller when softwrapping
+      input: avoid hanging after a 39-character paste on a VSCode terminal
+      input: flush the keystroke buffer upon any kind of error condition
+      input: for one bump of the mousewheel scroll two lines, not three
+      input: intercept a spurious keycode and say what the actual problem is
+      input: let the handler of string binds return a byte whenever possible
+      input: neutralize two spurious keycodes from VTE terminals
+      input: prevent 'macro_length' from underflowing when hammering M-:
+      input: recognize certain escape sequences for F13 to F16 again
+      input: snip the `recordmacro` and `runmacro` keystrokes in a better way
+      input: store key codes in the macro buffer as they come in from ncurses
+      input: store keystroke in macro buffer only when about to interpret it  [reverted]
+      justify: keep as much of the marked region onscreen as possible
+      justify: keep the cursor at the original end of a marked region
+      justify: recompute the multidata for paragraphs larger than the viewport
+      justify: set the correct starting point also with --cutfromcursor
+      justify: set `x = 0` for the undo item, for when using --cutfromcursor
+      linter: do not mess up the input stream when the linter command is empty
+      linter: use a format string, to deflect format-string attacks
+      memory: prevent a leak by freeing a possibly already existing color combo
+      minibar: mention the file format when it's DOS or Mac
+      moving: preserve horizontal position when jumping to top or bottom row
+      new feature: functions that jump to the top or bottom of the viewport
+      new feature: option --modernbindings sets up more widespread key bindings
+      options: make --modernbindings actually override --preserve
+      rcfile: add bindable functions for moving the cursor to top or bottom row
+      rcfile: avoid crashing on an include path that is way too long
+      replacing: stash the string to be replaced while asking for replacement
+      revert the previous commit -- forget about -? as a synonym for --help
+      screen: recalculate the multidata when detecting the need for it
+      search: avoid a crash after a nested search, reported by `correctmost`
+      search: avoid crashing after searching a help text during a regex replace
+      shutdown: ignore a modified buffer when in view mode
+      softwrap: adjust start-of-screen when the 'edittop' line is hard-wrapped
+      softwrap: realign start-of-screen when redoing an automatic hard-wrap
+      softwrap: remember the actual breaking point when wrapping at blanks
+      startup: use a format string, to deflect format-string attacks
+      syntax: c: require a preceding blank when a line comment contains a quote
+      syntax: javascript: recognize also the .mjs extension
+      syntax: makefile: ensure that the <Tab> key always produces a tab
+      syntax: makefile, sh: recognize also a fresh Makefile and fresh .profile
+      syntax: nanorc: colorize {toprow} and {bottomrow} for string binds
+      syntax: sh: recognize more shells than `sh` on a shebang line for busybox
+      tweaks: add a comment that refers to the VTE spurious-code issue
+      tweaks: add a missing 'type' attribute to a <style> tag
+      tweaks: add an extra variable, to avoid reusing one for another purpose
+      tweaks: add another translator hint, to help avoid overlong key tags
+      tweaks: adjust a comment for the changed handling of gray #rgb codes
+      tweaks: avoid calling isblank()/isalpha() on what could be a signed char
+      tweaks: condense the code that searches for a colon plus line number
+      tweaks: delete a redundant fragment of code from do_replace_loop()
+      tweaks: elide a redundant variable
+      tweaks: express an 'if' more concisely, and add two blank lines
+      tweaks: implement the fix of the previous commit somewhat differently
+      tweaks: improve three translator hints
+      tweaks: make two strings equal to a third, to slightly ease translation
+      tweaks: move two static declarations to the only function that uses them
+      tweaks: normalize the indentation after the previous change
+      tweaks: normalize the indentation after the previous changes
+      tweaks: pull a fragment of code a bit forward, to enable the next commit
+      tweaks: remove two pairs of unneeded braces, and normalize a line
+      tweaks: rename a function and variable, to describe better what they do
+      tweaks: rename a function, for contrast, and update antiquated comments
+      tweaks: rename a struct element, to avoid a theoretical name collision
+      tweaks: rename a symbol (to be clearer), and add three missing comments
+      tweaks: rename a variable, away from an abbreviation
+      tweaks: rename a variable, away from an abbreviation
+      tweaks: rename a variable, to be a bit more indicative
+      tweaks: rename a variable, to be clearer when seen in context
+      tweaks: rename a variable, to be more readable
+      tweaks: rename a variable, to better indicate what it represents
+      tweaks: rename two variables, to be clearer and to match others
+      tweaks: reshuffle four lines, to allow folding some #ifdefs together
+      tweaks: reshuffle three fragments of code, moving related things together
+      tweaks: rewrap a comment, and reshuffle seven declarations
+      tweaks: rewrap two old news items
+      tweaks: shrink the set of characters recognized as line-column separator
+      tweaks: slightly improve a comment, to be more accurate
+      tweaks: slightly reword the help text for the Replace-With prompt
+      tweaks: ungettextize three strings, to make a translator hint right again
+      tweaks: use a pair of parentheses to clarify the order of operations
+      undo: force a screen refresh also for the special case Bsp-at-EOF
+      undo: prevent a use-after-free, reported by `correctmost`
+      undo: recompute the multidata when a piece of text is replaced
+      undo the prelast commit in order to redo it with a fuller commit message
+      verbatim: avoid referencing an uninitialized value
+      wrapping: delete only single characters, not a possibly marked region
+
+Jordi Mallach (1):
+      docs: fix "availabilty" typo in the manual and the nanorc manpage
+
+Mateusz Kazimierczuk (1):
+      options: add -? as a synonym of -h (--help)  [reverted]
+
+Matteo Raso (1):
+      syntax: python: colorize decorators specially
+
+Mike Frysinger (2):
+      build: link in $(GETRANDOM_LIB) from gnulib
+      gnulib: import canonicalize-lgpl for realpath
+
+
+Changes between v7.1 and v7.2:
+------------------------------
+
+Benno Schulenberg (11):
+      bindings: let ^/ toggle between the 'search' and 'gotoline' menus
+      bump version numbers and add a news item for the 7.2 release
+      copyright: update the years for the FSF
+      docs: give ^K and ^U some useful function in the alternative bindings
+      docs: put the binding of ^Y after its unbinding, for it to be effective
+      gnulib: update to its current upstream state
+      input: disallow bracketed pastes when in view mode
+      syntax: html: colorize specially the other two emphasizing tags too
+      tweaks: avoid warnings when compiling with -Wpedantic
+      tweaks: rewrap an old news item
+      tweaks: separate a special thanks from the preceding ones
+
+
+Changes between v7.0 and v7.1:
+------------------------------
+
+Benno Schulenberg (8):
+      build: fix compilation when configured with --disable-comment
+      bump version numbers and add a news item for the 7.1 release
+      copyright: update the last year for significantly changed files
+      docs: say thanks to the Albanian translator
+      rcfile: report an error when an included file does not exist
+      text: upon Enter, eat only lefthand blanks, not any other characters
+      tweaks: avoid passing NULL to access()
+      tweaks: wrap overlong lines in the Tcl syntax, to make them manageable
+
+
+Changes between v6.4 and v7.0:
+------------------------------
+
+Benno Schulenberg (94):
+      build: add options --disable-formatter and --disable-linter to configure
+      build: exclude some pieces that are not needed with --disable-nanorc
+      build: exclude two unneeded functions correctly from the tiny version
+      build: fix compilation when configured with --enable-tiny
+      bump version numbers and add a news item for the 7.0 release
+      completion: search through all open buffers for possible completions
+      docs: clarify the distinction between binding a function and "{function}"
+      docs: describe --disable-formatter and --disable-linter configure options
+      docs: explain how to include a double quote plus space in a nanorc regex
+      docs: improve the legibility of an itemized list
+      docs: mention in the man page how M-V can insert any Unicode code point
+      docs: mention that string binds may contain function names between braces
+      docs: replace control codes in the examples with {command} cartouches
+      docs: suggest a key binding for snipping trailing blanks
+      execute: show "Cancelled" instead of "Error" when the user hits ^C
+      extra: use the whole terminal for the crawl, and quicken it a bit
+      feedback: suppress undo/redo messages when option --zero is in effect
+      files: before sending data to an external command, decode LF back to NUL
+      files: improve the error handling when executing an external command
+      filtering: terminate also the sender process when the user hits ^C
+      filtering: when returning to a line number, ensure it is within range
+      gnulib: update to its current upstream state
+      goto: don't center the current line when the user specified a column only
+      help: don't show the New-Buffer toggle when in view mode
+      help: move the M-Del item up, so that M-PgUp and M-PgDn are paired
+      help: prioritize the unshifted Meta keystrokes for buffer switching
+      input: allocate a small keystroke buffer, and never free it
+      input: allocate two small character buffers too, and never free them
+      input: give up when the capacity of the keystroke buffer overflows
+      input: interpret commands of the form {functionname} inside string binds
+      memory: avoid a leak when a string bind specifies an unknown menu
+      prompt: allow rebinding also ^N, ^Q, and ^Y at the yes-no prompt
+      prompt: ingest queued characters before handling any subsequent function
+      prompt: prevent execution of inadmissible functions in view mode
+      prompt: return FALSE for non-editing functions also in the tiny version
+      prompt: toggle the help lines only for the 'nohelp' toggle
+      search: skip a match on the magic line, as it is a just convenience line
+      startup: ensure that +/string centers the match also with --linenumbers
+      startup: for +/string, center the found occurrence when possible
+      startup: quit when standard input is not a TTY (after handling arguments)
+      startup: report an empty search string also when there is a modifier
+      syntax: nanorc: colorize valid function names plus surrounding braces
+      tweaks: add parentheses for consistency, and reshuffle for conciseness
+      tweaks: allow the linter to be used in view mode, as it makes no changes
+      tweaks: attribute some of the features that were added in the last years
+      tweaks: avoid iterating over the same string twice in a row
+      tweaks: avoid sometimes calling a function three times in a row
+      tweaks: check the multiline regexes only for Delete and Backspace
+      tweaks: condense a comment, add two small ones, and reshuffle a line
+      tweaks: delete a flag that is no longer used
+      tweaks: determine in another way whether a shortcut is okay in view mode
+      tweaks: discard a bracketed paste in the browser more efficiently
+      tweaks: don't use a pointer when the value itself is all that is needed
+      tweaks: drop an unneeded check for permissibility of prompt shortcuts
+      tweaks: drop a parameter that is no longer used
+      tweaks: drop shunting of flags by calling the needed function directly
+      tweaks: elide a function that does not need to be a separate function
+      tweaks: elide an assignment by iterating with the target variable
+      tweaks: elide an intermediary variable that is no longer needed
+      tweaks: elide an unused parameter
+      tweaks: elide an unused return value
+      tweaks: elide a parameter by moving the general case one level up
+      tweaks: elide a variable, rename another, and reshuffle an assignment
+      tweaks: fold two cases together, because they basically do the same
+      tweaks: group the special keycodes for implanted strings together
+      tweaks: improve two comments, and exclude two unneeded prototypes
+      tweaks: make the crawl use the whole screen also in the tiny version
+      tweaks: make two error messages more succinct and easier to translate
+      tweaks: move the arrays of menu names and symbols to where they are used
+      tweaks: move the --magic option up, so that --zero comes last
+      tweaks: move to a given line number more efficiently
+      tweaks: move two checks plus corresponding calls to a better place
+      tweaks: normalize the indentation after the previous change
+      tweaks: reduce four variations of a message to a single common form
+      tweaks: rename a macro for clarity, and normalize some indentation
+      tweaks: rename a variable, away from an abbreviation
+      tweaks: rename two record elements and three parameters, for clarity
+      tweaks: replace sizeof(char) with 1, as that is assumed anyway
+      tweaks: reshuffle a declaration, and correct the wording of a comment
+      tweaks: reshuffle a line, to group things better
+      tweaks: reshuffle some code and drop some comments, for conciseness
+      tweaks: reshuffle some code, to not determine a shortcut twice
+      tweaks: reshuffle some lines, to be more readable instead of compact
+      tweaks: reshuffle two lines, for conciseness and in preparation
+      tweaks: reword and/or condense four comments
+      tweaks: rewrap line, improve wording, and correct typo in old news item
+      tweaks: rewrap some lines, drop a redundant call, and reshuffle a line
+      tweaks: simplify a function now that a Unicode code can be typed quicker
+      tweaks: simplify a pasting routine, modelling it after the injection one
+      tweaks: use an auxiliary variable to avoid dereferences of 'shortcut'
+      undo: make sure the current line is defined before it is referenced
+      verbatim: allow the user to finish Unicode input with <Enter> or <Space>
+      verbatim: do not overwrite the status bar when the code is invalid
+      verbatim: don't show dots during Unicode input, as they give wrong idea
+
+
+Changes between v6.3 and v6.4:
+------------------------------
+
+Benno Schulenberg (24):
+      bump version numbers and add a news item for the 6.4 release
+      display: remember text and column positions when softwrapping a line
+      docs: concisely describe how the linter behaves
+      docs: remove the two notices about the changed defaults
+      docs: rename README.GIT to README.hacking, so it's clearer what is meant
+      docs: stop mentioning the obsoleted keywords that were removed
+      files: designate the root directory with a simple "/", not with "//"
+      formatter: instead of leaving curses, use full_refresh() to wipe messages
+      gnulib: update to its current upstream state
+      help: reshuffle two shortcuts so that more help-line items are paired
+      options: stop accepting -z, as --suspendable has been dropped too
+      rcfile: remove five obsolete or deprecated keywords
+      syntax: default: do not colorize a square or angle bracket after a URL
+      syntax: perl: add missing keywords, and reduce the length of some lines
+      syntax: python: mention an alternative linter in a comment
+      tweaks: add a missing word to a news item
+      tweaks: add a translator hint
+      tweaks: improve a comment, and reshuffle two functions plus some lines
+      tweaks: put each regex on separate line, to better show many keywords
+      tweaks: rename a variable, to not be the same as a function name
+      tweaks: rename two variables, to not contain the name of another
+      tweaks: reshuffle a description and rewrap another
+      tweaks: reshuffle a few lines, to group things better
+      version: condense the copyright message, to not dominate the output
+
+LIU Hao (1):
+      build: ignore errors from `git describe`
+
+
+Changes between v6.2 and v6.3:
+------------------------------
+
+Benno Schulenberg (41):
+      build: add the --disable-maintainer-mode option to ./configure
+      build: fix compilation for --enable-{tiny,nanorc,color}
+      build: fix compilation when configured with --disable-color
+      build: remove an obsolete check -- the dependent code was deleted
+      bump version numbers and add a news item for the 6.3 release
+      display: suppress spotlight yellow and error red when NO_COLOR is set
+      docs: add an example binding for copying text to the system clipboard
+      execute: clear an anchor only when the whole buffer gets filtered
+      execute: don't crash when an empty buffer is piped through a command
+      execute: stay on the same line number when filtering the whole buffer
+      feedback: show extra warning when writing failed due to "No space left"
+      files: do not change to a higher directory when the working one is gone
+      files: show a warning when the working directory is gone (when used)
+      files: when the working directory exists, still check its accessibility
+      filtering: close all output descriptors, so that 'xsel' will terminate
+      formatting: change cursor position only after saving it in the undo item
+      gnulib: pull in the workaround for a build problem on NetBSD
+      gnulib: update to its current upstream state
+      justify: stay at the same line number when doing a full justification
+      painting: colorize text also after an unterminated start match
+      painting: look for another start match only after the actual end match
+      painting: recalculate the multidata when making large strides or changes
+      painting: stop coloring an extremely long line after 2000 bytes
+      painting: tighten the check for a lacking end match on a colored line
+      syntax: xml: colorize /> properly, and colorize prolog tags differently
+      syntax: xml: colorize user-defined entities differently
+      tweaks: avoid a function call when two plain assignments will do
+      tweaks: change the indentation of a list, to match other indentations
+      tweaks: don't leave an orphaned temporary file behind when writing fails
+      tweaks: elide an unneeded call of strlen()
+      tweaks: exclude the extra truncation warning from the tiny version
+      tweaks: make the triggering of the recalculation of multidata less eager
+      tweaks: move the saving and restoring of flags to where it is needed
+      tweaks: normalize the indentation after the previous change
+      tweaks: prevent the adding of an unwanted newline in a different way
+      tweaks: remove redundant braces, and add two translator hints
+      tweaks: remove some stray spaces before a comma
+      tweaks: simplify a bit of code, eliding two labels and three gotos
+      tweaks: simplify a fragment of code, and fold two lines together
+      tweaks: trim a few comments, rename a function, and reshuffle some code
+      verbatim: with --zero, keep cursor in viewport when it was on bottom row
+
+Mike Frysinger (1):
+      general: fix building for Windows
+
+
+Changes between v6.1 and v6.2:
+------------------------------
+
+Benno Schulenberg (14):
+      bump version numbers and add a news item for the 6.2 release
+      display: suppress the bottom-bar wiping only when the user is editing
+      linter: adjust the parsing to accommodate for a modern 'pyflakes'
+      syntaxes: fold a couple of regexes together, and improve a few comments
+      tweaks: change the type of a variable, to avoid a compiler warning
+      tweaks: consistently backslash-escape the dash in M-letter keystrokes
+      tweaks: rename a misnamed variable
+      tweaks: rename a variable, reshuffle five lines, and snip two comments
+      tweaks: rename a variable, to be more correct, and adjust two comments
+      tweaks: rename a variable, to be more fitting
+      tweaks: rename two more variables, and drop unneeded initializations
+      tweaks: rename two variables (to get rid of a prefix), and elide a third
+      tweaks: store a result, to avoid calling a function twice
+      tweaks: use an intermediate variable, to avoid using one for two purposes
+
+
+Changes between v6.0 and v6.1:
+------------------------------
+
+Benno Schulenberg (37):
+      build: fix compilation when configured with --enable-tiny
+      build: prevent autopoint from overwriting a newer M4 file from gnulib
+      bump version numbers and add a news item for the 6.1 release
+      copyright: update the last year for significantly changed files
+      copyright: update the years for the FSF
+      docs: mention bindable function 'zero', for toggling the interface bars
+      docs: mention 'set guidestripe' and 'set unix' in the sample nanorc
+      docs: remove obsolete Ctrl+Z from the cheatsheet; mention Alt+X instead
+      files: let ^C cancel the exiting when the file on disk was changed
+      gnulib: update to its current upstream state
+      help: make the description of <Tab> more accurate
+      help: update the description of M-D, to match the actual order of counts
+      input: instead of moving waiting keycodes, just increment a pointer
+      input: suppress any spotlighting when there are more keycodes waiting
+      menus: don't show M-6 in the help lines of any prompt
+      prompt: allow the user to copy the answer to the cutbuffer (with M-6)
+      prompt: let ^K erase text after cursor (if any), otherwise whole answer
+      tweaks: add some feedback to the autogen.sh script, to ease the wait
+      tweaks: add some small, clarifying comments
+      tweaks: adjust a translator hint, to fit the order in the POT file
+      tweaks: drop foreign M-U and M-R from among the sample CUA bindings
+      tweaks: remove a redundant check -- add a different one for symmetry
+      tweaks: remove two redundant checks
+      tweaks: rename a function and its two parameters, for clarity
+      tweaks: rename a function and reshuffle its call
+      tweaks: rename a function, to not contain the name of a variable
+      tweaks: rename another variable, to better fit in with its sisters
+      tweaks: rename a variable and a parameter, to be more descriptive
+      tweaks: rename a variable, away from an abbreviation
+      tweaks: rename a variable, for clarity and contrast
+      tweaks: rename a variable, to make it clearer it refers to a window
+      tweaks: rename two variables, and elide a near-enough duplicate
+      tweaks: reshuffle some sample bindings, to group them differently
+      tweaks: reword two comments, and rename a variable (away from an abbrev)
+      tweaks: stop asking the terminal for its new size -- let ncurses do it
+      tweaks: use some symbolic names instead of unclear numeric values
+      tweaks: when discarding keycodes, don't bother parsing them
+
+
+======================================================================
+For older changes, see in https://ftp.gnu.org/gnu/nano/nano-6.0.tar.xz
+======================================================================

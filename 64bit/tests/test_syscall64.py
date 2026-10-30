@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -12,6 +13,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class Syscall64Test(unittest.TestCase):
     def test_native_dispatch_and_input_validation(self) -> None:
+        kernel = ROOT / "64bit/src64/include/syscall64.h"
+        crt = ROOT / "64bit/app64/crt/include/syscall.h"
+        pattern = r"^#define (TTY_\w+)\s+(\d+)\b"
+        kernel_ops = dict(re.findall(pattern, kernel.read_text(), re.MULTILINE))
+        crt_ops = dict(re.findall(pattern, crt.read_text(), re.MULTILINE))
+        for name, value in crt_ops.items():
+            self.assertEqual(kernel_ops[name], value, name)
         compiler = os.environ.get("HOST_CC", "cc")
         with tempfile.TemporaryDirectory(prefix="syscall64-") as temporary:
             for architecture in ("x86_64", "aarch64"):

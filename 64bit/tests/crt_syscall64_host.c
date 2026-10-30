@@ -115,6 +115,12 @@ static void io_wrappers64(void)
 	reset64(&result, 1);
 	assert(write(1, buffer, (size_t) LONG_MAX) == -22);
 	assert(arguments64[2] == LONG_MAX);
+	result = -5;
+	reset64(&result, 1);
+	assert(file_call64(FILE_READ64, 7, (unsigned long) buffer, 16) == -5);
+	assert(calls64 == 1 && number64 == SYS_FILE && arguments64[0] == FILE_READ64);
+	assert(arguments64[1] == 7 && arguments64[2] == (long) buffer && arguments64[3] == 16);
+	result = -22;
 	/* File wrappers also preserve their historical signed ABI. */
 	reset64(&result, 1);
 	assert(open("file", O_CREAT | O_TRUNC) == -22 && number64 == SYS_OPEN);
@@ -200,9 +206,27 @@ static void puts_progress64(void)
 	assert(arguments64[2] == INT_MAX - 1L);
 }
 
+static void tty_wrappers64(void)
+{
+	long reply = -22;
+
+	reset64(&reply, 1);
+	assert(tty_cursor(-1, 2) == -22 && calls64 == 1 && number64 == SYS_TTY);
+	assert(arguments64[0] == 7 && arguments64[1] == -1 && arguments64[2] == 2);
+	reply = 0x1ffffffffL;
+	reset64(&reply, 1);
+	assert(tty_input_mode() == reply && calls64 == 1 && number64 == SYS_TTY);
+	assert(arguments64[0] == 8);
+	assert(TTY_INPUT_HANGUL(reply) == 1 && TTY_INPUT_GEN(reply) == 0xffffffffU);
+	reply = -22;
+	reset64(&reply, 1);
+	assert(tty_input_mode() == -22);
+}
+
 int main(void)
 {
 	io_wrappers64();
 	puts_progress64();
+	tty_wrappers64();
 	return 0;
 }

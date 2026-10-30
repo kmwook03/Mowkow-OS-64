@@ -44,6 +44,11 @@ void console64_move(uint32_t row, uint32_t col);
 void console64_clear_cells(uint32_t row, uint32_t col, uint32_t rows, uint32_t cols);
 void console64_set_attr(uint8_t fg, uint8_t bg);
 void console64_flush(void);
+/* Task context only; ticks are the platform's wrapping 100 Hz count. */
+void console64_cursor_update(uint64_t ticks);
+int console64_cursor_con(struct CONSOLE64 *con, int visible, unsigned int cells);
+/* Bit 0: Hangul; bits 1..32: generation. NULL returns -22. */
+int64_t console64_input_mode_con(struct CONSOLE64 *con);
 /* 한글 오토마타 회귀 확인. 통과하면 1. */
 int console64_hangul_smoke(void);
 

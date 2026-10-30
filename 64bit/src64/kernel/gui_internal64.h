@@ -15,5 +15,7 @@ int gui_toggle_window_checked64(void);
 int gui_has_console64(const struct CONSOLE64 *con);
 /* Post-commit buffer retirement is bounded and retains failed frees for retry. */
 int gui_reclaim64(void);
+/* Task-context main-loop refresh; generation polling does not redraw unchanged state. */
+void gui_update_status64(void);
 
 #endif

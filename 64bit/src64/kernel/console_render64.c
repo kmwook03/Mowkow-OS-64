@@ -9,10 +9,12 @@
 #include <window64.h>
 
 extern const uint8_t hankaku64[4096];
-/* Font and colors retain their system-wide scope in this behavior-preserving split. */
+/* The font has kernel lifetime; colors and the caret belong to each console. */
 static const uint8_t *hangul_font;
-static uint8_t color_fg = CONSOLE64_FG_DEFAULT;
-static uint8_t color_bg = CONSOLE64_BG_DEFAULT;
+static uint64_t cursor_ticks64;
+
+static void console_cursor_restore64(struct CONSOLE64 *con);
+static void console_cursor_show64(struct CONSOLE64 *con);
 
 /* A renderer may be preempted after taking a surface snapshot. Lifecycle
  * operations reject busy views instead of freeing that snapshot's buffer.
@@ -24,6 +26,7 @@ static int console_render_begin64(struct CONSOLE64 *con)
 
 	if (con != NULL && con->slot_state != CONSOLE64_CLOSING && !con->close_ready &&
 		con->render_users != UINT32_MAX) {
+		if (con->render_users == 0) { console_cursor_restore64(con); }
 		con->render_users++;
 		acquired = 1;
 	}
@@ -36,6 +39,7 @@ static void console_render_end64(struct CONSOLE64 *con)
 	uint64_t state = platform_irq_save64();
 
 	con->render_users--;
+	if (con->render_users == 0) { console_cursor_show64(con); }
 	platform_irq_restore64(state);
 }
 
@@ -97,6 +101,164 @@ static struct SURFACE64 console_surface64(const struct CONSOLE64 *con)
 	return surface;
 }
 
+/* All caret pixel access runs under irq-save, with no renderer in flight.
+ * Restore before ANY body mutation (including scroll/preedit), then save the
+ * new bottom scanline only at the outer render end. No allocation or sleep.
+ */
+static void console_cursor_refresh64(struct CONSOLE64 *con)
+{
+	if (con->sheet != NULL) {
+		sheet64_refresh(con->sheet, con->ox + con->caret_saved_x,
+			con->oy + con->caret_saved_y,
+			con->ox + con->caret_saved_x + con->caret_saved_width,
+			con->oy + con->caret_saved_y + 1);
+	}
+}
+
+static void console_cursor_restore64(struct CONSOLE64 *con)
+{
+	if (!con->caret_drawn) { return; }
+	for (uint16_t i = 0; i < con->caret_saved_width; i++) {
+		con->vram[(size_t) con->caret_saved_y * con->stride +
+			con->caret_saved_x + i] = con->caret_saved[i];
+	}
+	con->caret_drawn = 0;
+	console_cursor_refresh64(con);
+}
+
+static void console_cursor_show64(struct CONSOLE64 *con)
+{
+	struct SURFACE64 surface = console_surface64(con);
+	uint32_t x = con->cursor_x, y = con->cursor_y, width = CONSOLE64_FONT_W;
+
+	if (con->caret_drawn || !con->caret_wanted || !con->caret_phase ||
+		!con->caret_focused || con->close_ready || con->slot_state == CONSOLE64_CLOSING ||
+		con->dirty_valid || !surface64_valid(&surface) ||
+		con->width < CONSOLE64_FONT_W || con->height < CONSOLE64_FONT_H) { return; }
+	if (con->raw_mode) {
+		if (!con->caret_valid) { return; }
+		x = con->caret_x;
+		y = con->caret_y;
+		width = con->caret_cells * CONSOLE64_FONT_W;
+	} else if (con->composing.state != 0 && x >= CONSOLE64_HANGUL_W) {
+		x -= CONSOLE64_HANGUL_W;
+		width = CONSOLE64_HANGUL_W;
+	} else if (x + width > con->width) {
+		/* Preview the next line without scrolling or emitting a serial LF.
+		 * At the bottom edge retain the last cell until text causes a scroll.
+		 */
+		x = 0;
+		if (y + 2 * CONSOLE64_FONT_H <= con->height) { y += CONSOLE64_FONT_H; }
+		else { x = con->width - CONSOLE64_FONT_W; }
+	}
+	if (x >= con->width || y + CONSOLE64_FONT_H > con->height || width == 0 ||
+		width > CONSOLE64_HANGUL_W) { return; }
+	if (width > con->width - x) { width = con->width - x; }
+	con->caret_saved_x = (uint16_t) x;
+	con->caret_saved_y = (uint16_t) (y + CONSOLE64_FONT_H - 1);
+	con->caret_saved_width = (uint16_t) width;
+	for (uint16_t i = 0; i < width; i++) {
+		size_t offset = (size_t) con->caret_saved_y * con->stride + x + i;
+
+		con->caret_saved[i] = con->vram[offset];
+		/* Invert the low palette bits to remain visible on selection colors. */
+		con->vram[offset] ^= 7U;
+	}
+	con->caret_drawn = 1;
+	console_cursor_refresh64(con);
+}
+
+static void console_cursor_sync64(struct CONSOLE64 *con)
+{
+	if (con->render_users != 0) { return; }
+	/* Pin the same surface as normal rendering; the surrounding IRQ guard
+	 * also prevents GUI rebind/close until save/restore and refresh complete.
+	 */
+	con->render_users++;
+	console_cursor_restore64(con);
+	console_cursor_show64(con);
+	con->render_users--;
+}
+
+void console_cursor_activity64(struct CONSOLE64 *con)
+{
+	uint64_t state = platform_irq_save64();
+
+	con->caret_activity = cursor_ticks64;
+	con->caret_phase = 1;
+	console_cursor_sync64(con);
+	platform_irq_restore64(state);
+}
+
+void console_cursor_wait64(struct CONSOLE64 *con, int waiting)
+{
+	uint64_t state = platform_irq_save64();
+
+	con->caret_wanted = waiting != 0;
+	console_cursor_activity64(con);
+	platform_irq_restore64(state);
+}
+
+void console_cursor_focus64(struct CONSOLE64 *con, int focused)
+{
+	uint64_t state = platform_irq_save64();
+
+	if (con != NULL) {
+		con->caret_focused = focused != 0;
+		console_cursor_activity64(con);
+	}
+	platform_irq_restore64(state);
+}
+
+void console_cursor_tick64(struct CONSOLE64 *con, uint64_t ticks)
+{
+	uint64_t state = platform_irq_save64();
+	int phase;
+
+	cursor_ticks64 = ticks;
+	/* Unsigned elapsed time handles wrap; late updates preserve phase. */
+	phase = ((ticks - con->caret_activity) / 50U & 1U) == 0;
+	if (con->caret_phase != phase || (con->close_ready && con->caret_drawn)) {
+		con->caret_phase = phase;
+		console_cursor_sync64(con);
+	}
+	platform_irq_restore64(state);
+}
+
+void console_cursor_detach64(struct CONSOLE64 *con)
+{
+	uint64_t state = platform_irq_save64();
+
+	console_cursor_restore64(con);
+	con->caret_valid = 0;
+	platform_irq_restore64(state);
+}
+
+int console64_cursor_con(struct CONSOLE64 *con, int visible, unsigned int cells)
+{
+	uint64_t state = platform_irq_save64();
+	int status = -22;
+
+	if (con != NULL && (visible == 0 || visible == 1) && (cells == 1 || cells == 2) &&
+		con->slot_state == CONSOLE64_LIVE && !con->close_ready) {
+		con->caret_wanted = visible;
+		con->caret_cells = (uint16_t) cells;
+		console_cursor_activity64(con);
+		status = 0;
+	}
+	platform_irq_restore64(state);
+	return status;
+}
+
+void console_reserve_preedit64(struct CONSOLE64 *con)
+{
+	if (!console_render_begin64(con)) { return; }
+	if (con->cursor_x + CONSOLE64_HANGUL_W > con->width) { console_newline64(con); }
+	con->cursor_x += CONSOLE64_HANGUL_W;
+	console_draw_preedit64(con);
+	console_render_end64(con);
+}
+
 static void fill_rect64(struct CONSOLE64 *con, uint16_t x, uint16_t y,
 	uint16_t w, uint16_t h, uint8_t color)
 {
@@ -113,7 +275,7 @@ static void draw_ascii64(struct CONSOLE64 *con, uint16_t x, uint16_t y, char c)
 	struct SURFACE64 surface = console_surface64(con);
 
 	font = hankaku64 + (uint8_t) c * 16;
-	draw_glyph64(&surface, x, y, color_fg, font, CONSOLE64_FONT_H, CONSOLE64_FONT_W);
+	draw_glyph64(&surface, x, y, con->color_fg, font, CONSOLE64_FONT_H, CONSOLE64_FONT_W);
 	console_flush64(con, x, y, CONSOLE64_FONT_W, CONSOLE64_FONT_H);
 }
 
@@ -138,7 +300,7 @@ static void scroll_if_needed64(struct CONSOLE64 *con)
 	}
 	for (row = con->height - CONSOLE64_FONT_H; row < con->height; row++) {
 		for (col = 0; col < con->width; col++) {
-			con->vram[(size_t) row * con->stride + col] = color_bg;
+			con->vram[(size_t) row * con->stride + col] = con->color_bg;
 		}
 	}
 	con->cursor_y = con->height - CONSOLE64_FONT_H;
@@ -153,7 +315,7 @@ static void console_erase_preedit_unleased64(struct CONSOLE64 *con)
 	}
 	con->cursor_x -= CONSOLE64_HANGUL_W;
 	fill_rect64(con, con->cursor_x, con->cursor_y,
-		CONSOLE64_HANGUL_W, CONSOLE64_FONT_H, color_bg);
+		CONSOLE64_HANGUL_W, CONSOLE64_FONT_H, con->color_bg);
 }
 
 static void console_draw_preedit_unleased64(struct CONSOLE64 *con)
@@ -164,9 +326,9 @@ static void console_draw_preedit_unleased64(struct CONSOLE64 *con)
 		return;
 	}
 	fill_rect64(con, con->cursor_x - CONSOLE64_HANGUL_W, con->cursor_y,
-		CONSOLE64_HANGUL_W, CONSOLE64_FONT_H, color_bg);
+		CONSOLE64_HANGUL_W, CONSOLE64_FONT_H, con->color_bg);
 	hangul64_draw_johab(&surface, con->cursor_x - CONSOLE64_HANGUL_W, con->cursor_y,
-		color_fg, hangul_font, HANGUL64_FONT_SIZE, hangul64_to_johab(&con->composing));
+		con->color_fg, hangul_font, HANGUL64_FONT_SIZE, hangul64_to_johab(&con->composing));
 	console_flush64(con, con->cursor_x - CONSOLE64_HANGUL_W, con->cursor_y,
 		CONSOLE64_HANGUL_W, CONSOLE64_FONT_H);
 }
@@ -210,12 +372,16 @@ static void console_put_char_unleased64(struct CONSOLE64 *con, const char *s, in
 	if (con->cursor_x + width > con->width) {
 		console_newline64(con);
 	}
-	fill_rect64(con, con->cursor_x, con->cursor_y, width, CONSOLE64_FONT_H, color_bg);
+	if (con->raw_mode && con->cursor_x == con->caret_x &&
+		con->cursor_y == con->caret_y) {
+		con->caret_cells = width / CONSOLE64_FONT_W;
+	}
+	fill_rect64(con, con->cursor_x, con->cursor_y, width, CONSOLE64_FONT_H, con->color_bg);
 	if (width == CONSOLE64_HANGUL_W && hangul_font != NULL) {
 		struct SURFACE64 surface = console_surface64(con);
 
 		hangul64_draw_unicode(&surface, con->cursor_x, con->cursor_y,
-			color_fg, hangul_font, HANGUL64_FONT_SIZE, unicode);
+			con->color_fg, hangul_font, HANGUL64_FONT_SIZE, unicode);
 		console_flush64(con, con->cursor_x, con->cursor_y, CONSOLE64_HANGUL_W, CONSOLE64_FONT_H);
 	} else if (unicode == UTF64_REPLACEMENT) {
 		/* The bitmap font has no U+FFFD glyph; use its visible fallback. */
@@ -266,7 +432,11 @@ static void console_erase_prev_unleased64(struct CONSOLE64 *con, uint16_t width)
 		return;
 	}
 	con->cursor_x -= width;
-	fill_rect64(con, con->cursor_x, con->cursor_y, width, CONSOLE64_FONT_H, color_bg);
+	if (con->raw_mode && con->cursor_x == con->caret_x &&
+		con->cursor_y == con->caret_y) {
+		con->caret_cells = width / CONSOLE64_FONT_W;
+	}
+	fill_rect64(con, con->cursor_x, con->cursor_y, width, CONSOLE64_FONT_H, con->color_bg);
 	serial_putc64('\b');
 	serial_putc64(' ');
 	serial_putc64('\b');
@@ -275,6 +445,7 @@ static void console_erase_prev_unleased64(struct CONSOLE64 *con, uint16_t width)
 static void console_prompt_unleased64(struct CONSOLE64 *con)
 {
 	console_puts_con64(con, "> ");
+	console_cursor_wait64(con, 1);
 }
 
 void console64_prompt(void)
@@ -286,7 +457,7 @@ void console64_prompt(void)
 
 static void console_clear_screen_unleased64(struct CONSOLE64 *con)
 {
-	fill_rect64(con, 0, 0, con->width, con->height, color_bg);
+	fill_rect64(con, 0, 0, con->width, con->height, con->color_bg);
 	con->cursor_x = 0;
 	con->cursor_y = 0;
 }
@@ -341,6 +512,7 @@ int console_attach_sheet_checked64(struct CONSOLE64 *con, struct SHEET64 *sht,
 			}
 		}
 	}
+	console_cursor_detach64(con);
 	offset = (size_t) oy * surface.stride + ox;
 	con->sheet = sht;
 	con->ox = ox;
@@ -420,6 +592,11 @@ static void console64_move_unleased64(uint32_t row, uint32_t col)
 	}
 	con->cursor_x = (uint16_t) (col * CONSOLE64_FONT_W);
 	con->cursor_y = (uint16_t) (row * CONSOLE64_FONT_H);
+	con->caret_x = con->cursor_x;
+	con->caret_y = con->cursor_y;
+	con->caret_valid = 1;
+	con->caret_cells = 1;
+	console_cursor_activity64(con);
 }
 
 static void console64_clear_cells_unleased64(uint32_t row, uint32_t col,
@@ -444,13 +621,17 @@ static void console64_clear_cells_unleased64(uint32_t row, uint32_t col,
 		return;
 	}
 	fill_rect64(con, (uint16_t) (col * CONSOLE64_FONT_W), (uint16_t) (row * CONSOLE64_FONT_H),
-		(uint16_t) (cols * CONSOLE64_FONT_W), (uint16_t) (rows * CONSOLE64_FONT_H), color_bg);
+		(uint16_t) (cols * CONSOLE64_FONT_W), (uint16_t) (rows * CONSOLE64_FONT_H), con->color_bg);
 }
 
 void console64_set_attr(uint8_t fg, uint8_t bg)
 {
-	color_fg = fg;
-	color_bg = bg;
+	struct CONSOLE64 *con = console_self64();
+	uint64_t state = platform_irq_save64();
+
+	con->color_fg = fg;
+	con->color_bg = bg;
+	platform_irq_restore64(state);
 }
 
 static void console64_flush_unleased64(void)

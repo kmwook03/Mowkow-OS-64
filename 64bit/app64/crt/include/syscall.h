@@ -11,6 +11,7 @@
 #define SYS_FREE   8
 #define SYS_TICKS  9
 #define SYS_TTY    10
+#define SYS_FILE   11
 
 #define TTY_MODE    0
 #define TTY_READKEY 1
@@ -19,6 +20,8 @@
 #define TTY_CLEAR   4
 #define TTY_ATTR    5
 #define TTY_FLUSH   6
+#define TTY_CURSOR  7
+#define TTY_INPUT_MODE 8
 
 long syscall0(long nr);
 long syscall1(long nr, long a0);

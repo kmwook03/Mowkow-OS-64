@@ -227,17 +227,27 @@ class QemuConsoleTest(unittest.TestCase):
             harness.processes[0].wait.assert_called_once_with(timeout=5)
             self.assertTrue(harness.sockets[0].closed)
 
-    def test_interrupt_waits_for_two_space_mowkow_prompt(self) -> None:
+    def test_os_wait_does_not_accept_interpreter_prompts(self) -> None:
+        with Harness(self) as harness:
+            with PARITY.Console("image", False) as console:
+                for prompt in (">> ", ">>> ", ">  ", ".. "):
+                    with self.subTest(prompt=prompt):
+                        harness.logs[0].write_text("command\n" + prompt)
+                        with self.assertRaises(TimeoutError):
+                            console._wait_after(0, "> ", 0.5, "OS prompt")
+            harness.assert_released()
+
+    def test_interrupt_waits_for_double_greater_mowkow_prompt(self) -> None:
         with Harness(self) as harness:
             with PARITY.Console("image", False) as console:
                 def send(keys):
                     with harness.logs[0].open("ab") as log:
-                        log.write("머꼬\n>  ".encode() if keys == ["ret"] else b"\n> ")
+                        log.write("머꼬\n>> ".encode() if keys == ["ret"] else b"\n> ")
 
                 with patch.object(console, "type"), \
                         patch.object(console, "_send", side_effect=send) as strokes:
                     output = console.interrupt("머꼬", ["ctrl", "c"])
-                self.assertTrue(output.endswith("\n>  \n> "))
+                self.assertTrue(output.endswith("\n>> \n> "))
                 self.assertEqual([call.args[0] for call in strokes.call_args_list],
                                  [["ret"], ["ctrl", "c"]])
             harness.assert_released()
@@ -295,6 +305,48 @@ class QemuConsoleTest(unittest.TestCase):
             self.assertFalse(harness.endpoints[0].parent.exists())
             console.close()
             harness.assert_released()
+
+
+class MowkowOutputTest(unittest.TestCase):
+    def test_exact_prompts_preserve_greater_and_dot_values(self) -> None:
+        expected = [">", ">>", ">=", "..", "...", ">value", "..value"]
+        host = ">  >\n>  >>\n>  >=\n>  ..\n>  ...\n>  >value\n>  ..value\n>  "
+        device = (
+            "머꼬\n>> '>\n>\n>> '>>\n>>\n>> '>=\n>=\n>> '..\n..\n"
+            ">> '...\n...\n>> '>value\n>value\n>> '..value\n..value\n> "
+        )
+        self.assertEqual(PARITY.strip_host(host, repl=True), expected)
+        self.assertEqual(PARITY.strip_device(
+            device, "머꼬", ["'>", "'>>", "'>=", "'..", "'...", "'>value", "'..value"]
+        ), expected)
+        # File output has no REPL prompts, even if its text resembles one.
+        file_output = "> text\n>  text\n>> text\n.. text\n> \n"
+        expected_file = ["> text", ">  text", ">> text", ".. text", ">"]
+        self.assertEqual(PARITY.strip_device("머꼬 file.mk\n" + file_output + "> ",
+                                            "file.mk", []), expected_file)
+        self.assertEqual(PARITY.strip_host(file_output), expected_file)
+
+    def test_raw_prompt_check_rejects_ui_changes_even_when_values_match(self) -> None:
+        host = ">  10\n>  ..  3\n>  >\n>  goodbye\n"
+        device = "머꼬\n>> 0육ㄱ\n10\n>> (+ 1\n..  2)\n3\n>> '>\n>\n>> \ngoodbye\n> "
+        self.assertTrue(PARITY.check_repl_prompts(device, host))
+        mutations = (
+            device.replace(">> ", ">  "),
+            device.replace("..  2)", ">> 2)"),
+            device.replace(">> (+ 1", "(+ 1"),
+            device.replace("\n>> \n", "\n"),
+            device.replace("\n>\n", "\n"),
+        )
+        for changed in mutations:
+            with self.subTest(raw=changed):
+                self.assertFalse(PARITY.check_repl_prompts(changed, host))
+        self.assertFalse(PARITY.check_repl_prompts(device, host.replace(">  ", ">> ")))
+        inputs = ["0육ㄱ", "(+ 1", "2)", "'>", ""]
+        self.assertEqual(PARITY.strip_device(device, "머꼬", inputs),
+                         ["10", "3", ">", "goodbye"])
+        self.assertEqual(PARITY.strip_host(host, repl=True), ["10", "3", ">", "goodbye"])
+        self.assertEqual(PARITY.strip_device(mutations[2], "머꼬", inputs),
+                         ["10", "3", ">", "goodbye"])
 
 
 if __name__ == "__main__":

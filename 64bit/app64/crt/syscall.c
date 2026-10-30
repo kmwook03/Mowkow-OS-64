@@ -2,6 +2,12 @@
 #include <mowos.h>
 #include <syscall.h>
 
+long file_call64(unsigned int operation, unsigned long arg0,
+	unsigned long arg1, unsigned long arg2)
+{
+	return syscall4(SYS_FILE, operation, (long) arg0, (long) arg1, (long) arg2);
+}
+
 long write(int fd, const void *buf, size_t len)
 {
 	return syscall3(SYS_WRITE, fd, (long) buf, (long) len);
@@ -82,6 +88,16 @@ void tty_attr(int fg, int bg)
 void tty_flush(void)
 {
 	syscall1(SYS_TTY, TTY_FLUSH);
+}
+
+long tty_cursor(int visible, int cells)
+{
+	return syscall3(SYS_TTY, TTY_CURSOR, visible, cells);
+}
+
+long tty_input_mode(void)
+{
+	return syscall1(SYS_TTY, TTY_INPUT_MODE);
 }
 
 /* A zero/oversized count cannot advance safely, even after a partial write. */

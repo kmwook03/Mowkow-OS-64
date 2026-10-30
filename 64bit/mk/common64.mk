@@ -42,3 +42,12 @@ APP64_NAMES = $(filter-out crt,$(notdir $(patsubst %/,%,$(APP64_DIRS))))
 
 # Native gates and wrappers are linked by both app architectures.
 APP64_CRT_COMMON_NAMES = syscall syscall_arch64 string
+
+# Private nano compatibility work stays outside app64 discovery. It is not
+# linked into the existing editor until the upstream app integration passes.
+NANO64_DIR = 64bit/nano64
+NANO64_COMPAT_SRCS = $(NANO64_DIR)/file64.c $(NANO64_DIR)/utf64.c \
+	$(NANO64_DIR)/headers64.c $(SRC64_DIR)/lib/utf864.c
+NANO64_PORT_SRCS = $(NANO64_DIR)/libc64.c $(NANO64_DIR)/format64.c \
+	$(NANO64_DIR)/posix64.c $(NANO64_DIR)/curses64.c
+NANO64_VENDOR_NAMES = chars cut files global help move nano prompt search text utils winio

@@ -1,0 +1,533 @@
+--- a/src/nano.c
++++ b/src/nano.c
+@@ -231,7 +231,6 @@
+ 	curs_set(1);
+ 	endwin();
+ #ifndef NANO_TINY
+-	printf("\x1B[?2004l");
+ 	fflush(stdout);
+ #endif
+ 	tcsetattr(STDIN_FILENO, TCSANOW, &original_state);
+@@ -966,35 +965,14 @@
+ /* Handler for SIGTSTP (suspend). */
+ void suspend_nano(int signal)
+ {
+-#ifdef ENABLE_MOUSE
+-	disable_mouse_support();
+-#endif
+-	restore_terminal();
+-
+-	printf("\n\n");
+-
+-	/* Display our helpful message. */
+-	printf(_("Use \"fg\" to return to nano.\n"));
+-	fflush(stdout);
+-
+-	/* The suspend keystroke must not elicit cursor-position display. */
+-	lastmessage = HUSH;
+-
+-#ifdef SIGSTOP
+-	/* Do what mutt does: send ourselves a SIGSTOP. */
+-	kill(0, SIGSTOP);
+-#endif
++	(void) signal;
++	statusline(AHEM, _("Suspend is unavailable on Mowkow"));
+ }
+ 
+ /* When permitted, put nano to sleep. */
+ void do_suspend(void)
+ {
+-	if (in_restricted_mode())
+-		return;
+-
+-	suspend_nano(0);
+-
+-	ran_a_tool = TRUE;
++	statusline(AHEM, _("Suspend is unavailable on Mowkow"));
+ }
+ #endif /* !NANO_TINY */
+ 
+@@ -1232,7 +1210,6 @@
+ 
+ #ifndef NANO_TINY
+ 	/* Tell the terminal to enable bracketed pastes. */
+-	printf("\x1B[?2004h");
+ 	fflush(stdout);
+ #endif
+ }
+@@ -2154,7 +2131,7 @@
+ 	}
+ 
+ #ifndef NANO_TINY
+-	set_up_sigwinch_handler();
++	/* Mowkow delivers resize as a TTY event. */
+ #endif
+ 
+ 	/* Nano is a visual editor -- it needs a screen. */
+@@ -2442,7 +2419,7 @@
+ #endif
+ 	editwincols = COLS - sidebar;
+ 
+-	set_up_signal_handlers();
++	/* Mowkow has no POSIX signal delivery. */
+ 
+ #ifdef ENABLE_MOUSE
+ 	/* Initialize mouse support. */
+@@ -2528,7 +2505,7 @@
+ 				switch (argv[optind][n++]) {
+ 					case 'c': SET(CASE_SENSITIVE); break;
+ 					case 'C': UNSET(CASE_SENSITIVE); break;
+-					case 'r': SET(USE_REGEXP); break;
++					case 'r': die(_("Regular expressions are unavailable\n")); break;
+ 					case 'R': UNSET(USE_REGEXP); break;
+ 					default:
+ 						statusline(ALERT, _("Invalid search modifier '%c'"),
+--- a/src/files.c
++++ b/src/files.c
+@@ -833,62 +833,40 @@
+  * descriptor otherwise.  The opened filestream is returned in *f. */
+ int open_file(const char *filename, bool new_one, FILE **f)
+ {
+-	char *full_filename = get_full_path(filename);
+-	struct stat fileinfo;
++	struct stat info;
+ 	int fd;
+-
+-	/* If the absolute path is unusable (due to some component's permissions),
+-	 * try the given path instead (as it is probably relative). */
+-	if (full_filename == NULL || stat(full_filename, &fileinfo) < 0)
+-		full_filename = mallocstrcpy(full_filename, filename);
+-
+-	if (stat(full_filename, &fileinfo) < 0) {
+-		free(full_filename);
+-
+-		if (new_one) {
++	FILE *stream;
++
++	if (stat(filename, &info) < 0) {
++		if (errno == ENOENT && new_one) {
+ 			statusline(REMARK, _("New File"));
+ 			return 0;
+-		} else {
+-			statusline(ALERT, _("File \"%s\" not found"), filename);
+-			return -1;
+-		}
+-	}
+-
+-#ifndef NANO_TINY
+-	if (S_ISFIFO(fileinfo.st_mode))
+-		statusbar(_("Reading from FIFO..."));
+-
+-	block_sigwinch(TRUE);
+-	install_handler_for_Ctrl_C();
+-#endif
+-
+-	/* Try opening the file. */
+-	fd = open(full_filename, O_RDONLY);
+-
+-#ifndef NANO_TINY
+-	restore_handler_for_Ctrl_C();
+-	block_sigwinch(FALSE);
+-#endif
+-
++		}
++		statusline(ALERT, _("Error reading %s: %s"), filename, strerror(errno));
++		return -1;
++	}
++	if (!S_ISREG(info.st_mode) || info.st_size > NANO_FILE_LIMIT64) {
++		statusline(ALERT, _("Only regular files up to 64 KiB can be opened"));
++		return -1;
++	}
++	fd = open(filename, O_RDONLY);
+ 	if (fd < 0) {
+-		if (errno == EINTR || errno == 0)
+-			statusline(ALERT, _("Interrupted"));
+-		else
+-			statusline(ALERT, _("Error reading %s: %s"), filename, strerror(errno));
+-	} else {
+-		/* The file is A-OK.  Associate a stream with it. */
+-		*f = fdopen(fd, "rb");
+-
+-		if (*f == NULL) {
+-			statusline(ALERT, _("Error reading %s: %s"), filename, strerror(errno));
+-			close(fd);
+-			fd = -1;
+-		} else if (!ISSET(ZERO) || we_are_running)
+-			statusbar(_("Reading..."));
+-	}
+-
+-	free(full_filename);
+-
++		statusline(ALERT, _("Error reading %s: %s"), filename, strerror(errno));
++		return -1;
++	}
++	stream = fdopen(fd, "rb");
++	if (stream == NULL) {
++		close(fd);
++		return -1;
++	}
++	if (nano_snapshot64(stream) < 0) {
++		int error = errno;
++
++		fclose(stream);
++		statusline(ALERT, _("Error reading %s: %s"), filename, strerror(error));
++		return -1;
++	}
++	*f = stream;
+ 	return fd;
+ }
+ 
+@@ -898,32 +876,10 @@
+  * extension exists, we return "". */
+ char *get_next_filename(const char *name, const char *suffix)
+ {
+-	size_t wholenamelen= strlen(name) + strlen(suffix);
+-	unsigned long i = 0;
+-	char *buf;
+-
+-	/* Reserve space for: the name plus the suffix plus a dot plus
+-	 * possibly five digits plus a null byte. */
+-	buf = nmalloc(wholenamelen + 7);
+-	sprintf(buf, "%s%s", name, suffix);
+-
+-	while (TRUE) {
+-		struct stat fs;
+-
+-		if (stat(buf, &fs) < 0)
+-			return buf;
+-
+-		/* Limit the number of backup files to a hundred thousand. */
+-		if (++i == 100000)
+-			break;
+-
+-		sprintf(buf + wholenamelen, ".%lu", i);
+-	}
+-
+-	/* There is no possible save file: blank out the filename. */
+-	*buf = '\0';
+-
+-	return buf;
++	(void) name;
++	(void) suffix;
++	errno = ENOSYS;
++	return copy_of("");
+ }
+ 
+ #ifndef NANO_TINY
+@@ -972,172 +928,8 @@
+ /* Execute the given command in a shell. */
+ void execute_command(const char *command)
+ {
+-#if defined(HAVE_FORK) && defined(HAVE_PIPE) && defined(HAVE_WAITPID)
+-	int from_fd[2], to_fd[2];
+-		/* The pipes through which text will be written and read. */
+-	struct sigaction oldaction, newaction = {{0}};
+-		/* Original and temporary handlers for SIGINT. */
+-	ssize_t was_lineno = (openfile->mark ? 0 : openfile->current->lineno);
+-	int command_status, sender_status;
+-	bool capture_output = TRUE;
+-	FILE *stream;
+-
+-	should_pipe = (command[0] == '|');
+-
+-	/* Two leading pipe symbols mean: let the output go to the terminal. */
+-	if (should_pipe && command[1] == '|')
+-		capture_output = FALSE;
+-
+-	/* Create a pipe to read the command's output from, and, if needed,
+-	 * a pipe to feed the command's input through. */
+-	if (pipe(from_fd) < 0 || (should_pipe && pipe(to_fd) < 0)) {
+-		statusline(ALERT, _("Could not create pipe: %s"), strerror(errno));
+-		return;
+-	}
+-
+-	/* Fork a child process to run the command in. */
+-	if ((pid_of_command = fork()) == 0) {
+-		const char *theshell = getenv("SHELL");
+-
+-		if (theshell == NULL)
+-			theshell = (char *)"/bin/sh";
+-
+-		/* Child: close the unused read end of the output pipe. */
+-		close(from_fd[0]);
+-
+-		/* Connect the write end of the output pipe to the process' output streams. */
+-		if (capture_output && dup2(from_fd[1], STDOUT_FILENO) < 0)
+-			exit(3);
+-		if (dup2(from_fd[1], STDERR_FILENO) < 0)
+-			exit(4);
+-
+-		/* If the parent sends text, connect the read end of the
+-		 * feeding pipe to the child's input stream. */
+-		if (should_pipe) {
+-			if (dup2(to_fd[0], STDIN_FILENO) < 0)
+-				exit(5);
+-			close(from_fd[1]);
+-			close(to_fd[1]);
+-		}
+-
+-		/* Run the given command inside the preferred shell. */
+-		execl(theshell, tail(theshell), "-c", should_pipe ? capture_output ?
+-										&command[1] : &command[2] : command, NULL);
+-
+-		/* If the exec call returns, there was an error. */
+-		exit(6);
+-	}
+-
+-	/* Parent: close the unused write end of the pipe. */
+-	close(from_fd[1]);
+-
+-	if (pid_of_command < 0) {
+-		statusline(ALERT, _("Could not fork: %s"), strerror(errno));
+-		close(from_fd[0]);
+-		return;
+-	}
+-
+-	statusbar(_("Executing..."));
+-
+-	/* If the command starts with "|", pipe buffer or region to the command. */
+-	if (should_pipe) {
+-		linestruct *was_cutbuffer = cutbuffer;
+-		bool whole_buffer = FALSE;
+-
+-		cutbuffer = NULL;
+-
+-#ifdef ENABLE_MULTIBUFFER
+-		if (ISSET(NEW_BUFFER)) {
+-			openfile = openfile->prev;
+-			if (openfile->mark)
+-				copy_marked_region();
+-			else
+-				whole_buffer = TRUE;
+-		} else
+-#endif
+-		{
+-			/* TRANSLATORS: This one goes with Undid/Redid messages. */
+-			add_undo(COUPLE_BEGIN, N_("filtering"));
+-			if (openfile->mark == NULL) {
+-				openfile->current = openfile->filetop;
+-				openfile->current_x = 0;
+-			}
+-			add_undo(CUT, NULL);
+-			do_snip(openfile->mark != NULL, openfile->mark == NULL, FALSE);
+-			if (openfile->filetop->next == NULL)
+-				openfile->filetop->has_anchor = FALSE;
+-			update_undo(CUT);
+-		}
+-
+-		/* Create a separate process for piping the data to the command. */
+-		if ((pid_of_sender = fork()) == 0) {
+-			send_data(whole_buffer ? openfile->filetop : cutbuffer, to_fd[1]);
+-			exit(0);
+-		}
+-
+-		if (pid_of_sender < 0)
+-			statusline(ALERT, _("Could not fork: %s"), strerror(errno));
+-
+-		close(to_fd[0]);
+-		close(to_fd[1]);
+-
+-#ifdef ENABLE_MULTIBUFFER
+-		if (ISSET(NEW_BUFFER))
+-			openfile = openfile->next;
+-#endif
+-		free_lines(cutbuffer);
+-		cutbuffer = was_cutbuffer;
+-	}
+-
+-	/* Re-enable interpretation of the special control keys so that we get
+-	 * SIGINT when Ctrl-C is pressed. */
+-	enable_kb_interrupt();
+-
+-	/* Set up a signal handler so that ^C will terminate the forked process. */
+-	newaction.sa_handler = cancel_the_command;
+-	newaction.sa_flags = 0;
+-	sigaction(SIGINT, &newaction, &oldaction);
+-
+-	stream = fdopen(from_fd[0], "rb");
+-	if (stream == NULL)
+-		statusline(ALERT, _("Failed to open pipe: %s"), strerror(errno));
+-	else
+-		read_file(stream, 0, "pipe", TRUE);
+-
+-	if (should_pipe && !ISSET(NEW_BUFFER)) {
+-		if (was_lineno)
+-			goto_line_posx(was_lineno, 0);
+-		add_undo(COUPLE_END, N_("filtering"));
+-	}
+-
+-	/* Wait for the external command (and possibly data sender) to terminate. */
+-	waitpid(pid_of_command, &command_status, 0);
+-	if (should_pipe && pid_of_sender > 0)
+-		waitpid(pid_of_sender, &sender_status, 0);
+-
+-	/* If the command failed, show what the shell reported. */
+-	if (!WIFEXITED(command_status) || WEXITSTATUS(command_status))
+-		statusline(ALERT, WIFSIGNALED(command_status) ? _("Cancelled") :
+-							_("Error: %s"), openfile->current->prev &&
+-							strstr(openfile->current->prev->data, ": ") ?
+-							strstr(openfile->current->prev->data, ": ") + 2 : "---");
+-	else if (should_pipe && pid_of_sender > 0 &&
+-				(!WIFEXITED(sender_status) || WEXITSTATUS(sender_status)))
+-		statusline(ALERT, _("Piping failed"));
+-
+-	/* If there was an error, undo and discard what the command did. */
+-	if (lastmessage == ALERT) {
+-		do_undo();
+-		discard_until(openfile->current_undo);
+-	}
+-
+-	/* Restore the original handler for SIGINT. */
+-	sigaction(SIGINT, &oldaction, NULL);
+-
+-	/* Restore the terminal to its desired state, and disable
+-	 * interpretation of the special control keys again. */
+-	terminal_init();
+-#endif
++	(void) command;
++	statusline(ALERT, _("External commands are unavailable on Mowkow"));
+ }
+ #endif /* NANO_TINY */
+ 
+@@ -1343,8 +1135,7 @@
+ /* If the current mode of operation allows it, go prompt for a command. */
+ void do_execute(void)
+ {
+-	if (!in_restricted_mode())
+-		insert_a_file_or(TRUE);
++	statusline(ALERT, _("External commands are unavailable on Mowkow"));
+ }
+ #endif
+ 
+@@ -1715,6 +1506,25 @@
+  * and stat info.  Return TRUE on success, and FALSE otherwise. */
+ bool write_file(const char *name, FILE *thefile, writing_type method, bool annotate)
+ {
++	/* This port supports ordinary whole-buffer overwrite only. */
++	if (method != OVERWRITE || thefile != NULL || ISSET(MAKE_BACKUP)) {
++		statusline(ALERT, _("Append, prepend, backup and emergency saves are unavailable"));
++		return FALSE;
++	}
++	size_t serialized = 0, nodes = 0;
++
++	for (linestruct *item = openfile->filetop; item != NULL; item = item->next) {
++		size_t length = strlen(item->data);
++		size_t newline = (item->next == NULL ? 0 : (openfile->fmt == DOS_FILE ? 2 : 1));
++
++		if (++nodes > NANO_FILE_LIMIT64 + 1 || length > NANO_FILE_LIMIT64 - serialized ||
++			newline > NANO_FILE_LIMIT64 - serialized - length) {
++			statusline(ALERT, _("Save exceeds 64 KiB; file was not changed"));
++			return FALSE;
++		}
++		serialized += length + newline;
++	}
++
+ #ifndef NANO_TINY
+ 	bool is_existing_file;
+ 		/* Becomes TRUE when the file is non-temporary and exists. */
+@@ -1723,8 +1533,7 @@
+ #endif
+ 	char *realname = expand_leading_tilde(name);
+ 		/* The filename after tilde expansion. */
+-	int descriptor = 0;
+-		/* The descriptor that gets assigned when opening the file. */
++
+ 	char *tempname = NULL;
+ 		/* The name of the temporary file we use when prepending. */
+ 	linestruct *line = openfile->filetop;
+@@ -1793,42 +1602,9 @@
+ 	/* When it's not a temporary file, this is where we open or create it.
+ 	 * For an emergency file, access is restricted to just the owner. */
+ 	if (thefile == NULL) {
+-		mode_t permissions = (normal ? RW_FOR_ALL : S_IRUSR|S_IWUSR);
+-
+-#ifndef NANO_TINY
+-		block_sigwinch(TRUE);
+-		if (normal)
+-			install_handler_for_Ctrl_C();
+-#endif
+-
+-		/* Now open the file.  Use O_EXCL for an emergency file. */
+-		descriptor = open(realname, O_WRONLY | O_CREAT | ((method == APPEND) ?
+-					O_APPEND : (normal ? O_TRUNC : O_EXCL)), permissions);
+-
+-#ifndef NANO_TINY
+-		if (normal)
+-			restore_handler_for_Ctrl_C();
+-		block_sigwinch(FALSE);
+-#endif
+-
+-		/* If we couldn't open the file, give up. */
+-		if (descriptor < 0) {
+-			if (errno == EINTR || errno == 0)
+-				statusline(ALERT, _("Interrupted"));
+-			else
+-				statusline(ALERT, _("Error writing %s: %s"), realname, strerror(errno));
+-#ifndef NANO_TINY
+-			if (tempname)
+-				unlink(tempname);
+-#endif
+-			goto cleanup_and_exit;
+-		}
+-
+-		thefile = fdopen(descriptor, (method == APPEND) ? "ab" : "wb");
+-
++		thefile = fopen(realname, "wb");
+ 		if (thefile == NULL) {
+ 			statusline(ALERT, _("Error writing %s: %s"), realname, strerror(errno));
+-			close(descriptor);
+ 			goto cleanup_and_exit;
+ 		}
+ 	}
+--- a/src/winio.c
++++ b/src/winio.c
+@@ -203,7 +203,7 @@
+ 		curs_set(1);
+ 
+ #ifndef NANO_TINY
+-	if (currmenu == MMAIN && (((ISSET(MINIBAR) || ISSET(ZERO) || LINES == 1) &&
++	if (FALSE && currmenu == MMAIN && (((ISSET(MINIBAR) || ISSET(ZERO) || LINES == 1) &&
+ 						lastmessage > HUSH && lastmessage < ALERT &&
+ 						lastmessage != INFO) || spotlighted)) {
+ 		timed = TRUE;
+@@ -249,11 +249,8 @@
+ 			}
+ 		}
+ #endif
+-		/* When we've failed to get a keycode millions of times in a row,
+-		 * assume our input source is gone and die gracefully.  We could
+-		 * check if errno is set to EIO ("Input/output error") and die in
+-		 * that case, but it's not always set properly.  Argh. */
+-		if (input == ERR && ++errcount == 12345678)
++		/* A blocking TTY failure is terminal; nonblocking drain is below. */
++		if (input == ERR && ++errcount == 1)
+ 			die(_("Too many errors from stdin\n"));
+ 	}
+ 
+@@ -1531,7 +1528,6 @@
+ 
+ #ifndef NANO_TINY
+ 	/* Turn bracketed-paste mode off. */
+-	printf("\x1B[?2004l");
+ 	fflush(stdout);
+ #endif
+ 
+@@ -1554,7 +1550,6 @@
+ 
+ #ifndef NANO_TINY
+ 	/* Turn bracketed-paste mode back on. */
+-	printf("\x1B[?2004h");
+ 	fflush(stdout);
+ #endif
+ 
+--- a/src/search.c
++++ b/src/search.c
+@@ -146,7 +146,7 @@
+ 		else if (function == backwards_void)
+ 			TOGGLE(BACKWARDS_SEARCH);
+ 		else if (function == regexp_void)
+-			TOGGLE(USE_REGEXP);
++			statusline(AHEM, _("Regular expressions are unavailable"));
+ 		else if (function == flip_replace) {
+ 			if (ISSET(VIEW_MODE)) {
+ 				print_view_warning();

@@ -51,7 +51,7 @@ static int init_gui64(const struct BOOTINFO64 *bootinfo)
 	console_sheet = gui64_init(bootinfo);
 	if (console_sheet == NULL || console_sheet->buf == NULL ||
 			console_sheet->bxsize != bootinfo->scrnx ||
-			console_sheet->bysize != bootinfo->scrny) {
+			console_sheet->bysize <= 0 || console_sheet->bysize > bootinfo->scrny) {
 		return -1;
 	}
 	boot_console_sheet64 = console_sheet;
@@ -798,6 +798,7 @@ mouse_port64:
 					arch64_dbg_puts("\n");
 				}
 				while (fifo64_get(&hid_fifo, &hid_event) == 0) {
+					if (gui64_handle_key((uint16_t) hid_event.data) != 0) { continue; }
 					focused_console = gui64_focused_console();
 					if (focused_console != NULL &&
 						console64_post_input_key(focused_console,
@@ -848,6 +849,7 @@ mouse_port64:
 			}
 		}
 		/* 닫기 요청을 처리하고 잠든 console task와 window를 회수한다. */
+		console64_cursor_update(arch64_timer_ticks());
 		console64_reap_closed();
 		/* Do not stall USB polling while preserving the 500 ms heartbeat. */
 		if (poll_deadline_expired64(&heartbeat_deadline, aarch64_boot_counter64())) {
