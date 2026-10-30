@@ -1,5 +1,9 @@
 # P0 사용자 출력 경로 목록
 
+> 2026-10-28: P0의 출력 경로 조사는 이 목록으로 보존한다.
+> 전체 개별 catalog 작성·번역·누락 검출 구현은 P5에서 수행한다.
+> 현재 판정·범위는 [P0 검토 결과](feature_p0_feasibility.md)를 따른다.
+
 2026-10-27 8차: [출처 저장 축소 기록](feature_p0_mp_compact.md)에서 typed 인수의 보존과
 손실을 분리했다. 이탈한 비interned 문자열은 미해결로 표시한다. 활성 154개 문구/149개
 pending ID와 translation=pending은 유지하며 메모리 축소를 번역 완료로 세지 않는다.
