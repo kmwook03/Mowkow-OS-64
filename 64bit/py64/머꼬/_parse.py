@@ -54,7 +54,7 @@ class Reader:
         self._line = 1
         self._column = 0
         self._depth = 0
-        self._prompt1 = ">  "
+        self._prompt1 = ">> "
         self._prompt2 = ".. "
     def next_token(self) -> str:        # returns the token and set it to LA
         s = self._input

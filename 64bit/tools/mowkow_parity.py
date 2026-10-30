@@ -34,7 +34,9 @@ UPSTREAM = os.path.join(ROOT, "64bit", "py64", "머꼬", "upstream")
 DEFAULT_IMAGE = os.path.join(ROOT, "img64", "mowkow64.img")
 
 PROMPT = "> "
-MOWKOW_PROMPT = ">  "
+MOWKOW_PROMPT = ">> "
+REFERENCE_MOWKOW_PROMPT = ">  "
+MOWKOW_CONTINUATION = ".. "
 BOOT_TIMEOUT = 60
 CMD_TIMEOUT = 180
 QMP_TIMEOUT = 5
@@ -219,7 +221,11 @@ class Console:
         while time.monotonic() < deadline:
             self._check_alive()
             current = self.text()
-            if len(current) > offset and current.endswith(tail):
+            matched = current.endswith(tail)
+            if tail == PROMPT:
+                # The new Mowkow prompt and Python's >>> also end in "> ".
+                matched = current == PROMPT or current.endswith("\n" + PROMPT)
+            if len(current) > offset and matched:
                 return
             time.sleep(0.1)
         raise TimeoutError(f"timeout during {what}; see {self.log_path}")
@@ -345,29 +351,37 @@ class Console:
             print(message, file=sys.stderr)
 
 
-def drop_prompts(raw):
-    """프롬프트(`> `, `>  `, `.. `)를 떼고 빈 줄을 버린다. 업스트림은 프롬프트를
-    표준 출력에 붙여 찍으므로(input(prompt)) 양쪽에 똑같이 적용해야 한다."""
+def drop_prompts(raw: str, prompts: tuple[str, ...]) -> list[str]:
+    """Remove exact prompt tokens before trimming; preserve bare > and .. values.
+
+    Host input() prints adjacent prompts without echoing input. Strip only the
+    prompts of that producer, including their spaces, rather than >/. characters.
+    """
     out = []
     for line in raw.split("\n"):
+        while line.startswith(prompts):
+            for prompt in prompts:
+                if line.startswith(prompt):
+                    line = line[len(prompt):]
+                    break
         line = line.strip()
-        while line.startswith(">") or line.startswith(".."):
-            line = line.lstrip(">.").lstrip()
         if line:
             out.append(line)
     return out
 
 
-def strip_device(raw, command, inputs):
+def strip_device(raw: str, command: str, inputs: list[str] | tuple[str, ...]) -> list[str]:
     """장치 출력에서 명령 줄, 프롬프트, 되울린 입력, 빈 줄을 걷어낸다."""
     lines = raw.split("\n")
     if lines and command in lines[0]:
         lines = lines[1:]
-    out = drop_prompts("\n".join(lines))
+    if lines and lines[-1] == PROMPT:
+        lines = lines[:-1]
+    prompts = (MOWKOW_PROMPT, MOWKOW_CONTINUATION) if command == "머꼬" else ()
+    out = drop_prompts("\n".join(lines), prompts)
     for echo in inputs:
-        # 되울린 입력은 앞에서부터 하나씩만 지운다. 콘솔은 조합 중인 한글을
-        # 프레임버퍼에만 그리므로 COM1에는 한글이 빠진 채로 되울린다 --
-        # `0육ㄱ`을 친 줄이 `0`으로 나온다. 그래서 ASCII만 남긴 꼴도 함께 본다.
+        # 되울린 입력은 앞에서부터 하나씩만 지운다. 한글 조합 경로에 따라
+        # COM1에는 ASCII만 남을 수 있어 그 꼴도 함께 본다.
         variants = {echo.strip(), "".join(c for c in echo if ord(c) < 128).strip()}
         for i, line in enumerate(out):
             if line in variants:
@@ -376,8 +390,17 @@ def strip_device(raw, command, inputs):
     return out
 
 
-def strip_host(raw):
-    return drop_prompts(raw)
+def strip_host(raw: str, *, repl: bool = False) -> list[str]:
+    prompts = (REFERENCE_MOWKOW_PROMPT, MOWKOW_CONTINUATION) if repl else ()
+    return drop_prompts(raw, prompts)
+
+
+def check_repl_prompts(device_raw: str, host_raw: str) -> bool:
+    """Check the unnormalized REPL transcript independently of value parity."""
+    return (
+        "\n>> 0육ㄱ\n10\n>> (+ 1\n..  2)\n3\n>> '>\n>\n>> \n" in device_raw
+        and host_raw.startswith(">  10\n>  ..  3\n>  >\n>  ")
+    )
 
 
 def run_host(mk_name: str, inputs: list[str]) -> str:
@@ -439,24 +462,30 @@ def main(argv: list[str] | None = None, console_factory: type[Console] = Console
                 print("   호스트: %r" % host)
                 print("   장치  : %r" % device)
 
-        # REPL 한 판: mowio.readline, 한글 입력, 0육 리터럴, 빈 줄로 나가기를
-        # 한 번에 지난다. 호스트는 같은 줄을 표준 입력으로 받는다.
-        repl_lines = ["0육ㄱ", "(+ 1 2)", ""]
-        device = strip_device(console.run("머꼬", repl_lines), "머꼬", repl_lines)
+        # Keep raw prompt checks separate from normalization: a quoted > must
+        # survive as data, and multiline input must retain the .. prompt.
+        repl_lines = ["0육ㄱ", "(+ 1", "2)", "'>", ""]
+        device_raw = console.run("머꼬", repl_lines)
         # 작별 인사는 업스트림에서 stderr로 간다(eprint). 우리 eprint는 stdout이다
         # -- 결정 9가 말한 "경로가 다른 것"이라 양쪽을 합쳐서 견준다.
         proc = subprocess.run(
             [sys.executable, "main.py"], cwd=UPSTREAM,
             input="".join(line + "\n" for line in repl_lines),
             capture_output=True, text=True, timeout=CMD_TIMEOUT, check=True)
-        host = strip_host(proc.stdout + proc.stderr)
-        if device == host:
-            print("%-10s ok (%d줄)" % ("repl", len(host)))
+        host_raw = proc.stdout + proc.stderr
+        prompts_ok = check_repl_prompts(device_raw, host_raw)
+        device = strip_device(device_raw, "머꼬", repl_lines)
+        host = strip_host(host_raw, repl=True)
+        if prompts_ok and device == host:
+            print("%-10s ok (%d줄, raw >> / ..)" % ("repl", len(host)))
         else:
             failures.append("repl")
             print("%-10s FAIL" % "repl")
             print("   호스트: %r" % host)
             print("   장치  : %r" % device)
+            if not prompts_ok:
+                print("   프롬프트 원문 호스트: %r" % host_raw)
+                print("   프롬프트 원문 장치  : %r" % device_raw)
 
         deep = console.run("머꼬 deep.mk")
         ok = "RuntimeError: maximum recursion depth exceeded" in deep
