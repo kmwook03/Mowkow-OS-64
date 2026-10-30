@@ -19,7 +19,6 @@ A64_APP_TARGETS = $(foreach app,$(APP64_NAMES),$(A64_APP_BUILD_DIR)/$(app).elf)
 A64_APP_CRT_OBJS = $(A64_APP_BUILD_DIR)/crt0.o \
 	$(addprefix $(A64_APP_BUILD_DIR)/,$(addsuffix .o,$(APP64_CRT_COMMON_NAMES)))
 A64_APP_EXTRA_OBJS_mtest = $(A64_APP_BUILD_DIR)/malloc.o
-A64_APP_EXTRA_OBJS_나노 = $(A64_APP_BUILD_DIR)/malloc.o
 A64_BOOT_DIR = $(BUILD64_DIR)/aarch64-boot
 A64_BOOT_STAGER = $(TOOL64PATH)/stage_aarch64_boot.py
 A64_PI5_CONFIG = 64bit/board/pi5/config.txt
@@ -137,7 +136,7 @@ $(A64_APP_BUILD_DIR)/$(1).elf : $(A64_APP_BUILD_DIR)/$(1).o \
 		$$(A64_APP_EXTRA_OBJS_$(1))
 endef
 
-$(foreach app,$(APP64_NAMES),$(eval $(call A64_APP_RULES,$(app))))
+$(foreach app,$(APP64_SINGLE_NAMES),$(eval $(call A64_APP_RULES,$(app))))
 
 aarch64-stage : aarch64-mpy-foundation $(A64_BOOT_STAGE_INPUTS) $(A64_BOOT_STAGER)
 	$(PYTHON) $(A64_BOOT_STAGER) $(A64_BOOT_DIR) $(A64_BOOT_STAGE_SPECS)

@@ -2,6 +2,7 @@
 static int crt_close64(int fd) { return close(fd); }
 static long crt_write64(int fd, const void *data, size_t count) { return write(fd, data, count); }
 #include "include/nano_posix64.h"
+#include "include/nano_message64.h"
 
 static int unsupported64(void) { errno = ENOSYS; return -1; }
 static long result64(long result) { if (result < 0) { errno = EIO; } return result; }
@@ -184,24 +185,27 @@ time_t nano_time64(time_t *result)
 }
 char *nano_strerror64(int error)
 {
+	const char *message;
+
 	switch (error) {
-	case 0: return "Success";
-	case EINTR: return "Interrupted";
-	case ENOENT: return "No such file";
-	case EACCES: return "Read-only file or volume";
-	case ENOTDIR: return "Only the root directory is supported";
-	case EISDIR: return "Is a directory";
-	case ENAMETOOLONG: return "Filename too long";
-	case EIO: return "Input/output error";
-	case EBADF: return "Bad file descriptor";
-	case ENOMEM: return "Out of memory";
-	case EINVAL: return "Invalid argument";
-	case EMFILE: return "Too many open streams";
-	case EOVERFLOW: return "Value too large";
-	case EILSEQ: return "Invalid UTF-8";
-	case ENOSYS: return "Unsupported operation";
-	default: return "Unknown error";
+	case 0: message = "Success"; break;
+	case EINTR: message = "Interrupted"; break;
+	case ENOENT: message = "No such file"; break;
+	case EACCES: message = "Read-only file or volume"; break;
+	case ENOTDIR: message = "Only the root directory is supported"; break;
+	case EISDIR: message = "Is a directory"; break;
+	case ENAMETOOLONG: message = "Filename too long"; break;
+	case EIO: message = "Input/output error"; break;
+	case EBADF: message = "Bad file descriptor"; break;
+	case ENOMEM: message = "Out of memory"; break;
+	case EINVAL: message = "Invalid argument"; break;
+	case EMFILE: message = "Too many open streams"; break;
+	case EOVERFLOW: message = "Value too large"; break;
+	case EILSEQ: message = "Invalid UTF-8"; break;
+	case ENOSYS: message = "Unsupported operation"; break;
+	default: message = "Unknown error"; break;
 	}
+	return (char *) nano_message64(message);
 }
 
 int nano_regcomp64(regex_t *regex, const char *pattern, int flags)

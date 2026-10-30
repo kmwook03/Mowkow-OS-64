@@ -35,6 +35,7 @@ static uint8_t pixels64[CONSOLE64_MAX][BYTES64 + 32];
 static const uint8_t font64[HANGUL64_FONT_SIZE];
 static int shift64, ctrl64, irq64, sleeps64, wakes64, refreshes64;
 static int opens64, closes64, toggles64, executions64, interpreters64;
+static int nano_elf64;
 static size_t allocations64, frees64;
 static struct CONSOLE64 *owner64;
 static char path64[CONSOLE64_LINE_MAX + 5], argv64[CONSOLE64_LINE_MAX + 5];
@@ -201,6 +202,9 @@ int process64_exec_file(const char *path, const char *argv, struct CONSOLE64 *co
 	assert(str_copy64(argv64, sizeof(argv64), argv) == 0);
 	owner64 = con;
 	executions64++;
+	if (strcmp(path, nano_elf64 != 0 ? "나노.elf" : "나노") == 0) {
+		return 0;
+	}
 	return strncmp(path, "hello.elf", 9) == 0 ? 0 : -2;
 }
 void mpport_repl(void) { interpreters64++; }
@@ -230,6 +234,34 @@ static void post64(struct CONSOLE64 *con, const uint16_t *keys, size_t count)
 	for (size_t i = 0; i < count; i++) {
 		assert(console64_post_input_key(con, keys[i]) == 0);
 	}
+}
+
+static void nano_alias64(struct CONSOLE64 *con)
+{
+	static const char *const commands[] = {
+		"nano", "nano 한글.txt", "nano -L NOEND.TXT", "run nano 한글.txt",
+		"실행 nano 한글.txt"
+	};
+	static const char *const arguments[] = {
+		"nano", "nano 한글.txt", "nano -L NOEND.TXT", "nano 한글.txt", "nano 한글.txt"
+	};
+
+	for (nano_elf64 = 0; nano_elf64 <= 1; nano_elf64++) {
+		for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
+			int before = executions64;
+
+			command64(con, commands[i]);
+			assert(executions64 == before + 1 + nano_elf64 && owner64 == con);
+			assert(strcmp(path64, nano_elf64 != 0 ? "나노.elf" : "나노") == 0);
+			assert(strcmp(argv64, arguments[i]) == 0);
+		}
+	}
+	nano_elf64 = 0;
+	command64(con, "나노");
+	assert(strcmp(path64, "나노") == 0 && strcmp(argv64, "나노") == 0);
+	command64(con, "nanotest 한글.txt");
+	assert(strcmp(path64, "nanotest.elf 한글.txt") == 0);
+	assert(strcmp(argv64, "nanotest.elf 한글.txt") == 0);
 }
 
 static void guards64(void)
@@ -283,6 +315,7 @@ int main(void)
 	command64(boot, "hello alpha 가나다");
 	assert(executions64 == 2 && owner64 == boot);
 	assert(strcmp(argv64, "hello.elf alpha 가나다") == 0);
+	nano_alias64(boot);
 	command64(boot, "xwindow");
 	assert(toggles64 == 1);
 	command64(boot, "py");

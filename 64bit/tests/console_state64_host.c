@@ -270,6 +270,31 @@ static void resize_waits64(void)
 	puts("Console state: RESIZE ordering, generation wrap and wait/wake interleavings: PASS");
 }
 
+static void raw_shortcuts64(void)
+{
+	struct CONSOLE64 *con = console64_active();
+
+	current64 = con->task;
+	con->lang_hangul = 1;
+	console64_set_raw(1);
+	key64(con, 0x13); key64(con, 0x25); /* composing 가 */
+	expect_event64(con, TTY_KIND_PREEDIT, 0x3131, 0);
+	expect_event64(con, TTY_KIND_PREEDIT, 0xac00, 0);
+	key64(con, KEY64_LEFT);
+	expect_event64(con, TTY_KIND_CHAR, 0xac00, 0);
+	expect_event64(con, TTY_KIND_KEY, KEY64_LEFT, 0);
+	assert(con->composing.state == 0);
+	key64(con, 0x13); key64(con, 0x25);
+	expect_event64(con, TTY_KIND_PREEDIT, 0x3131, 0);
+	expect_event64(con, TTY_KIND_PREEDIT, 0xac00, 0);
+	key64(con, 0x38); key64(con, 0x16); key64(con, 0xb8); /* Alt-U */
+	expect_event64(con, TTY_KIND_CHAR, 0xac00, TTY_MOD_ALT);
+	expect_event64(con, TTY_KIND_CHAR, 'u', TTY_MOD_ALT);
+	assert(con->lang_hangul == 1 && con->composing.state == 0 && !keyboard64_alt());
+	console64_set_raw(0);
+	puts("Console raw: commit before movement and Hangul-mode Alt shortcuts: PASS");
+}
+
 static void caret_pixels64(void)
 {
 	struct CONSOLE64 *con = console64_active();
@@ -769,6 +794,7 @@ int main(void)
 	mode_sequences64();
 	capture64();
 	resize_waits64();
+	raw_shortcuts64();
 	caret_pixels64();
 	caret_ime64();
 	input_mode64();

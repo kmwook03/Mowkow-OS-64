@@ -17,8 +17,8 @@ SCAN_ROOTS = (
     ROOT / "64bit" / "tools",
     ROOT / "64bit" / "tests",
 )
-SOURCE_SUFFIXES = {".c", ".h", ".S", ".asm", ".ld", ".py"}
-C_LIKE_SUFFIXES = {".c", ".h"}
+SOURCE_SUFFIXES = {".c", ".h", ".def", ".S", ".asm", ".ld", ".py"}
+C_LIKE_SUFFIXES = {".c", ".h", ".def"}
 BANNED_STRING_APIS = re.compile(
     r"\b(?:gets|sprintf|strcat|strcpy|vsprintf)\s*\("
 )

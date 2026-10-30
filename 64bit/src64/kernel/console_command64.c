@@ -91,13 +91,18 @@ static int run_program64(struct CONSOLE64 *con, const char *cmdline)
 	size_t line_len;
 	size_t used;
 	int has_extension;
+	int nano_alias;
 	int status;
 
-	status = process64_exec_file(cmdline, cmdline, con);
+	/* Keep the English command's argv intact while resolving the shipped name. */
+	nano_alias = str_eq64(cmdline, "nano") || str_starts_with64(cmdline, "nano ");
+	status = process64_exec_file(nano_alias != 0 ? "나노" : cmdline, cmdline, con);
 	/* x86_64 이미지는 앱을 확장자 없는 이름으로 넣지만, Pi의 FAT 파티션에는
 	   빌드 산출물을 HELLO.ELF처럼 복사하기도 한다. 둘 다 `hello`로 실행되게
 	   첫 토큰에 점이 없을 때만 .elf를 붙여 한 번 더 찾는다. */
-	if (status == -2) {
+	if (status == -2 && nano_alias != 0) {
+		status = process64_exec_file("나노.elf", cmdline, con);
+	} else if (status == -2) {
 		command_len = 0;
 		has_extension = 0;
 		while (cmdline[command_len] != '\0' &&

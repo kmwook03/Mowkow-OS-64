@@ -36,18 +36,20 @@ COMMON64_C_SRCS = \
 	$(SRC64_DIR)/lib/utf864.c
 
 # app64/crt is a runtime, not an application.  Every other direct child is an
-# application whose primary source and output use the directory name.
+# application whose output uses the directory name. GNU nano uses the shared
+# multi-source rules; the remaining applications have one primary C source.
 APP64_DIRS = $(wildcard $(APP64_DIR)/*/)
 APP64_NAMES = $(filter-out crt,$(notdir $(patsubst %/,%,$(APP64_DIRS))))
+APP64_SINGLE_NAMES = $(filter-out 나노,$(APP64_NAMES))
 
 # Native gates and wrappers are linked by both app architectures.
 APP64_CRT_COMMON_NAMES = syscall syscall_arch64 string
 
-# Private nano compatibility work stays outside app64 discovery. It is not
-# linked into the existing editor until the upstream app integration passes.
+# Nano's private dependencies stay outside app64 discovery. The upstream ELF
+# is installed under the existing 나노 name by nano64.mk for both architectures.
 NANO64_DIR = 64bit/nano64
 NANO64_COMPAT_SRCS = $(NANO64_DIR)/file64.c $(NANO64_DIR)/utf64.c \
 	$(NANO64_DIR)/headers64.c $(SRC64_DIR)/lib/utf864.c
 NANO64_PORT_SRCS = $(NANO64_DIR)/libc64.c $(NANO64_DIR)/format64.c \
-	$(NANO64_DIR)/posix64.c $(NANO64_DIR)/curses64.c
+	$(NANO64_DIR)/posix64.c $(NANO64_DIR)/curses64.c $(NANO64_DIR)/message64.c
 NANO64_VENDOR_NAMES = chars cut files global help move nano prompt search text utils winio

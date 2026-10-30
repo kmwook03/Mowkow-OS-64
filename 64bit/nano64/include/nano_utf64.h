@@ -4,10 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Stateless UTF-8 conversion for the future nano libc shim. mbtowc never
+/* Stateless UTF-8 conversion for the private nano libc shim. mbtowc never
  * reads beyond available; malformed/incomplete input returns -1/EILSEQ,
  * leaving the output unchanged. NUL returns zero, NULL text resets (zero).
- * Scalars use uint32_t independently of hosted wchar_t. The eventual libc
+ * Scalars use uint32_t independently of hosted wchar_t. The private libc
  * adapter must convert its own wchar_t explicitly. NULL wide is allowed for
  * validation. wctomb needs four writable bytes;
  * invalid scalars return -1/EILSEQ without writing. NULL text resets (zero).

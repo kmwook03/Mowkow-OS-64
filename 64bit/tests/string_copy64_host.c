@@ -8,10 +8,6 @@
 #include "../src64/kernel/process64.c"
 #include "../src64/kernel/gui64.c"
 
-#define main nano_main64
-#include "../app64/나노/나노.c"
-#undef main
-
 #define CHECK64(condition) do { \
 	if (!(condition)) { \
 		fprintf(stderr, "String copy check failed at line %d\n", __LINE__); \
@@ -71,11 +67,6 @@ static int callers64(void)
 	struct GUI64_WIN window = { 0 };
 	struct PROCESS64_ARGS args;
 	char long_title[80];
-	char long_status[STATUS_MAX + 16];
-	char decimal[16];
-	size_t used;
-	static const int values[] = { 0, 1, -1, INT_MAX, INT_MIN };
-	static const char *const numbers[] = { "0", "1", "-1", "2147483647", "-2147483648" };
 
 	memset(long_title, 'T', sizeof(long_title) - 1);
 	long_title[sizeof(long_title) - 1] = '\0';
@@ -85,23 +76,6 @@ static int callers64(void)
 	CHECK64(strcmp(window.title, "터미널") == 0);
 	set_title(&window, NULL);
 	CHECK64(window.title[0] == '\0');
-	set_status("저장했습니다");
-	CHECK64(strcmp(status, "저장했습니다") == 0);
-	memset(long_status, 'x', sizeof(long_status));
-	long_status[STATUS_MAX - 2] = (char) 0xe3;
-	long_status[sizeof(long_status) - 1] = '\0';
-	set_status(long_status);
-	CHECK64(strcmp(status, "상태 메시지가 너무 깁니다") == 0);
-	for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
-		decimal[0] = '\0';
-		used = 0;
-		CHECK64(append_dec(decimal, sizeof(decimal), &used, values[i]) == 0);
-		CHECK64(strcmp(decimal, numbers[i]) == 0 && used == strlen(numbers[i]));
-	}
-	decimal[0] = '\0';
-	used = 0;
-	CHECK64(append_dec(decimal, 10, &used, INT_MAX) == -7);
-	CHECK64(decimal[0] == '\0' && used == 0);
 	CHECK64(parse_args64("  hello   파일.txt tail  ", &args) == 0 && args.argc == 3);
 	CHECK64(strcmp(args.line + args.offsets[0], "hello") == 0);
 	CHECK64(strcmp(args.line + args.offsets[1], "파일.txt") == 0);
@@ -166,6 +140,6 @@ int main(void)
 	CHECK64(copies64() == 0);
 	CHECK64(callers64() == 0);
 	CHECK64(guards64() == 0);
-	puts("Bounded copy/append, GUI/process/nano callers and guard pages: PASS");
+	puts("Bounded copy/append, GUI/process callers and guard pages: PASS");
 	return 0;
 }

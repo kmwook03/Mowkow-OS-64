@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import ast
 import json
 import os
 import shlex
+import re
 import subprocess
 import tempfile
 import unittest
@@ -21,6 +23,51 @@ SPEC.loader.exec_module(PREPARER)
 
 
 class NanoUpstream64Test(unittest.TestCase):
+    def test_catalog_formats_and_active_messages(self) -> None:
+        literal = r'"(?:[^"\\]|\\.)*"'
+        entries = re.findall(r'NANO_MESSAGE64\(\s*(' + literal + r')\s*,\s*(' +
+                             literal + r')\s*\)', (PORT / "messages64.def").read_text())
+        catalog = {ast.literal_eval(a): ast.literal_eval(b) for a, b in entries}
+        self.assertEqual(len(catalog), len(entries))
+        formats = r'%(?:[-+ #0]*)(?:\d+|\*)?(?:\.(?:\d+|\*))?(?:hh|ll|[hljztL])?[diouxXcs%]'
+        for source, korean in catalog.items():
+            self.assertEqual(re.findall(formats, source), re.findall(formats, korean), source)
+            self.assertEqual(source.count("\n"), korean.count("\n"), source)
+        with tempfile.TemporaryDirectory(prefix="nano-catalog64-") as temporary:
+            stage = Path(temporary) / "vendor"
+            PREPARER.prepare(PREPARER.VENDOR, stage, PREPARER.PATCH)
+            for compiler in ("x86_64-elf-gcc", "aarch64-none-elf-gcc"):
+                messages = set()
+                for path in sorted((stage / "src").glob("*.c")):
+                    result = subprocess.run(
+                        [compiler, "-E", "-P", "-DHAVE_CONFIG_H",
+                         "-DMOWKOW64_NANO_CATALOG_AUDIT",
+                         "-I", str(PORT / "include"), "-I", str(PORT / "libc"),
+                         "-I", str(PORT), "-I", str(ROOT / "64bit/app64/crt/include"),
+                         "-I", str(ROOT / "64bit/src64/include"), str(path)],
+                        check=True, text=True, capture_output=True, timeout=30)
+                    tokens = re.findall(literal + r'|[A-Za-z_][A-Za-z0-9_]*|[^\s]',
+                                        result.stdout)
+                    for at, token in enumerate(tokens[:-1]):
+                        if token not in ("nano_message64", "NANO_MARK64") or tokens[at + 1] != "(":
+                            continue
+                        depth, index = 1, at + 2
+                        while depth:
+                            token = tokens[index]
+                            if token == "(":
+                                depth += 1
+                            elif token == ")":
+                                depth -= 1
+                            if token.startswith('"'):
+                                value = ""
+                                while tokens[index].startswith('"'):
+                                    value += ast.literal_eval(tokens[index])
+                                    index += 1
+                                messages.add(value)
+                            else:
+                                index += 1
+                self.assertFalse(messages - catalog.keys(), sorted(messages - catalog.keys()))
+
     def test_real_editor_and_private_port_with_sanitizers(self) -> None:
         with tempfile.TemporaryDirectory(prefix="nano-upstream64-") as temporary:
             folder = Path(temporary)
@@ -65,8 +112,9 @@ class NanoUpstream64Test(unittest.TestCase):
             subprocess.run([cc, "-no-pie", "-fsanitize=address,undefined", *map(str, objects),
                             "-Wl,--wrap=nano_fclose64", "-o", str(executable)],
                            check=True, cwd=ROOT, capture_output=True, text=True, timeout=30)
-            subprocess.run([str(executable), "curses"], check=True, cwd=ROOT, timeout=30,
-                           env={**os.environ, "ASAN_OPTIONS": "detect_leaks=0"})
+            for mode in ("curses", "tiny", "inputfail", "oom"):
+                subprocess.run([str(executable), mode], check=True, cwd=ROOT, timeout=30,
+                               env={**os.environ, "ASAN_OPTIONS": "detect_leaks=0"})
             subprocess.run([str(executable)], check=True, cwd=ROOT, timeout=30,
                            env={**os.environ, "ASAN_OPTIONS": "detect_leaks=0"})
 
@@ -85,7 +133,8 @@ class NanoUpstream64Test(unittest.TestCase):
 
     def test_warning_lanes_and_direct_header_audit(self) -> None:
         audit = (PORT / "headers64.c").read_text()
-        for path in sorted((PORT / "libc").rglob("*.h")):
+        headers = sorted((PORT / "libc").rglob("*.h")) + sorted((PORT / "include").glob("*.h"))
+        for path in headers:
             self.assertIn(f'#include "{path.relative_to(PORT)}"', audit)
         result = subprocess.run(["make", "-n", "-B", "nano64-apps"], cwd=ROOT,
                                 text=True, capture_output=True, check=True, timeout=30)
@@ -95,7 +144,7 @@ class NanoUpstream64Test(unittest.TestCase):
         for architecture in ("x86_64", "aarch64"):
             selected = [line for line in commands
                         if any(f"nano-app/{architecture}/" in part for part in line)]
-            self.assertEqual(len(selected), 16)
+            self.assertEqual(len(selected), 17)
             for line in selected:
                 if "nano-upstream" in line[line.index("-c") + 1]:
                     self.assertNotIn("-Werror", line)
