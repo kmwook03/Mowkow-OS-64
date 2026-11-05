@@ -360,8 +360,6 @@ NASM `%if`, C `_Static_assert`, linker `ASSERT`로도 검사합니다.
 │       ├── x86_64.md           # x86_64 빌드·실행·구현
 │       └── raspberry-pi-5.md   # Pi 5 빌드·부팅·구현
 ├── Makefile                    # 전체 빌드 진입점과 help/info 목표
-├── arch.md                     # Raspberry Pi 5 AArch64 포팅 설계와 검증 기록
-├── refactor_plan.md            # 단계별 리팩터링 범위·완료 상태·검증 조건
 ├── 📂common                    # 32/64비트 트리가 함께 쓰는 파일
 │   ├── 📂mk                    # config.mk (공용 경로와 도구 설정)
 │   └── 📂font                  # H04.FNT, E2.FNT, hankaku 비트맵 글꼴
@@ -414,9 +412,6 @@ NASM `%if`, C `_Static_assert`, linker `ASSERT`로도 검사합니다.
 └── 📂third_party
     └── 📂micropython           # 업스트림 MicroPython 서브모듈
 ```
-
-`build/`, `build64/`, `img/`, `img64/`는 빌드 때 생기는 생성물이므로 위 트리에서
-제외했습니다.
 
 ## 공통 한계
 
