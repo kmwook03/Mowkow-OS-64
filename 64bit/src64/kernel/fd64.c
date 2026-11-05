@@ -60,7 +60,7 @@ static int fd64_sync_unlocked(void)
 {
 	/* 파일 데이터, FAT 사본, 디렉터리 항목 순서로 내보낸다. FAT과 디렉터리
 	   사이에서 실패하면 주인 없는 클러스터가 남고 이건 fsck가 고칠 수 있다.
-	   순서를 뒤집으면 아직 쓰이지 않은 사슬을 가리키는 디렉터리 항목이 남는다.
+	   순서를 뒤집으면 아직 쓰이지 않은 체인을 가리키는 디렉터리 항목이 남는다.
 	   FAT32에서는 디렉터리도 데이터 영역에 있으므로, 이 순서는 LBA가 아니라
 	   캐시의 metadata 표시에서 나온다. */
 	int first_written;
@@ -463,7 +463,7 @@ static size_t fd64_write_unlocked(struct FDHANDLE64 *fh, const void *src,
 		}
 		fd64_info_set_cluster(&fh->info, cluster);
 	}
-	/* fh->pos가 든 클러스터를 찾으려고 부를 때마다 사슬을 처음부터
+	/* fh->pos가 든 클러스터를 찾으려고 부를 때마다 체인을 처음부터
 	   따라간다. 이어 쓰기가 잦아지면 핸들에 이 값을 기억해 두면 된다. */
 	cluster = fd64_info_cluster(&fh->info);
 	for (index = fh->pos / cb; index > 0; index--) {

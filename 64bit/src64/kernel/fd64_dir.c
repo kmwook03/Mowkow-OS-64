@@ -32,7 +32,7 @@ static int dir_growth_rollback(struct FDDIR_GROW64 *growth)
 	return 0;
 }
 
-/* 사슬을 따라 다음 디렉터리 자리로 넘어간다. 사슬 끝이면 0을 돌려주고,
+/* 체인을 따라 다음 디렉터리 자리로 넘어간다. 체인 끝이면 0을 돌려주고,
    `grow`가 참이면 대신 0으로 채운 클러스터를 새로 이어 붙인다. */
 static int dir_advance(struct FDPOS64 *pos, int grow,
 	struct FDDIR_GROW64 *growth)
@@ -95,7 +95,7 @@ void fd64_dir_first(struct FDPOS64 *pos)
    저장하고 힌트 비트만 남긴다. 리눅스와 윈도우 모두 이 표시를 따른다. */
 #define NT_LOWER_BASE 0x08
 #define NT_LOWER_EXT 0x10
-/* 디렉터리 훑기의 상한. 사슬이 망가져도 무한히 돌지 않게 한다. */
+/* 디렉터리 훑기의 상한. 체인이 망가져도 무한히 돌지 않게 한다. */
 #define DIR_SCAN_LIMIT 8192
 
 struct LFN64_STATE {
@@ -667,7 +667,7 @@ static int lfn_write_entry(const struct FDPOS64 *pos, const uint16_t *units,
 }
 
 /* 비어 있는 자리 `need`개가 잇달아 있는 곳을 찾는다. 지금 있는 디렉터리
-   안에 그만한 자리가 없으면 사슬을 늘려서 만든다. */
+   안에 그만한 자리가 없으면 체인을 늘려서 만든다. */
 static int dir_find_run(struct FDPOS64 *start, uint32_t need,
 	struct FDDIR_GROW64 *growth)
 {

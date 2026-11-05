@@ -1,7 +1,7 @@
 /*
- * fd64_fat.c -- FAT32 클러스터 사슬과 데이터 영역 접근
+ * fd64_fat.c -- FAT32 클러스터 체인과 데이터 영역 접근
  *
- * 아래로는 cache64(되쓰기 섹터 캐시)를 쓰고, 그 아래가 block64다.
+ * 아래로는 cache64(Write-back 섹터 캐시)를 쓰고, 그 아래가 block64다.
  * 반환된 캐시 포인터는 다음 cache64_get 호출 전까지만 유효하다.
  */
 #include <cache64.h>
@@ -275,7 +275,7 @@ int fd64_free_chain(uint32_t cluster)
 	if (cluster == 0) {
 		return 0;
 	}
-	/* 손상된 사슬을 일부만 해제하지 않도록 쓰기 전에 전체를 확인한다. */
+	/* 손상된 체인을 일부만 해제하지 않도록 쓰기 전에 전체를 확인한다. */
 	if (fd64_chain_validate(cluster, 1) != 0) {
 		return -1;
 	}

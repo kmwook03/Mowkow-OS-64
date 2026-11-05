@@ -38,7 +38,7 @@ _Static_assert(offsetof(struct FDINFO64, size) == 28,
 _Static_assert(sizeof(struct FDINFO64) == 32,
 	"FAT directory entry must be 32 bytes");
 
-/* 디렉터리 항목이 어디 있는지. FAT32의 루트는 클러스터 사슬이라 고정 배열
+/* 디렉터리 항목이 어디 있는지. FAT32의 루트는 클러스터 체인이라 고정 배열
    번호로는 자리를 짚을 수 없다. cluster == 0은 "항목 없음", 즉 닫힌
    핸들이라는 뜻이다. */
 struct FDPOS64 {
@@ -78,7 +78,7 @@ uint32_t fd64_next_cluster(uint32_t cluster);
 int fd64_create(struct FDHANDLE64 *fh, const char *name);
 size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size);
 int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size);
-/* 더러운 섹터만 내보낸다. 내보낸 섹터 수를 돌려주고, 입출력 오류면 -1. */
+/* dirty 섹터만 내보낸다. 내보낸 섹터 수를 돌려주고, 입출력 오류면 -1. */
 int fd64_sync(void);
 
 #endif
