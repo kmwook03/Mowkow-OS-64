@@ -41,16 +41,17 @@ class AppSmoke64Test(unittest.TestCase):
                     )
 
     def test_result_parser_rejects_false_success(self) -> None:
-        valid = "mtest\nmtest: PASS\nexit 0\n> "
+        valid = "mtest\nmtest: PASS\n종료 코드: 0\n> "
         REGRESSION.check_app(valid, "mtest")
-        REGRESSION.check_app("ktest --bad\nktest: FAIL usage\nexit 1\n> ", "ktest", 1)
+        REGRESSION.check_app("ktest --bad\nktest: FAIL usage\n종료 코드: 1\n> ", "ktest", 1)
         bad = (
-            valid.replace("exit 0", "exit 1"),
+            valid.replace("종료 코드: 0", "exit 0"),
+            valid.replace("종료 코드: 0", "종료 코드: 1"),
             valid.replace("PASS", "PASS extra"),
             valid.replace("PASS", "FAIL\nmtest: PASS"),
-            valid.replace("exit 0", "exit 0\nexit 0"),
+            valid.replace("종료 코드: 0", "종료 코드: 0\n종료 코드: 0"),
             valid.replace("PASS", "PASS\nmtest: PASS"),
-            valid.replace("exit 0\n", ""),
+            valid.replace("종료 코드: 0\n", ""),
             valid[:-2],
         )
         for raw in bad:

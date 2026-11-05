@@ -83,6 +83,21 @@ static void print_hex64(struct CONSOLE64 *con, uint64_t value)
 	console_put_char64(con, &c, 1);
 }
 
+static void print_int64(struct CONSOLE64 *con, int64_t value)
+{
+	if (value < 0) {
+		console_put_char64(con, "-", 1);
+		print_uint64(con, 0 - (uint64_t) value);
+	} else {
+		print_uint64(con, (uint64_t) value);
+	}
+}
+
+static void print_label64(struct CONSOLE64 *con, enum MESSAGE_ID64 id)
+{
+	console_puts_con64(con, message_text64(id, 1));
+}
+
 static int run_program64(struct CONSOLE64 *con, const char *cmdline)
 {
 	char elf_cmdline[CONSOLE64_LINE_MAX + 1];
@@ -136,19 +151,19 @@ static int run_program64(struct CONSOLE64 *con, const char *cmdline)
 		return 0;
 	}
 	if (status == -8) {
-		console_puts_con64(con, "another program is running\n");
+		console64_message_con(con, MESSAGE_PROGRAM_BUSY64);
 		return 1;
 	}
 	if (status == PROCESS64_ERR_ARGS) {
-		console_puts_con64(con, "program name/command line too long or too many arguments\n");
+		console64_message_con(con, MESSAGE_PROGRAM_ARGS64);
 		return 1;
 	}
 	if (status == PROCESS64_ERR_INVALID || status == PROCESS64_ERR_STACK) {
-		console_puts_con64(con, "invalid program name, command line, or user stack\n");
+		console64_message_con(con, MESSAGE_PROGRAM_INVALID64);
 		return 1;
 	}
-	console_puts_con64(con, "exit ");
-	print_uint64(con, (uint64_t) status);
+	print_label64(con, MESSAGE_PROGRAM_EXIT64);
+	print_int64(con, status);
 	console_puts_con64(con, "\n");
 	return 1;
 }
@@ -157,16 +172,16 @@ void console_dispatch_command64(struct CONSOLE64 *con, const char *line)
 {
 	if (str_eq64(line, "help")) {
 #ifdef __aarch64__
-		console_puts_con64(con, "commands: help clear mem tasks ls 목록 type readme.txt APP [ARGS] py py FILE.PY 머꼬 [FILE] xwindow 창 new 새창\n");
+		console64_message_con(con, MESSAGE_HELP_A6464);
 #else
-		console_puts_con64(con, "commands: help clear ticks mem tasks ls 목록 type readme.txt run HELLO py py FILE.PY xwindow 창 new 새창\n");
+		console64_message_con(con, MESSAGE_HELP_X8664);
 #endif
 	} else if (str_eq64(line, "xwindow") || str_eq64(line, "window") ||
 			str_eq64(line, "창")) {
 		/* 전체 화면 토글은 콘솔 0 전용이다 -- 화면 크기 버퍼를 가진 건
 		   콘솔 0뿐이다. */
 		if (con != console64_active()) {
-			console_puts_con64(con, "fullscreen is console 0 only\n");
+			console64_message_con(con, MESSAGE_FULLSCREEN64);
 		} else {
 			gui64_toggle_window();
 		}
@@ -174,18 +189,18 @@ void console_dispatch_command64(struct CONSOLE64 *con, const char *line)
 		console_clear_screen64(con);
 #ifndef __aarch64__
 	} else if (str_eq64(line, "ticks")) {
-		console_puts_con64(con, "ticks ");
+		print_label64(con, MESSAGE_TICKS_LABEL64);
 		print_uint64(con, timerctl64.count);
 		console_puts_con64(con, "\n");
 #endif
 	} else if (str_eq64(line, "mem") || str_eq64(line, "메모리")) {
 		uintptr_t addr;
 
-		console_puts_con64(con, "free ");
+		print_label64(con, MESSAGE_MEM_FREE64);
 		print_uint64(con, memman64_total(&memman64) / 1024);
 		console_puts_con64(con, " KiB\n");
 		addr = memman64_alloc_4k(&memman64, 4096);
-		console_puts_con64(con, "alloc4k ");
+		print_label64(con, MESSAGE_MEM_ALLOC64);
 		print_hex64(con, addr);
 		console_puts_con64(con, "\n");
 		if (addr != 0) {
@@ -193,14 +208,14 @@ void console_dispatch_command64(struct CONSOLE64 *con, const char *line)
 		}
 	} else if (str_eq64(line, "new") || str_eq64(line, "새창")) {
 		if (console64_create() == NULL) {
-			console_puts_con64(con, "no free console slot\n");
+			console64_message_con(con, MESSAGE_CONSOLE_FULL64);
 		}
 	} else if (str_eq64(line, "tasks") || str_eq64(line, "태스크")) {
 		uint32_t i;
 
-		console_puts_con64(con, "switches ");
+		print_label64(con, MESSAGE_TASK_SWITCHES64);
 		print_uint64(con, taskctl64.switches);
-		console_puts_con64(con, " current-level ");
+		print_label64(con, MESSAGE_TASK_LEVEL64);
 		print_uint64(con, taskctl64.now_lv);
 		console_puts_con64(con, "\n");
 		/* 숨긴 콘솔이 살아 있는지 보려면 태스크별 전환 수가 필요하다. */
@@ -208,11 +223,11 @@ void console_dispatch_command64(struct CONSOLE64 *con, const char *line)
 			if (taskctl64.tasks0[i].flags == TASK64_FLAGS_UNUSED) {
 				continue;
 			}
-			console_puts_con64(con, "  task ");
+			print_label64(con, MESSAGE_TASK_ID64);
 			print_uint64(con, i);
-			console_puts_con64(con, " lv ");
+			print_label64(con, MESSAGE_TASK_ENTRY_LEVEL64);
 			print_uint64(con, taskctl64.tasks0[i].level);
-			console_puts_con64(con, " switches ");
+			print_label64(con, MESSAGE_TASK_ENTRY_SWITCHES64);
 			print_uint64(con, taskctl64.tasks0[i].switches);
 			console_puts_con64(con, "\n");
 		}
@@ -232,7 +247,7 @@ void console_dispatch_command64(struct CONSOLE64 *con, const char *line)
 			}
 		}
 		if (count == 0) {
-			console_puts_con64(con, "no files\n");
+			console64_message_con(con, MESSAGE_NO_FILES64);
 		}
 	} else if (str_eq64(line, "type readme.txt") ||
 		str_eq64(line, "읽기 readme.txt")) {
@@ -241,7 +256,7 @@ void console_dispatch_command64(struct CONSOLE64 *con, const char *line)
 		size_t n;
 
 		if (fd64_open(&fh, "readme.txt") == 0) {
-			console_puts_con64(con, "file not found\n");
+			console64_message_con(con, MESSAGE_OS_FILE_MISSING64);
 		} else {
 			for (;;) {
 				n = fd64_read(&fh, buf, sizeof(buf) - 1);
@@ -259,7 +274,7 @@ void console_dispatch_command64(struct CONSOLE64 *con, const char *line)
 		   건너뛰면 한글 쪽이 글자 중간에서 잘린다. */
 		args = line + (line[0] == 'r' ? 4 : 7);
 		if (run_program64(con, args) == 0) {
-			console_puts_con64(con, "파일 없음\n");
+			console64_message_con(con, MESSAGE_OS_FILE_MISSING64);
 		}
 	} else if (str_eq64(line, "py") || str_eq64(line, "파이썬")) {
 		mpport_repl();
@@ -272,6 +287,6 @@ void console_dispatch_command64(struct CONSOLE64 *con, const char *line)
 		mpport_run_mowkow(line + 7);
 	} else if (run_program64(con, line) == 0) {
 		/* 내장 명령도 아니고 그런 실행 파일도 없다 */
-		console_puts_con64(con, "알 수 없는 명령어\n");
+		console64_message_con(con, MESSAGE_COMMAND_UNKNOWN64);
 	}
 }

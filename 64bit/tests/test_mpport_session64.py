@@ -11,6 +11,24 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class MpportSession64Test(unittest.TestCase):
+    def test_kernel_static_storage_cannot_overlap_the_app_window(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="mpport-layout64-") as temporary:
+            folder = Path(temporary)
+            for size, valid in ((0x200000, True), (0x300000, False)):
+                source, obj, executable = (folder / name for name in
+                                           ("layout.S", "layout.o", "layout.elf"))
+                source.write_text(".text\n.global _start\n_start: ret\n"
+                                  f".bss\n.skip {size}\n")
+                subprocess.run(["x86_64-elf-gcc", "-c", str(source), "-o", str(obj)],
+                               check=True, cwd=ROOT, capture_output=True)
+                result = subprocess.run(
+                    ["x86_64-elf-ld", "--defsym=KERNEL_MAX_BYTES=524288", "-T",
+                     str(ROOT / "64bit/src64/kernel/kernel64.ld"), str(obj),
+                     "-o", str(executable)], cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(result.returncode == 0, valid, result.stderr)
+                if not valid:
+                    self.assertIn("overlaps the fixed application image window", result.stderr)
+
     def test_claim_cleanup_and_init_failures(self) -> None:
         with tempfile.TemporaryDirectory(prefix="mpport-session64-") as temporary:
             folder = Path(temporary)

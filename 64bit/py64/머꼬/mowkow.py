@@ -14,7 +14,7 @@ import mowio
 
 from _data import nil, mksym, mkbuiltin
 from _parse import YY_reader, read_expr
-from _error import eprint, ErrLisp
+from _error import eprint, ErrLisp, report_error, report_syntax
 from _eval import mkenv, envset, do_eval, \
         builtin_car, builtin_cdr, builtin_cons, \
         builtin_add, builtin_sub, builtin_mul, builtin_div, \
@@ -50,9 +50,9 @@ def load_file(env, path) -> None:
             if result is not None:
                 eprint(result)
         except ErrLisp as err:
-            eprint(f"{path}:{YY_reader.line()}: 오류: {err}")
+            report_error(err, path, YY_reader.line())
         except SyntaxError as err:
-            eprint(f"{path}:{YY_reader.line()}: 오류: {err}")
+            report_error(err, path, YY_reader.line())
 
 
 def eval_print_loop(env) -> None:
@@ -71,12 +71,12 @@ def eval_print_loop(env) -> None:
             if val != None:
                 print(val)
         except ErrLisp as err:
-            eprint(f"오류: {err}")
+            report_error(err)
         except EOFError:
             eprint("간편한 한글 프로그래밍 언어 '머꼬'를 사용해 주셔서 고맙습니다.")
             break
         except SyntaxError:
-            eprint(f"{fname}:{YY_reader.line()}:{YY_reader.column()}: 구문 오류: '{YY_reader.LA()}'")
+            report_syntax(fname, YY_reader.line(), YY_reader.column(), YY_reader.LA())
 
 
 def base_env():

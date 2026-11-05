@@ -94,7 +94,7 @@ class Reader:
                         continue
                     i += 1
                 if i == len(s) or s[i] in eols:
-                    print(f"오류: 토큰 '{s[:i]}' 부근에서 어휘 오류")
+                    report_lexical(s[:i])
                     # 오류 복구: 닫는 따옴표를 토큰에 추가
                     if i != len(s): # eols를 만난 경우
                         i -= 1      # eol 문자 전까지 내용을 문자열 토큰으로 만들기 위함
@@ -119,7 +119,7 @@ class Reader:
         return tok
     def match(self, tok) -> None:
         if tok != self._LA:
-            print(f"오류: 토큰 '{YY_reader.LA()}' 부근에서 어휘 오류")
+            report_lexical(YY_reader.LA())
     def LA(self) -> str:
         return self._LA
     def read(self) -> str:
@@ -261,7 +261,7 @@ def _main_p():
             expr = read_expr()
             print(expr)
         except SyntaxError:
-            print("Syntax Error")
+            report_error(ErrSyntax())
 
 if __name__ == "__main__":
     _main_p()

@@ -38,8 +38,8 @@ def check_app(raw: str, name: str, status: int = 0) -> None:
     expected = f"{name}: {'PASS' if status == 0 else 'FAIL usage'}"
     results = [line for line in lines if line == f"{name}: PASS" or
                line.startswith(f"{name}: FAIL")]
-    exits = [line for line in lines if line.startswith("exit ")]
-    if results != [expected] or exits != [f"exit {status}"] or not raw.endswith(PROMPT):
+    exits = [line for line in lines if line.startswith("종료 코드: ")]
+    if results != [expected] or exits != [f"종료 코드: {status}"] or not raw.endswith(PROMPT):
         raise AssertionError(f"{name}: invalid result/exit/prompt: {raw!r}")
 
 
@@ -48,7 +48,7 @@ def run_apps(image: str, ahci: bool, log: str) -> None:
         check_app(console.run_ktest(), "ktest")
         print("ktest-auto ok", flush=True)
         help_output = console.run("help")
-        if "commands: help" not in help_output:
+        if "명령: help" not in help_output:
             raise AssertionError("cooked help did not return after raw ktest")
         print("ktest-cooked ok", flush=True)
         check_app(console.run("ktest --bad"), "ktest", 1)

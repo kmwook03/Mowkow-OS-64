@@ -87,6 +87,15 @@ static mp_obj_t mowio_ticks(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mowio_ticks_obj, mowio_ticks);
 
+/* Read the calling task's console, including a rejected VM entrant. GUI focus
+ * is unrelated to ownership. Keep signed failures visible to the caller.
+ */
+static mp_obj_t mowio_input_mode64(void)
+{
+	return mp_obj_new_int((mp_int_t) console64_input_mode());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(mowio_input_mode64_obj, mowio_input_mode64);
+
 /* math 모듈 전체는 libc 초월함수가 없어서 꺼져 있다. M9d가 양쪽 arch의
    실제 sqrt 명령 경로를 검증할 수 있도록 최소 공용 진입점만 제공한다. */
 static mp_obj_t mowio_sqrt(mp_obj_t value_in)
@@ -106,6 +115,7 @@ static const mp_rom_map_elem_t mowio_module_globals_table[] = {
 	{ MP_ROM_QSTR(MP_QSTR_readfile), MP_ROM_PTR(&mowio_readfile_obj) },
 	{ MP_ROM_QSTR(MP_QSTR_argv), MP_ROM_PTR(&mowio_argv_obj) },
 	{ MP_ROM_QSTR(MP_QSTR_ticks), MP_ROM_PTR(&mowio_ticks_obj) },
+	{ MP_ROM_QSTR(MP_QSTR_input_mode), MP_ROM_PTR(&mowio_input_mode64_obj) },
 	{ MP_ROM_QSTR(MP_QSTR_sqrt), MP_ROM_PTR(&mowio_sqrt_obj) },
 };
 static MP_DEFINE_CONST_DICT(mowio_module_globals, mowio_module_globals_table);

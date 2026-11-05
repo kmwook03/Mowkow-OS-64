@@ -25,6 +25,8 @@ static struct TASK64 task64;
 static int use_task64 = 1;
 static char log64[8192];
 static size_t log_used64;
+static long language64;
+static int flip_print64;
 static struct MPPORT_SESSION_LEXER64 lexer64 = { 1 };
 static mp_state_thread_t initial_thread64;
 
@@ -66,6 +68,14 @@ void console64_puts(const char *message)
 	memcpy(log64 + log_used64, message, size + 1);
 	log_used64 += size;
 }
+
+void console64_message(enum MESSAGE_ID64 id)
+{
+	console64_puts(message_text64(id, language64 >= 0 && (language64 & 1) != 0));
+	console64_puts("\n");
+}
+
+int64_t console64_input_mode(void) { return language64; }
 
 void console64_repl_set_active(int active)
 {
@@ -227,6 +237,7 @@ void mp_obj_print_exception(const void *print, mp_obj_t value)
 	assert(print == &mp_plat_print && value != NULL && mp_busy == 1 && irq64 == 0);
 	prints64++;
 	reject_nested64();
+	if (flip_print64) { language64 ^= 1; }
 	if (print_fault64) { nlr_jump((void *) &reporting_type64); }
 }
 
@@ -237,10 +248,8 @@ int fd64_open(struct FDHANDLE64 *fh, const char *name) { (void) fh; (void) name;
 
 static void discard_heap64(void)
 {
-#ifdef __aarch64__
 	free(gc_heap);
 	gc_heap = NULL;
-#endif
 }
 
 static void reset64(void)
@@ -256,6 +265,8 @@ static void reset64(void)
 	action_calls64 = parse_calls64 = compile_calls64 = call_calls64 = prints64 = 0;
 	console64 = nested64 = rejecting64 = repl_toggles64 = 0;
 	fault_stage64 = throw_kind64 = print_fault64 = 0;
+	language64 = 0;
+	flip_print64 = 0;
 	log_used64 = 0;
 	log64[0] = '\0';
 	use_task64 = 1;
@@ -303,9 +314,7 @@ static void paths64(void)
 						assert(mp_state_ctx.vm.roots[i] == 0);
 						assert(mp_state_ctx.mem.roots[i] == 0);
 					}
-#ifdef __aarch64__
 					assert(gc_heap == NULL && free_calls64 == 1);
-#endif
 				}
 			} else { assert(mp_ready == 1 && prints64 == 1); }
 			fault_stage64 = 0;
@@ -358,7 +367,6 @@ static void platform_failures64(void)
 	use_task64 = 0;
 	run64(1);
 	assert(stack_calls64 == 1 && mp_ready == 1);
-#ifdef __aarch64__
 	for (int mode = 0; mode < 3; mode++) {
 		reset64();
 		heap_oom64 = 1;
@@ -380,10 +388,38 @@ static void platform_failures64(void)
 		run64(mode);
 		assert(mp_ready == 1 && allocate_calls64 == 1 && gc_heap == retained);
 	}
-#endif
 }
 
 static void outer_callback64(void *context) { (void) context; outer_cleanups64++; }
+
+static void messages64(void)
+{
+	reset64();
+	language64 = 1;
+	fault_stage64 = 8;
+	run64(1);
+	assert(strcmp(log64, "파일을 찾을 수 없습니다.\n") == 0);
+	reset64();
+	language64 = 1;
+	fault_stage64 = 3;
+	run64(0);
+	assert(strstr(log64, "MicroPython: 초기화에 실패했습니다.\n") != NULL);
+	reset64();
+	language64 = 1;
+	task64.stack_usable_base = UINTPTR_MAX;
+	run64(0);
+	assert(strcmp(log64, "MicroPython: 스택 범위가 올바르지 않습니다.\n") == 0);
+	for (int korean = 0; korean <= 1; korean++) {
+		reset64();
+		language64 = korean;
+		fault_stage64 = 4;
+		print_fault64 = flip_print64 = 1;
+		run64(1);
+		assert(strcmp(log64, korean ? "MicroPython: 예외를 표시할 수 없습니다.\n" :
+			"MicroPython: cannot print exception\n") == 0);
+		assert(language64 == !korean);
+	}
+}
 
 static void invoke_failed64(void) { mpport_run_file("file.py"); }
 
@@ -413,6 +449,7 @@ int main(void)
 	paths64();
 	platform_failures64();
 	outer_state64();
+	messages64();
 	reset64();
 	puts("MicroPython session claim, initialization rollback, NLR and console cleanup: PASS");
 	return 0;
