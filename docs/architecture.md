@@ -211,7 +211,7 @@ fd64.c 공개 파일 API·mount·동기화
     ├ fd64_fat.c FAT/클러스터 관리
     └ fd64_dir.c VFAT 이름·디렉터리 순회
     ↓
-cache64.c 되쓰기 섹터 캐시 (4KiB 블록, 4MiB)
+cache64.c Write-back 섹터 캐시 (4KiB 블록, 4MiB)
     ↓
 block64.c 전송 계층 고르기 + 파티션 시작 위치
     ↓
