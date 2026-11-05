@@ -5,6 +5,7 @@
 #include "../../../src64/include/string_copy64.h"
 
 #include "../../../src64/include/file_api64.h"
+#include "../../../src64/include/message64.h"
 
 /* Additive file operations preserve errno-style results, unlike legacy open. */
 long file_call64(unsigned int operation, unsigned long arg0,
@@ -91,5 +92,12 @@ int memcmp(const void *a, const void *b, size_t size);
  * a count/error beyond int is -75. Failure may follow already-written bytes.
  */
 int puts(const char *s);
+
+static inline int app_message64(enum MESSAGE_ID64 id)
+{
+	long mode = tty_input_mode();
+
+	return puts(message_text64(id, mode >= 0 && TTY_INPUT_HANGUL(mode)));
+}
 
 #endif

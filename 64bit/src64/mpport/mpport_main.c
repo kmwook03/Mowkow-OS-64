@@ -29,19 +29,15 @@
 #include <string.h>
 
 /*
- * library_kor.scm까지 장기 유지하려면 4 MiB가 필요하다. x86_64는 기존 계약대로
- * 정적 .bss를 쓰고, AArch64는 image와 8 MiB early allocator 경계의 여유를 지키기
- * 위해 최초 mp_init 때 memory64에서 같은 크기를 한 번 할당한다.
+ * The persistent VM needs 4 MiB. Allocate outside the kernel image on both
+ * ports: a static x86 heap can overlap the fixed [4, 8) MiB app image window.
+ * App loads must not overwrite a VM retained between console sessions.
  */
 #define MPPORT_GC_HEAP_SIZE (4 * 1024 * 1024)
 
 extern uint8_t stack_bottom[];
 
-#ifdef __aarch64__
 static uint8_t *gc_heap;
-#else
-static uint8_t gc_heap[MPPORT_GC_HEAP_SIZE];
-#endif
 
 /* One persistent VM/GC heap is shared by every console. The claim serializes
  * initialization, execution, exception reporting and session cleanup.
@@ -57,7 +53,7 @@ static int mpport_claim64(void)
 		platform_irq_restore64(flags);
 		/* console64_puts는 도는 태스크로 콘솔을 찾으므로 거절 메시지는
 		   거절당한 콘솔에 찍힌다. */
-		console64_puts("py already running in another console\n");
+		console64_message(MESSAGE_PY_BUSY64);
 		return -1;
 	}
 	mp_busy = 1;
@@ -158,22 +154,20 @@ static int mp_ready;
 static int mpport_init64(volatile struct MPPORT_SESSION64 *session)
 {
 	if (mpport_stack_limit64(session->stack_top) != 0) {
-		console64_puts("MicroPython: invalid stack bounds\n");
+		console64_message(MESSAGE_PY_STACK64);
 		return -22;
 	}
 	if (mp_ready != 0) {
 		return 0;
 	}
-#ifdef __aarch64__
 	/* Retain ownership if a previous failed initialization could not free it. */
 	if (gc_heap == NULL) {
 		gc_heap = (uint8_t *) memman64_alloc_4k(&memman64, MPPORT_GC_HEAP_SIZE);
 		if (gc_heap == NULL) {
-			console64_puts("MicroPython: cannot allocate GC heap\n");
+			console64_message(MESSAGE_PY_HEAP64);
 			return -12;
 		}
 	}
-#endif
 	session->init_started = 1;
 	gc_init(gc_heap, gc_heap + MPPORT_GC_HEAP_SIZE);
 	mp_init();
@@ -198,14 +192,12 @@ static void mpport_finish64(const volatile struct MPPORT_SESSION64 *session,
 		 */
 		memset(&mp_state_ctx.vm, 0, sizeof(mp_state_ctx.vm));
 		memset(&mp_state_ctx.mem, 0, sizeof(mp_state_ctx.mem));
-#ifdef __aarch64__
 		if (memman64_free_4k(&memman64, (uintptr_t) gc_heap,
 			MPPORT_GC_HEAP_SIZE) == 0) {
 			gc_heap = NULL;
 		} else {
-			console64_puts("MicroPython: cannot free GC heap; retained for retry\n");
+			console64_message(MESSAGE_PY_FREE64);
 		}
-#endif
 	}
 	/* Console/memory cleanup may not raise NLR. Publish availability last. */
 	mpport_release64();
@@ -240,7 +232,7 @@ static __attribute__((noinline)) void mpport_execute64(enum MPPORT_MODE64 mode, 
 	} else {
 		lex = mpport_file_lexer64(arg);
 		if (lex == NULL) {
-			console64_puts("file not found\n");
+			console64_message(MESSAGE_FILE_MISSING64);
 			return;
 		}
 	}
@@ -250,6 +242,9 @@ static __attribute__((noinline)) void mpport_execute64(enum MPPORT_MODE64 mode, 
 static void mpport_report64(enum MPPORT_MODE64 mode, void *exception)
 {
 	nlr_buf_t nlr;
+	int64_t language = console64_input_mode();
+	const char *volatile failure = message_text64(MESSAGE_PY_PRINT64,
+		language >= 0 && (language & 1) != 0);
 
 	/* Keep the claim while printing: another console must not mutate the VM.
 	 * A reporting exception must still reach the common cleanup path.
@@ -266,7 +261,8 @@ static void mpport_report64(enum MPPORT_MODE64 mode, void *exception)
 		}
 		nlr_pop();
 	} else {
-		console64_puts("MicroPython: cannot print exception\n");
+		console64_puts(failure);
+		console64_puts("\n");
 	}
 }
 
@@ -303,7 +299,7 @@ static void mpport_session64(enum MPPORT_MODE64 mode, const char *arg)
 		nlr_pop();
 	} else if (mp_ready == 0) {
 		/* A partial VM cannot be trusted to format its own exception objects. */
-		console64_puts("MicroPython: initialization failed\n");
+		console64_message(MESSAGE_PY_INIT64);
 	} else {
 		mpport_report64(mode, nlr.ret_val);
 	}

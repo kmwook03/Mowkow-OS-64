@@ -548,6 +548,25 @@ void console64_puts(const char *s)
 	console_puts_con64(console_self64(), s);
 }
 
+int64_t console64_input_mode(void)
+{
+	return console64_input_mode_con(console_self64());
+}
+
+void console64_message_con(struct CONSOLE64 *con, enum MESSAGE_ID64 id)
+{
+	int64_t mode = console64_input_mode_con(con);
+	const char *text = message_text64(id, mode >= 0 && (mode & 1) != 0);
+
+	console_puts_con64(con, text);
+	console_puts_con64(con, "\n");
+}
+
+void console64_message(enum MESSAGE_ID64 id)
+{
+	console64_message_con(console_self64(), id);
+}
+
 void console64_write(const char *s, uint64_t len)
 {
 	console64_write_con(console_self64(), s, len);

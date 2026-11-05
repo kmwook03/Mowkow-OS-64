@@ -64,11 +64,11 @@ static void console64_init_with_sheet(const struct BOOTINFO64 *boot_info,
 		console_clear_screen64(con);
 	}
 #ifdef __aarch64__
-	console64_puts("머꼬 OS AArch64 콘솔\n");
+	console64_message(MESSAGE_CONSOLE_A6464);
 #else
-	console64_puts("머꼬 OS x86_64 콘솔\n");
+	console64_message(MESSAGE_CONSOLE_X8664);
 #endif
-	console64_puts("한글 입력이 기본입니다. Shift+Space로 영어 입력으로 전환합니다.\n");
+	console64_message(MESSAGE_INPUT_HINT64);
 	console_prompt64(con);
 }
 
@@ -96,7 +96,7 @@ static void console_task_main64(void)
 			uint64_t irq_state;
 
 			if (con->close_ready == 0) {
-				console_puts_con64(con, "콘솔을 닫습니다.\n");
+				console64_message_con(con, MESSAGE_CONSOLE_CLOSE64);
 			}
 			irq_state = platform_irq_save64();
 			con->close_ready = 1;

@@ -46,9 +46,9 @@ class NanoConsole(Console):
         self._send(["ctrl", "x"])
         self._wait_after(before, PROMPT, CMD_TIMEOUT, "nano exit")
         result = self.text()[before:]
-        if result.count("exit 0\n") != 1 or "exit 1\n" in result:
+        if result.count("종료 코드: 0\n") != 1 or "종료 코드: 1\n" in result:
             raise AssertionError(f"nano did not exit successfully: {self.log_path}")
-        if "commands: help" not in self.run("help"):
+        if "명령: help" not in self.run("help"):
             raise AssertionError("cooked console did not recover")
 
     def oversized_save(self) -> None:
@@ -67,8 +67,8 @@ class NanoConsole(Console):
         self.wait_text(before_save, "변경한 내용을 저장할까요?")
         self.type("n")
         self._wait_after(before, PROMPT, CMD_TIMEOUT, "oversized save discard")
-        if self.text()[before:].count("exit 0\n") != 1:
-            raise AssertionError("oversized save/discard did not exit 0")
+        if self.text()[before:].count("종료 코드: 0\n") != 1:
+            raise AssertionError("oversized save/discard did not return status 0")
 
 
 def verify(image: Path, filename: str, expected: bytes, folder: Path) -> None:
@@ -119,7 +119,7 @@ def run(ahci: bool, log: Path) -> None:
         with NanoConsole(str(image), ahci, str(log) + "-reboot.log") as console:
             console.edit("NEW.TXT")
             result = console.run("cat NEW.TXT")
-            if "한글\n" not in result or "exit 0\n" not in result:
+            if "한글\n" not in result or "종료 코드: 0\n" not in result:
                 raise AssertionError("reboot file contents or cat exit mismatch")
         for name, content in expected.items():
             verify(image, name, content, folder)

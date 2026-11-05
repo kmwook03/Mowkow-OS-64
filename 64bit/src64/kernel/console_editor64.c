@@ -79,7 +79,8 @@ static int append_input64(struct CONSOLE64 *con, const char *s, int len)
 		   알린다 - 안 그러면 남은 타자마다 같은 말이 쏟아진다. */
 		if (con->line_full_warned == 0) {
 			con->line_full_warned = 1;
-			console_puts_con64(con, "\n줄이 너무 깁니다\n");
+			console_puts_con64(con, "\n");
+			console64_message_con(con, MESSAGE_LINE_LONG64);
 		}
 		return 0;
 	}

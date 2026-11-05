@@ -36,6 +36,7 @@ static const uint8_t font64[HANGUL64_FONT_SIZE];
 static int shift64, ctrl64, irq64, sleeps64, wakes64, refreshes64;
 static int opens64, closes64, toggles64, executions64, interpreters64;
 static int nano_elf64;
+static int force_status64, program_status64;
 static size_t allocations64, frees64;
 static struct CONSOLE64 *owner64;
 static char path64[CONSOLE64_LINE_MAX + 5], argv64[CONSOLE64_LINE_MAX + 5];
@@ -43,6 +44,7 @@ static char captured64[16], captured_path64[64];
 static int64_t captured_length64;
 static char serial64[32768];
 static size_t serial_length64;
+static struct CONSOLE64 *flip_language64;
 
 uint8_t io_in8(uint16_t port) { (void) port; return 0x20; }
 void io_out8(uint16_t port, uint8_t value)
@@ -51,6 +53,10 @@ void io_out8(uint16_t port, uint8_t value)
 	assert(serial_length64 + 1 < sizeof(serial64));
 	serial64[serial_length64++] = (char) value;
 	serial64[serial_length64] = '\0';
+	if (flip_language64 != NULL) {
+		flip_language64->lang_hangul ^= 1;
+		flip_language64 = NULL;
+	}
 }
 uint64_t platform_irq_save64(void) { int old = irq64; irq64 = 1; return old; }
 void platform_irq_restore64(uint64_t value) { irq64 = (int) value; }
@@ -202,6 +208,7 @@ int process64_exec_file(const char *path, const char *argv, struct CONSOLE64 *co
 	assert(str_copy64(argv64, sizeof(argv64), argv) == 0);
 	owner64 = con;
 	executions64++;
+	if (force_status64) { return program_status64; }
 	if (strcmp(path, nano_elf64 != 0 ? "나노.elf" : "나노") == 0) {
 		return 0;
 	}
@@ -273,6 +280,78 @@ static void guards64(void)
 			}
 		}
 	}
+}
+
+#ifndef __aarch64__
+static void message_bytes64(size_t start, const char *expected)
+{
+	/* This fixture has only 16 cells per row; wrapping is expected. */
+	for (size_t i = start; i < serial_length64; i++) {
+		if (serial64[i] == '\r' || serial64[i] == '\n') { continue; }
+		assert(*expected != '\0' && serial64[i] == *expected++);
+	}
+	assert(*expected == '\0');
+}
+#endif
+
+static void messages64(struct CONSOLE64 *boot, struct CONSOLE64 *second)
+{
+#ifndef __aarch64__
+	size_t at = serial_length64;
+#endif
+	/* The running task and explicit output owner deliberately disagree. */
+	current64 = boot->task;
+	boot->lang_hangul = 0;
+	second->lang_hangul = 1;
+	assert(console64_input_mode() >= 0 && (console64_input_mode() & 1) == 0);
+	console64_message_con(second, MESSAGE_FILE_MISSING64);
+	console64_message(MESSAGE_FILE_MISSING64);
+	current64 = second->task;
+	assert((console64_input_mode() & 1) != 0);
+#ifndef __aarch64__
+	message_bytes64(at, "파일을 찾을 수 없습니다.file not found");
+	at = serial_length64;
+
+	/* Switching after the first output byte cannot change a chosen message. */
+	flip_language64 = second;
+	console64_message(MESSAGE_PROGRAM_BUSY64);
+	message_bytes64(at, "다른 프로그램이 실행 중입니다.");
+	assert(second->lang_hangul == 0);
+	at = serial_length64;
+	console64_message(MESSAGE_HELP_X8664);
+	assert(strstr(serial64 + at, "명령: help") == serial64 + at);
+	at = serial_length64;
+	second->lang_hangul = 1;
+	console64_puts("file not found");
+	message_bytes64(at, "file not found");
+	for (int mode = 0; mode <= 1; mode++) {
+		second->lang_hangul = mode;
+		at = serial_length64;
+		console64_message(MESSAGE_OS_FILE_MISSING64);
+		console64_message(MESSAGE_COMMAND_UNKNOWN64);
+		message_bytes64(at, "파일을 찾을 수 없습니다.알 수 없는 명령어");
+	}
+	static const struct {
+		int status;
+		const char *expected;
+	} results[] = {
+		{ 0, "종료 코드: 0" }, { 1, "종료 코드: 1" }, { -3, "종료 코드: -3" },
+		{ INT32_MIN, "종료 코드: -2147483648" }, { INT32_MAX, "종료 코드: 2147483647" }
+	};
+
+	force_status64 = 1;
+	for (int mode = 0; mode <= 1; mode++) {
+		boot->lang_hangul = mode;
+		for (size_t i = 0; i < sizeof(results) / sizeof(results[0]); i++) {
+			program_status64 = results[i].status;
+			at = serial_length64;
+			console_dispatch_command64(boot, "hello");
+			message_bytes64(at, results[i].expected);
+		}
+	}
+	force_status64 = 0;
+#endif
+	boot->lang_hangul = second->lang_hangul = 1;
 }
 
 int main(void)
@@ -368,6 +447,7 @@ int main(void)
 	second = console64_create();
 	third = console64_create();
 	assert(second != NULL && third != NULL && second != third);
+	messages64(boot, second);
 	current64 = second->task;
 	console64_move(0, 0);
 	console64_puts("A");
@@ -399,9 +479,9 @@ int main(void)
 	assert(allocations64 == frees64 && wakes64 >= 4 && irq64 == 0);
 	guards64();
 #ifndef __aarch64__
-	assert(strstr(serial64, "commands:") != NULL);
+	assert(strstr(serial64, "명령: help") != NULL);
 	assert(strstr(serial64, "hello.elf") == NULL); /* argv stays out of normal output */
-	assert(strstr(serial64, "fullscreen") != NULL);
+	assert(strstr(serial64, "전체화면은") != NULL);
 #endif
 	puts("Console modules: dispatch, readline/IME, raw/REPL, task routing and lifecycle: PASS");
 	return 0;

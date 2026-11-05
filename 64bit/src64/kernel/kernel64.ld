@@ -39,3 +39,6 @@ ASSERT(_bss_start >= __kernel_file_end && _bss_end >= _bss_start,
 	"x86_64 kernel section order is invalid")
 ASSERT(__kernel_end < 0x100000000,
 	"x86_64 kernel lies outside the early identity map")
+/* app64.ld and elf64_loader.c reserve [4, 8) MiB for loaded applications. */
+ASSERT(__kernel_end <= 0x400000,
+	"x86_64 kernel overlaps the fixed application image window")

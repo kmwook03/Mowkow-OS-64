@@ -7,6 +7,6 @@ int main(int argc, char **argv)
 {
 	(void) argc;
 	(void) argv;
-	puts("hello from app64");
+	app_message64(MESSAGE_HELLO64);
 	return 0;
 }

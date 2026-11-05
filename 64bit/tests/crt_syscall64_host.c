@@ -58,7 +58,7 @@ long syscall3(long nr, long a0, long a1, long a2)
 	arguments64[2] = a2;
 	long result = syscall2(nr, a0, a1);
 
-	if (capture64) {
+	if (capture64 && nr == SYS_WRITE) {
 		assert(nr == SYS_WRITE && a0 == 1 && a2 > 0);
 		if (result > 0 && result <= a2) {
 			assert((size_t) result <= sizeof(output64) - output_size64);
@@ -223,10 +223,41 @@ static void tty_wrappers64(void)
 	assert(tty_input_mode() == -22);
 }
 
+static void message_output64(void)
+{
+	long data_replies[] = { 11, 1 };
+
+	puts_case64("open failed", data_replies, 2, 12, "open failed\n");
+	static const char *const expected[] = {
+		"open failed\n", "파일을 열 수 없습니다.\n", "open failed\n"
+	};
+	static const long modes[] = { 0, 1, -22 };
+
+	for (size_t i = 0; i < 3; i++) {
+		long replies[] = { modes[i], (long) strlen(expected[i]) - 1, 1 };
+
+		reset64(replies, 3);
+		capture64 = 1;
+		assert(app_message64(MESSAGE_CAT_OPEN64) == (int) strlen(expected[i]));
+		assert(calls64 == 3 && output_size64 == strlen(expected[i]));
+		assert(memcmp(output64, expected[i], output_size64) == 0);
+	}
+	/* Notice policy is independent of the error language. */
+	long replies[] = { 0, 39, 1 };
+	const char *hello = "64비트 앱에서 인사합니다.\n";
+
+	replies[1] = (long) strlen(hello) - 1;
+	reset64(replies, 3);
+	capture64 = 1;
+	assert(app_message64(MESSAGE_HELLO64) == (int) strlen(hello));
+	assert(memcmp(output64, hello, output_size64) == 0);
+}
+
 int main(void)
 {
 	io_wrappers64();
 	puts_progress64();
 	tty_wrappers64();
+	message_output64();
 	return 0;
 }

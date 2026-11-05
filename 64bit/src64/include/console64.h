@@ -2,6 +2,7 @@
 #define MOWKOW64_CONSOLE64_H
 
 #include <stdint.h>
+#include <message64.h>
 
 struct BOOTINFO64;
 struct FIFO64;
@@ -23,6 +24,10 @@ void console64_init(const struct BOOTINFO64 *boot_info);
 void console64_init_on_sheet(const struct BOOTINFO64 *boot_info,
 	struct SHEET64 *sheet);
 void console64_puts(const char *s);
+/* Task context; snapshot the destination console's mode before any output. */
+void console64_message_con(struct CONSOLE64 *con, enum MESSAGE_ID64 id);
+void console64_message(enum MESSAGE_ID64 id);
+int64_t console64_input_mode(void);
 void console64_prompt(void);
 void console64_write(const char *s, uint64_t len);
 uint64_t console64_read(char *dst, uint64_t len);

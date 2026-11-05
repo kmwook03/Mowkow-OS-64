@@ -11,6 +11,7 @@ from _data import *       # nil
 from _parse import *
 from _error import IsVerbose, eprint, ErrLisp, ErrSyntax, ErrUnbound, ErrArgs, ErrType
 from _compat import isalpha, readline, to_int
+from _error import report_error
 
 # Ph 8
 #       global isternary(Data): 인수 개수가 3개인지 검사
@@ -50,7 +51,7 @@ def builtin_gensym(args: Data, _gensym_counter: int=20000) -> Data:
     '''새 기호를 만들어서 반환한다. 인수는 없어야 한다.'''
     fname = "_모"       # 새 기호를 만들어서 반환(_새글)
     if not isvoid(args):
-        raise ErrArgs(f"<내장함수 '{fname}'>")
+        raise ErrArgs(fname, True)
     name = "#기호" + str(_gensym_counter)
     _gensym_counter += 1
     return mksym(name)
@@ -84,71 +85,71 @@ def builtin_cons(args: Data) -> Data:
 def builtin_add(args: Data) -> Data:
     '''덧셈 함수: (+ 1 2) -> 3'''
     if not isbinary(args):
-        raise ErrArgs("<내장함수 '+'>")
+        raise ErrArgs('+', True)
     a = car(args)                           # pyright: ignore[reportArgumentType]
     b = car(cdr(args))                      # pyright: ignore[reportArgumentType]
     if not a.isint() or not b.isint():
-        raise ErrType("<내장함수 '+'>")
+        raise ErrType('+', True)
     return mkint(a.value() + b.value())     # pyright: ignore[reportAttributeAccessIssue]
 
 def builtin_sub(args: Data) -> Data:
     '''뺄셈 함수: (- 3 2) -> 1'''
     if not isbinary(args):
-        raise ErrArgs("<내장함수 '-'>")
+        raise ErrArgs('-', True)
     a = car(args)                           # pyright: ignore[reportArgumentType]
     b = car(cdr(args))                      # pyright: ignore[reportArgumentType]
     if not a.isint() or not b.isint():
-        raise ErrType("<내장함수 '-'>")
+        raise ErrType('-', True)
     return mkint(a.value() - b.value())     # pyright: ignore[reportAttributeAccessIssue]
 
 def builtin_mul(args: Data) -> Data:
     '''곱셈 함수: (* 2 3) -> 6'''
     if not isbinary(args):
-        raise ErrArgs("<내장함수 '*'>")
+        raise ErrArgs('*', True)
     a = car(args)                           # pyright: ignore[reportArgumentType]
     b = car(cdr(args))                      # pyright: ignore[reportArgumentType]
     if not a.isint() or not b.isint():
-        raise ErrType("<내장함수 '*'>")
+        raise ErrType('*', True)
     return mkint(a.value() * b.value())     # pyright: ignore[reportAttributeAccessIssue]
 
 def builtin_div(args: Data) -> Data:
     '''나눗셈 함수: (/ 6 3) -> 2'''
     if not isbinary(args):
-        raise ErrArgs("<내장함수 '/'>")
+        raise ErrArgs('/', True)
     a = car(args)                           # pyright: ignore[reportArgumentType]
     b = car(cdr(args))                      # pyright: ignore[reportArgumentType]
     if not a.isint() or not b.isint():
-        raise ErrType("<내장함수 '/'>")
+        raise ErrType('/', True)
     return mkint(a.value() // b.value())    # pyright: ignore[reportAttributeAccessIssue]
 
 def builtin_inteq(args: Data) -> Data:      # 일반 아톰 비교로 확대해야 함
     '''정수 같다 함수: (= 1 1) -> #참'''
     if not isbinary(args):
-        raise ErrArgs("<내장함수 '='>")
+        raise ErrArgs('=', True)
     a = car(args)                           # pyright: ignore[reportArgumentType]
     b = car(cdr(args))                      # pyright: ignore[reportArgumentType]
     if not a.isint() or not b.isint():
-        raise ErrType("<내장함수 '='>")
+        raise ErrType('=', True)
     return mksym("#참") if a.value() == b.value() else nil  # pyright: ignore[reportAttributeAccessIssue]
 
 def builtin_intlt(args: Data) -> Data:
     '''정수 작다 함수: (< 1 2) -> #참'''
     if not isbinary(args):
-        raise ErrArgs("<내장함수 '<'>")
+        raise ErrArgs('<', True)
     a = car(args)
     b = car(cdr(args))
     if not a.isint() or not b.isint():
-        raise ErrType("<내장함수 '<'>")
+        raise ErrType('<', True)
     return mksym("#참") if a.value() < b.value() else nil   # pyright: ignore[reportAttributeAccessIssue]
 
 def builtin_intgt(args: Data) -> Data:
     '''정수 크다 함수: (> 1 2) -> 공'''
     if not isbinary(args):
-        raise ErrArgs("<내장함수 '>'>")
+        raise ErrArgs('>', True)
     a = car(args)                           # pyright: ignore[reportArgumentType]
     b = car(cdr(args))                      # pyright: ignore[reportArgumentType]
     if not a.isint() or not b.isint():
-        raise ErrType("<내장함수 '>'>")
+        raise ErrType('>', True)
     return mksym("#참") if a.value() > b.value() else nil   # pyright: ignore[reportAttributeAccessIssue]
 
 def builtin_apply(args: Data) -> Data:
@@ -183,26 +184,26 @@ def builtin_eq(args: Data) -> Data:
 def builtin_ispair(args: Data) -> Data:
     '''짝? 함수: (짝? (a b)) -> #참'''
     if not isunary(args):
-        raise ErrArgs("<내장함수 '짝?'>")
+        raise ErrArgs('짝?', True)
     return mksym("#참") if car(args).ispair() else nil  # pyright: ignore[reportArgumentType]
 
 def builtin_isnil(args: Data) -> Data:
     '''공? 함수: (공? (a b)) -> #참'''
     if not isunary(args):
-        raise ErrArgs("<내장함수 '공?'>")
+        raise ErrArgs('공?', True)
     return mksym("#참") if car(args).isnil() else nil   # pyright: ignore[reportArgumentType]
 
 def builtin_not(args: Data) -> Data:
     '''부정 함수: (부정 #참) -> 공'''       # (부정 #참) -> 공, (부정 공) -> #참 (cf. 반 for 반대)
     if not isunary(args):
-        raise ErrArgs("<내장함수 '부정'>")
+        raise ErrArgs('부정', True)
     return mksym("#참") if car(args).isnil() else nil # pyright: ignore[reportArgumentType]
 
 def builtin_and(args: Data) -> Data:
     '''그리고 함수: (그리고 #참 #참) -> #참'''     # (그리고 #참 #참) -> #참, (그리고 #참 공) -> 공 (cf. 다 for 모두다)
     fname = "그리고"
     if not isbinary(args):
-        raise ErrArgs(f"<내장함수 '{fname}'>")
+        raise ErrArgs(fname, True)
     a = car(args)                           # pyright: ignore[reportArgumentType]
     b = car(cdr(args))                      # pyright: ignore[reportArgumentType]
     if a.issymbol() and a.value() == "#참":     # pyright: ignore[reportAttributeAccessIssue]
@@ -210,13 +211,13 @@ def builtin_and(args: Data) -> Data:
     elif a.isnil():
         return nil
     else:
-        raise ErrType("<내장함수 '{fname}'>")
+        raise ErrType(fname, True)
 
 def builtin_or(args: Data) -> Data:
     '''또는 함수: (또는 #참 공) -> #참'''       # (또는 #참 공) -> #참, (또는 공 공) -> 공 (cf. 또 for 혹)
     fname = "또는"      # 혹
     if not isbinary(args):
-        raise ErrArgs(f"<내장함수 '{fname}'>")
+        raise ErrArgs(fname, True)
     a = car(args)                           # pyright: ignore[reportArgumentType]
     b = car(cdr(args))                      # pyright: ignore[reportArgumentType]
     if a.isnil():
@@ -232,7 +233,7 @@ def builtin_read(args: Data) -> Data:
     '''입력 함수: (읽기) -> 123'''     # (읽기) -> 123 (cf. 입력)
     fname = "읽기"
     if not isvoid(args):
-        raise ErrArgs(f"<내장함수 '{fname}'>")
+        raise ErrArgs(fname, True)
     line = readline("").strip()
     if line[0] == "0" and all(c in "01234567" for c in line[1:]):
         return mkint(to_int(line, 8))
@@ -250,7 +251,7 @@ def builtin_read(args: Data) -> Data:
             new_lit = new_lit.replace(lit, chr(ord('A')+i))
         return mkint(to_int(new_lit, 16))
     else:
-        raise ErrType(f"<내장함수 '{fname}'>")
+        raise ErrType(fname, True)
 
 def builtin_write(args: Data, terminator="\n") -> None:
     ''' 출력 함수: (쓰기 123) -> 123
@@ -258,7 +259,7 @@ def builtin_write(args: Data, terminator="\n") -> None:
     '''    # (쓰기 123) -> 123 (cf. 출력)
     fname = "쓰기"
     if not isunary(args):
-        raise ErrArgs(f"<내장함수 '{fname}'>")
+        raise ErrArgs(fname, True)
     a = car(args)                           # pyright: ignore[reportArgumentType]
     if a.issymbol() or a.isint() or a.ispair() or a.isbuiltin():
         print(a, end=terminator)
@@ -515,7 +516,7 @@ def _main_e():
                 print(val)
             # print(f"AFTER:  {YY_reader.remains()}")
         except ErrLisp as err:
-            eprint(f"오류: {err}")
+            report_error(err)
 
 if __name__ == "__main__":
     _main_e()

@@ -24,7 +24,7 @@ int main(int argc, char **argv)
 	}
 	fd = open(argv[1], 0);
 	if (fd < 0) {
-		puts("open failed");
+		app_message64(MESSAGE_CAT_OPEN64);
 		return 1;
 	}
 	for (;;) {
