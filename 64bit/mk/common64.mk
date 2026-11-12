@@ -7,6 +7,7 @@
 # ---------------------------------------------------------------------------
 
 COMMON64_C_SRCS = \
+	$(SRC64_DIR)/kernel/address_space64.c \
 	$(SRC64_DIR)/drivers/block64.c \
 	$(SRC64_DIR)/drivers/graphic64.c \
 	$(SRC64_DIR)/kernel/cache64.c \

@@ -21,8 +21,8 @@
 #define PF_R64 0x4U
 #define PF_MASK64 (PF_X64 | PF_W64 | PF_R64)
 #define ELF_VERSION64 1
-#define USER_IMAGE_MIN 0x400000
-#define USER_IMAGE_MAX 0x800000
+#define USER_IMAGE_MIN USER_IMAGE_BASE64
+#define USER_IMAGE_MAX USER_IMAGE_END64
 
 struct ELF64_EHDR {
 	unsigned char e_ident[EI_NIDENT];
@@ -140,10 +140,17 @@ static int image_range64(const uint8_t *file, size_t file_size,
 		}
 		/* Subtract only after checking the start; never form an unchecked end. */
 		if ((phdr[i].p_flags & ~PF_MASK64) != 0 ||
+			(phdr[i].p_flags & PF_R64) == 0 ||
+			(phdr[i].p_flags & (PF_W64 | PF_X64)) == (PF_W64 | PF_X64) ||
 			phdr[i].p_filesz > phdr[i].p_memsz ||
 			phdr[i].p_offset > file_size ||
-			phdr[i].p_filesz > file_size - phdr[i].p_offset ||
-			phdr[i].p_vaddr < USER_IMAGE_MIN ||
+			phdr[i].p_filesz > file_size - phdr[i].p_offset) {
+			return -5;
+		}
+		/* Explicit PHDRS may emit an empty LOAD at VA 0. It maps no bytes,
+		 * contributes no permissions and cannot authorize the entry point. */
+		if (phdr[i].p_memsz == 0) { continue; }
+		if (phdr[i].p_vaddr < USER_IMAGE_MIN ||
 			phdr[i].p_vaddr >= USER_IMAGE_MAX ||
 			phdr[i].p_memsz > USER_IMAGE_MAX - phdr[i].p_vaddr ||
 			phdr[i].p_align < MEMMAN64_PAGE_SIZE ||
@@ -152,17 +159,23 @@ static int image_range64(const uint8_t *file, size_t file_size,
 				(phdr[i].p_offset & (phdr[i].p_align - 1))) {
 			return -5;
 		}
-		if (phdr[i].p_memsz == 0) {
-			continue;
-		}
 		end = phdr[i].p_vaddr + phdr[i].p_memsz;
 		if ((phdr[i].p_flags & PF_X64) != 0 &&
 			ehdr->e_entry >= phdr[i].p_vaddr && ehdr->e_entry < end) {
 			executable_entry = 1;
 		}
-		/* Earlier PT_LOAD ranges have already passed the overflow checks.
-		   Compare byte ranges: disjoint segments may share an aligned page. */
+		/* Byte-disjoint segments may share a page only if their union is W^X. */
 		for (j = 0; j < i; j++) {
+			uint64_t page_mask = USER_PAGE_SIZE64 - 1;
+
+			if (phdr[j].p_type == PT_LOAD && phdr[j].p_memsz != 0 &&
+				(phdr[i].p_vaddr & ~page_mask) <
+					((phdr[j].p_vaddr + phdr[j].p_memsz + page_mask) & ~page_mask) &&
+				(phdr[j].p_vaddr & ~page_mask) < ((end + page_mask) & ~page_mask) &&
+				((phdr[i].p_flags | phdr[j].p_flags) & (PF_W64 | PF_X64)) ==
+					(PF_W64 | PF_X64)) {
+				return -5;
+			}
 			if (phdr[j].p_type == PT_LOAD && phdr[j].p_memsz != 0 &&
 				phdr[i].p_vaddr < phdr[j].p_vaddr + phdr[j].p_memsz &&
 				phdr[j].p_vaddr < end) {
@@ -285,4 +298,82 @@ cleanup:
 		elf64_release_process(process);
 	}
 	return status;
+}
+
+/* All headers and page permission unions were validated before allocation. */
+static unsigned int image_page_permissions64(const struct ELF64_EHDR *header,
+	const struct ELF64_PHDR *segments, uintptr_t address)
+{
+	unsigned int permissions = 0;
+
+	for (uint16_t i = 0; i < header->e_phnum; i++) {
+		const struct ELF64_PHDR *segment = &segments[i];
+
+		if (segment->p_type != PT_LOAD || segment->p_memsz == 0 ||
+			segment->p_vaddr >= address + USER_PAGE_SIZE64 ||
+			segment->p_vaddr + segment->p_memsz <= address) { continue; }
+		permissions |= USER_READ64;
+		if (segment->p_flags & PF_W64) { permissions |= USER_WRITE64; }
+		if (segment->p_flags & PF_X64) { permissions |= USER_EXEC64; }
+	}
+	return permissions;
+}
+
+int elf64_prepare_image(const char *path, struct PROCESS64 *process)
+{
+	struct FDHANDLE64 file;
+	const struct ELF64_EHDR *header;
+	const struct ELF64_PHDR *segments;
+	const uint8_t *bytes;
+	uintptr_t low, high, base, end, snapshot_size;
+	size_t size;
+	int status;
+
+	if (path == NULL || process == NULL || process->space == NULL ||
+		process->image_storage.size != 0 || process->elf_snapshot.size != 0 ||
+		process->image.size != 0) { return -22; }
+	status = fd64_open_checked(&file, path, 0);
+	if (status != 0) { return status; }
+	size = file.info.size;
+	if (size < sizeof(*header)) { return -4; }
+	if (align_up_checked64(size, USER_PAGE_SIZE64, &snapshot_size) != 0) { return -4; }
+	status = user_backing_alloc64(&process->elf_snapshot, snapshot_size);
+	if (status != 0) { return status; }
+	bytes = (const uint8_t *) process->elf_snapshot.kernel_address;
+	if (fd64_read_checked(&file, (void *) bytes, size) != (int64_t) size) { return -3; }
+	header = (const struct ELF64_EHDR *) bytes;
+	if (!valid_header(header, size)) { return -4; }
+	status = image_range64(bytes, size, &low, &high);
+	if (status != 0) { return status; }
+	if (align_down_checked64(low, USER_PAGE_SIZE64, &base) != 0 ||
+		align_up_checked64(high, USER_PAGE_SIZE64, &end) != 0) { return -5; }
+	status = user_backing_alloc64(&process->image_storage, end - base);
+	if (status != 0) { return status; }
+	segments = (const struct ELF64_PHDR *) (bytes + header->e_phoff);
+	for (uint16_t i = 0; i < header->e_phnum; i++) {
+		if (segments[i].p_type != PT_LOAD || segments[i].p_memsz == 0) { continue; }
+		copy_bytes((void *) (process->image_storage.kernel_address +
+			segments[i].p_vaddr - base), bytes + segments[i].p_offset,
+			(size_t) segments[i].p_filesz);
+	}
+	status = user_backing_sync_code64(&process->image_storage, 0, end - base);
+	if (status != 0) { return status; }
+	for (uintptr_t address = base; address < end; address += USER_PAGE_SIZE64) {
+		unsigned int permissions = image_page_permissions64(header, segments, address);
+
+		if (permissions == 0) { continue; }
+		status = address_space_map64(process->space, address,
+			process->image_storage.physical + address - base, USER_PAGE_SIZE64,
+			permissions);
+		if (status != 0) { return status; }
+	}
+	/* Publish the image only after the snapshot is released successfully. */
+	uintptr_t entry = (uintptr_t) header->e_entry;
+
+	status = user_backing_free64(&process->elf_snapshot);
+	if (status != 0) { return status; }
+	process->entry = entry;
+	process->image.base = base;
+	process->image.size = end - base;
+	return 0;
 }

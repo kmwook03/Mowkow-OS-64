@@ -211,6 +211,11 @@ static int test_segment_ranges64(void)
 	segments64()[1].p_memsz = 0;
 	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
 	CHECK64(high == USER_IMAGE_MIN + 0x1000);
+	/* GNU ld can emit an unused explicit data PHDR for tiny AArch64 apps. */
+	segments64()[1].p_vaddr = 0;
+	segments64()[1].p_offset = 0xe8;
+	segments64()[1].p_align = 0x10000;
+	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
 	reset_fixture64();
 	segments64()[0].p_offset = UINT64_MAX - 0xfff;
 	segments64()[0].p_filesz = 0x2000;
@@ -286,6 +291,8 @@ static int test_alignment_and_overlap64(void)
 	segments64()[0].p_memsz = 16;
 	segments64()[1].p_vaddr = USER_IMAGE_MIN + 16;
 	segments64()[1].p_offset += 16;
+	CHECK64(reject_fixture64(-5) == 0);
+	segments64()[1].p_flags = PF_R64;
 	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
 	return 0;
 }
@@ -398,11 +405,14 @@ static int test_segment_flags64(void)
 		segments64()[1].p_flags |= invalid_flags[i];
 		CHECK64(reject_fixture64(-5) == 0);
 	}
-	/* Validate the mask without claiming that hardware enforces W^X/NX. */
+	/* Only readable R, RW and RX pages are representable under W^X. */
 	for (flags = 0; flags <= PF_MASK64; flags++) {
 		reset_fixture64();
 		segments64()[1].p_flags = flags;
-		CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+		int expected = flags == PF_R64 || flags == (PF_R64 | PF_W64) ||
+			flags == (PF_R64 | PF_X64) ? 0 : -5;
+
+		CHECK64(image_range64(fixture, fixture_size, &low, &high) == expected);
 	}
 	for (i = 0; i < sizeof unsupported_types / sizeof unsupported_types[0]; i++) {
 		reset_fixture64();

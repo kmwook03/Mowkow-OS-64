@@ -1,6 +1,7 @@
 #ifndef MOWKOW64_PROCESS64_H
 #define MOWKOW64_PROCESS64_H
 
+#include <address_space64.h>
 #include <fd64.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -26,7 +27,21 @@ struct PROCESS64_FILE {
 
 struct CONSOLE64;
 
+enum PROCESS_STATE64 {
+	PROCESS_FREE64, PROCESS_LOADING64, PROCESS_READY64,
+	PROCESS_LEGACY64, PROCESS_REAP64
+};
+
 struct PROCESS64 {
+	enum PROCESS_STATE64 state;
+	struct ADDRESS_SPACE64 *space;
+	struct USER_BACKING64 image_storage;
+	struct USER_BACKING64 stack_storage;
+	struct USER_BACKING64 heap_storage;
+	struct USER_BACKING64 elf_snapshot;
+	uintptr_t initial_rsp;
+	uintptr_t initial_argv;
+	size_t initial_argc;
 	uint32_t pid;
 	uintptr_t entry;
 	struct PROCESS64_RANGE image;
@@ -50,6 +65,14 @@ struct PROCESS64 {
    Oversized names/lines or excess arguments return PROCESS64_ERR_ARGS. */
 int process64_exec_file(const char *path, const char *cmdline,
 	struct CONSOLE64 *console);
+/* Prepare only: no root switch, task attachment, or user execution. One task
+ * owns each handle. *result starts NULL; a non-NULL result on failure retains
+ * resources and must be discarded again. READY is not yet runnable before M3.
+ */
+int process64_prepare_file(const char *path, const char *cmdline,
+	struct CONSOLE64 *console, struct PROCESS64 **result);
+/* Inactive prepared processes only; failed frees retain the handle and slot. */
+int process64_discard_prepared(struct PROCESS64 **process);
 struct PROCESS64 *process64_current(void);
 /* Requires a current process and a non-NULL pointer. The whole buffer must fit
    one nonempty image/stack/heap range with nonzero base and valid end.

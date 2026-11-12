@@ -4,10 +4,11 @@
  * ELF64를 올리고, 스택과 힙을 붙이고, 링 3으로 들어갔다가 돌아오는 자리다.
  * 열린 파일 표도 프로세스마다 하나씩 갖고 있다.
  *
- * 페이즈 1(주소 공간 분리) 전이라 상주 프로세스는 한 번에 하나뿐이고,
- * 이미지는 모두 같은 고정 창에 올라간다.
+ * Prepared processes own private backing and inactive page tables. Until the
+ * scheduler/entry transition is integrated, exec retains the serialized path.
  */
 #include <asmfunc64.h>
+#include <arch/platform64.h>
 #ifdef __aarch64__
 #include <arch/arch64.h>
 #endif
@@ -41,7 +42,7 @@ struct PROCESS64_ARGS {
 	size_t argc;
 };
 
-static struct PROCESS64 process_table[4];
+static struct PROCESS64 process_table[USER_SPACE_LIMIT64];
 static uint32_t next_pid = 1;
 
 static void memzero(void *ptr, size_t size)
@@ -68,16 +69,30 @@ static void copy_bytes(void *dst, const void *src, size_t size)
 
 static struct PROCESS64 *process_alloc(void)
 {
-	uint32_t i;
+	uint64_t irq = platform_irq_save64();
+	struct PROCESS64 *process = NULL;
 
-	for (i = 0; i < sizeof(process_table) / sizeof(process_table[0]); i++) {
-		if (process_table[i].pid == 0) {
-			memzero(&process_table[i], sizeof(process_table[i]));
-			process_table[i].pid = next_pid++;
-			return &process_table[i];
+	for (size_t i = 0; i < USER_SPACE_LIMIT64; i++) {
+		if (process_table[i].state != PROCESS_FREE64) { continue; }
+		process = &process_table[i];
+		memzero(process, sizeof(*process));
+		process->state = PROCESS_LOADING64;
+		/* PID zero denotes no process; avoid collisions even across wrap. */
+		for (;;) {
+			int duplicate = 0;
+
+			process->pid = next_pid++;
+			if (process->pid == 0) { continue; }
+			for (size_t j = 0; j < USER_SPACE_LIMIT64; j++) {
+				if (&process_table[j] != process &&
+					process_table[j].pid == process->pid) { duplicate = 1; }
+			}
+			if (!duplicate) { break; }
 		}
+		break;
 	}
-	return NULL;
+	platform_irq_restore64(irq);
+	return process;
 }
 
 static int range_contains64(const struct PROCESS64_RANGE *range, uintptr_t ptr, size_t size)
@@ -318,7 +333,10 @@ static void process_cleanup64(struct PROCESS64 *process, struct TASK64 *task)
 		task->kernel_rsp = 0;
 	}
 	process_free_memory(process);
+	uint64_t irq = platform_irq_save64();
+
 	memzero(process, sizeof(*process));
+	platform_irq_restore64(irq);
 }
 
 int process64_exec_file(const char *path, const char *cmdline,
@@ -346,6 +364,7 @@ int process64_exec_file(const char *path, const char *cmdline,
 	if (process == NULL) {
 		return -1;
 	}
+	process->state = PROCESS_LEGACY64;
 	status = elf64_load_process(name, process);
 	if (status != 0) {
 		/* -8은 "이미지 창을 다른 앱이 쓰는 중"이다. 콘솔이 여럿이면
@@ -414,5 +433,95 @@ int process64_exec_file(const char *path, const char *cmdline,
 
 cleanup:
 	process_cleanup64(process, task);
+	return status;
+}
+
+int process64_discard_prepared(struct PROCESS64 **result)
+{
+	struct PROCESS64 *process;
+	int owned = 0;
+	int status;
+	uint64_t irq;
+
+	if (result == NULL) { return -22; }
+	process = *result;
+	if (process == NULL) { return 0; }
+	for (size_t i = 0; i < USER_SPACE_LIMIT64; i++) {
+		if (process == &process_table[i]) { owned = 1; break; }
+	}
+	if (!owned || (process->state != PROCESS_LOADING64 &&
+		process->state != PROCESS_READY64 && process->state != PROCESS_REAP64)) {
+		return -22;
+	}
+	/* Destroy refuses active roots. Keep backing until every table is gone. */
+	status = address_space_destroy64(&process->space);
+	if (status == -16) { return status; }
+	irq = platform_irq_save64();
+	process->state = PROCESS_REAP64;
+	platform_irq_restore64(irq);
+	if (status != 0) { return status; }
+	status = user_backing_free64(&process->heap_storage);
+	if (status == 0) { status = user_backing_free64(&process->stack_storage); }
+	if (status == 0) { status = user_backing_free64(&process->image_storage); }
+	if (status == 0) { status = user_backing_free64(&process->elf_snapshot); }
+	if (status != 0) { return status; }
+	irq = platform_irq_save64();
+	memzero(process, sizeof(*process));
+	*result = NULL;
+	platform_irq_restore64(irq);
+	return 0;
+}
+
+int process64_prepare_file(const char *path, const char *cmdline,
+	struct CONSOLE64 *console, struct PROCESS64 **result)
+{
+	char name[FD64_NAME_MAX];
+	struct PROCESS64_ARGS args;
+	struct PROCESS64 *process;
+	uint64_t irq;
+	int status;
+
+	if (result == NULL || *result != NULL) { return -22; }
+	status = copy_program_name64(path, name, sizeof(name));
+	if (status != 0) { return status; }
+	status = parse_args64(cmdline != NULL ? cmdline : path, &args);
+	if (status != 0) { return status; }
+	process = process_alloc();
+	if (process == NULL) { return -12; }
+	*result = process;
+	process->console = console;
+	status = address_space_create64(&process->space);
+	if (status == 0) { status = elf64_prepare_image(name, process); }
+	if (status != 0) { goto failed; }
+	status = user_backing_alloc64(&process->stack_storage,
+		USER_STACK_END64 - USER_STACK_BASE64);
+	if (status != 0) { goto failed; }
+	process->stack.base = USER_STACK_BASE64;
+	process->stack.size = process->stack_storage.size;
+	process->stack_backing = process->stack_storage.kernel_address;
+	status = user_backing_alloc64(&process->heap_storage,
+		USER_HEAP_END64 - USER_HEAP_BASE64);
+	if (status != 0) { goto failed; }
+	process->heap.base = USER_HEAP_BASE64;
+	process->heap.size = process->heap_storage.size;
+	process->heap_backing = process->heap_storage.kernel_address;
+	process->heap_next = USER_HEAP_BASE64;
+	status = setup_args64(process, &args, &process->initial_rsp, &process->initial_argv);
+	if (status != 0) { goto failed; }
+	process->initial_argc = args.argc;
+	status = address_space_map64(process->space, process->stack.base,
+		process->stack_storage.physical, process->stack.size, USER_READ64 | USER_WRITE64);
+	if (status == 0) {
+		status = address_space_map64(process->space, process->heap.base,
+			process->heap_storage.physical, process->heap.size, USER_READ64 | USER_WRITE64);
+	}
+	if (status != 0) { goto failed; }
+	irq = platform_irq_save64();
+	process->state = PROCESS_READY64;
+	platform_irq_restore64(irq);
+	return 0;
+failed:
+	/* One bounded unwind attempt. A retained handle must be retried by its owner. */
+	(void) process64_discard_prepared(result);
 	return status;
 }

@@ -28,6 +28,11 @@ enum ALLOC_MODE64 {
 };
 
 struct MEMMAN64 memman64;
+static uint64_t process_irq64;
+
+uint64_t platform_irq_save64(void) { return process_irq64++; }
+void platform_irq_restore64(uint64_t flags) { process_irq64 = flags; }
+
 
 static enum ALLOC_MODE64 alloc_mode;
 static uint32_t alloc_count;

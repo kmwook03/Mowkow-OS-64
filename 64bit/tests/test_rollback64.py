@@ -22,6 +22,8 @@ class Rollback64Test(unittest.TestCase):
                         [
                             compiler,
                             "-std=c11",
+                            "-ffunction-sections", "-fdata-sections",
+                            "-Wl,--gc-sections",
                             "-Wall",
                             "-Wextra",
                             "-Werror",

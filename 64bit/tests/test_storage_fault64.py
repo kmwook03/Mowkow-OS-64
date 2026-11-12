@@ -21,7 +21,8 @@ class StorageFault64Test(unittest.TestCase):
         cls.executable = cls.directory / "storage_fault64_host"
         subprocess.run(
             [os.environ.get("HOST_CC", "cc"), "-std=c11", "-Wall", "-Wextra",
-             "-Werror", "-idirafter", str(ROOT / "64bit/src64/include"),
+             "-Werror", "-ffunction-sections", "-fdata-sections",
+             "-Wl,--gc-sections", "-idirafter", str(ROOT / "64bit/src64/include"),
              str(ROOT / "64bit/tests/storage_fault64_host.c"),
              str(ROOT / "64bit/src64/kernel/memory64.c"),
              str(ROOT / "64bit/src64/lib/utf864.c"), "-o", str(cls.executable)],

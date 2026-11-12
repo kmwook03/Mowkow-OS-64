@@ -54,6 +54,7 @@ A64_SRCS = $(A64_ARCH_DIR)/boot64.S $(A64_ARCH_DIR)/vectors64.S \
 	$(A64_ARCH_DIR)/font64.S \
 	$(A64_ARCH_DIR)/gioaon64.c $(A64_ARCH_DIR)/board64.c \
 	$(A64_ARCH_DIR)/boot_smoke64.c $(A64_ARCH_DIR)/mmu64.c \
+	$(A64_ARCH_DIR)/address_space64.c \
 	$(A64_ARCH_DIR)/mailbox64.c $(A64_ARCH_DIR)/fb64.c \
 	$(A64_ARCH_DIR)/exception64.c $(A64_ARCH_DIR)/gic64.c \
 	$(A64_ARCH_DIR)/gtimer64.c $(A64_ARCH_DIR)/sched64.c \
