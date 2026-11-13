@@ -19,6 +19,7 @@ A64_APP_TARGETS = $(foreach app,$(APP64_NAMES),$(A64_APP_BUILD_DIR)/$(app).elf)
 A64_APP_CRT_OBJS = $(A64_APP_BUILD_DIR)/crt0.o \
 	$(addprefix $(A64_APP_BUILD_DIR)/,$(addsuffix .o,$(APP64_CRT_COMMON_NAMES)))
 A64_APP_EXTRA_OBJS_mtest = $(A64_APP_BUILD_DIR)/malloc.o
+A64_APP_EXTRA_OBJS_isotest = $(A64_APP_BUILD_DIR)/malloc.o
 A64_BOOT_DIR = $(BUILD64_DIR)/aarch64-boot
 A64_BOOT_STAGER = $(TOOL64PATH)/stage_aarch64_boot.py
 A64_PI5_CONFIG = 64bit/board/pi5/config.txt
@@ -27,6 +28,7 @@ A64_BOOT_STAGE_SPECS = config.txt=$(A64_PI5_CONFIG) \
 	HELLO.ELF=$(A64_APP_BUILD_DIR)/hello.elf \
 	CAT.ELF=$(A64_APP_BUILD_DIR)/cat.elf \
 	KTEST.ELF=$(A64_APP_BUILD_DIR)/ktest.elf \
+	ISOTEST.ELF=$(A64_APP_BUILD_DIR)/isotest.elf \
 	MTEST.ELF=$(A64_APP_BUILD_DIR)/mtest.elf \
 	WTEST.ELF=$(A64_APP_BUILD_DIR)/wtest.elf \
 	나노.ELF=$(A64_APP_BUILD_DIR)/나노.elf \
@@ -150,3 +152,7 @@ clean-a64 :
 		$(A64_BOOT_DIR).tmp
 
 -include $(A64_OBJS:.o=.d)
+
+# Shared exception save/restore macros also define the initial user frame.
+$(BUILD64_DIR)/aarch64/vectors64.o $(BUILD64_DIR)/aarch64/user64.o: \
+	$(A64_ARCH_DIR)/exception_macros64.inc $(SRC64_DIR)/include/arch/exception_frame64.h

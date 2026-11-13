@@ -274,6 +274,11 @@ void init_gdtidt64(void)
 	load_tr64(GDT64_TSS);
 }
 
+void set_tss_stack64(uintptr_t top)
+{
+	tss64.rsp0 = top != 0 ? top : (uintptr_t) (kernel_stack + KERNEL_STACK_SIZE);
+}
+
 void init_fpu64(void)
 {
 	uint64_t cr0;

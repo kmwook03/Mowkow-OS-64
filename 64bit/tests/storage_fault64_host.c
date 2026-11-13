@@ -9,6 +9,7 @@
 #include "../src64/kernel/fd64_fat.c"
 #include "../src64/kernel/fd64_dir.c"
 #include "../src64/kernel/elf64_loader.c"
+#include "elf_loader_fixture64.h"
 
 #define CHECK64(condition) do { \
 	if (!(condition)) { \
@@ -217,13 +218,12 @@ static int elf_failure64(int expected)
 	struct PROCESS64 process = {0};
 	size_t available = memman64_total(&memman64);
 
-	CHECK64(elf64_load_process(FIXTURE_NAME64, &process) == expected);
+	CHECK64(load_fixture64(FIXTURE_NAME64, &process) == expected);
 	CHECK64(memman64_total(&memman64) == available);
-	CHECK64(image_owner == NULL);
 	CHECK64(process.entry == 0 && process.image.size == 0);
 	/* A second attempt observes released ownership and intact filesystem state. */
-	CHECK64(elf64_load_process(FIXTURE_NAME64, &process) == expected);
-	CHECK64(memman64_total(&memman64) == available && image_owner == NULL);
+	CHECK64(load_fixture64(FIXTURE_NAME64, &process) == expected);
+	CHECK64(memman64_total(&memman64) == available);
 	return 0;
 }
 

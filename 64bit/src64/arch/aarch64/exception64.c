@@ -104,22 +104,20 @@ void arch64_kernel_sync_handler(const struct ARCH64_EXCEPTION_FRAME *frame,
 }
 
 uint64_t arch64_sync_dispatch(struct ARCH64_EXCEPTION_FRAME *frame,
-	uint64_t esr)
+	uint64_t esr, uint64_t far)
 {
 	struct INTERRUPT_FRAME64 syscall_frame = {0};
 	uint64_t exception_class;
 	uint64_t action;
-	uint64_t far;
 	uint64_t stack_pointer;
 
 	exception_class = (esr >> ESR64_EC_SHIFT) & ESR64_EC_MASK;
 	if (exception_class != ESR64_EC_SVC64) {
-		__asm__ volatile ("mrs %0, far_el1" : "=r" (far));
 		if ((frame->spsr & SPSR64_MODE_MASK) != SPSR64_MODE_EL0T ||
 				process64_current() == NULL) {
 			arch64_kernel_sync_handler(frame, esr, far);
 		}
-		__asm__ volatile ("mrs %0, sp_el0" : "=r" (stack_pointer));
+		stack_pointer = frame->sp_el0;
 		print_exception_frame("EL0 FAULT", frame, esr, far,
 			stack_pointer);
 		process64_exit_current(PROCESS64_EXIT_FAULT_BASE +
@@ -127,7 +125,6 @@ uint64_t arch64_sync_dispatch(struct ARCH64_EXCEPTION_FRAME *frame,
 		return 1;
 	}
 	if ((frame->spsr & SPSR64_MODE_MASK) != SPSR64_MODE_EL0T) {
-		__asm__ volatile ("mrs %0, far_el1" : "=r" (far));
 		arch64_kernel_sync_handler(frame, esr, far);
 	}
 	syscall_frame.rax = frame->x[8];

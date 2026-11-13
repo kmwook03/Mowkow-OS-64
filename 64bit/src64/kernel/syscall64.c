@@ -5,7 +5,7 @@
  * 같은 프레임으로 변환한다. syscall 번호·레지스터 규약·음수 오류는 유지한다.
  *
  * 유저가 준 포인터는 반드시 process64_user_range_valid로 확인한 뒤에 쓴다.
- * 아직 페이지 단위 보호가 없어서 이 검사가 유일한 방어선이다.
+ * Page permissions are checked before direct access; roots follow blocked tasks.
  */
 #include <console64.h>
 #ifdef __aarch64__
@@ -133,7 +133,7 @@ static int64_t syscall_read64(struct PROCESS64 *process, uint64_t fd,
 	struct FDHANDLE64 *fh;
 
 	if (size > INT64_MAX ||
-		process64_user_range_valid(buffer, (size_t) size) == 0) {
+		process64_user_write_valid(buffer, (size_t) size) == 0) {
 		return -1;
 	}
 	if (fd == 0 && process->console != NULL) {
@@ -175,7 +175,7 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 	if (operation == FILE_STAT64 || operation == FILE_OPEN64) {
 		if (arg2 != 0) { return -22; }
 		if (operation == FILE_STAT64 &&
-			!process64_user_range_valid((void *) arg1, sizeof(info))) { return -14; }
+			!process64_user_write_valid((void *) arg1, sizeof(info))) { return -14; }
 		if (operation == FILE_OPEN64 && (arg1 & ~7UL)) { return -22; }
 		length = copy_string_from_user64(name, sizeof(name), (const char *) arg0);
 		if (length < 0) { return length; }
@@ -204,7 +204,7 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 	if (fh == NULL) { return -9; }
 	if (operation == FILE_READ64) {
 		if (arg2 > INT64_MAX) { return -22; }
-		if (!process64_user_range_valid((void *) arg1, (size_t) arg2)) { return -14; }
+		if (!process64_user_write_valid((void *) arg1, (size_t) arg2)) { return -14; }
 		return fd64_read_checked(fh, (void *) arg1, (size_t) arg2);
 	}
 	if (arg2 != 0) { return -22; }
@@ -212,7 +212,7 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 		if (arg1 != 0) { return -22; }
 		return fd64_sync() < 0 ? -5 : 0;
 	}
-	if (!process64_user_range_valid((void *) arg1, sizeof(info))) { return -14; }
+	if (!process64_user_write_valid((void *) arg1, sizeof(info))) { return -14; }
 	status = fd64_stat_checked(fh, NULL, &info);
 	if (status == 0) { memcpy((void *) arg1, &info, sizeof(info)); }
 	return status;

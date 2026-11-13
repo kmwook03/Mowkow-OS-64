@@ -185,10 +185,12 @@ static struct TASK64 *task_alloc_nolock(void)
 		task->stack_usable_base = 0;
 		task->stack_usable_size = 0;
 		task->stack_high_water = 0;
+		task->entry_stack_base = 0;
+		task->entry_stack_size = 0;
 		task->process = NULL;
 		task->is_user = 0;
 		task->kernel_rsp = 0;
-		task->context.stack_pointer = 0;
+		task->context = (struct CONTEXT64) {0};
 		return task;
 	}
 	return NULL;
@@ -284,7 +286,11 @@ static int task_stack_check_nolock(struct TASK64 *task, size_t *used)
 	stack_top = expected_base + expected_size;
 	if (task->context.stack_pointer != 0 &&
 			(task->context.stack_pointer < expected_base ||
-			task->context.stack_pointer > stack_top)) {
+			task->context.stack_pointer > stack_top) &&
+			(task->entry_stack_base == 0 || task->entry_stack_size == 0 ||
+			task->entry_stack_size > UINTPTR_MAX - task->entry_stack_base ||
+			task->context.stack_pointer < task->entry_stack_base ||
+			task->context.stack_pointer > task->entry_stack_base + task->entry_stack_size)) {
 		return TASK64_ERR_INVALID;
 	}
 #if MOWKOW64_TASK_STACK_DEBUG
@@ -627,11 +633,10 @@ int task_sleep_commit64(struct TASK64 *task)
 		platform_irq_restore64(irq_state);
 		return TASK64_ERR_INVALID;
 	}
-	platform_irq_restore64(irq_state);
 	if (platform_task_sleep_current64(task) != 0) {
+		platform_irq_restore64(irq_state);
 		return 0;
 	}
-	irq_state = platform_irq_save64();
 	if (task->flags != TASK64_FLAGS_SLEEP_PENDING) {
 		platform_irq_restore64(irq_state);
 		return 0;
@@ -653,10 +658,10 @@ int task_sleep_commit64(struct TASK64 *task)
 		taskctl64.switches++;
 		new_task->switches++;
 	}
-	platform_irq_restore64(irq_state);
 	if (new_task != now_task) {
 		platform_task_switch64(&now_task->context, &new_task->context);
 	}
+	platform_irq_restore64(irq_state);
 	return 0;
 }
 
@@ -696,7 +701,7 @@ int task_kill64(struct TASK64 *task)
 	irq_state = platform_irq_save64();
 	if (task == NULL || !task_pointer_valid_nolock(task) ||
 			task->flags == TASK64_FLAGS_UNUSED ||
-			task == task_now_nolock()) {
+			task == task_now_nolock() || task->process != NULL) {
 		platform_irq_restore64(irq_state);
 		return TASK64_ERR_INVALID;
 	}
@@ -810,10 +815,10 @@ void task_switch64(void)
 	irq_state = platform_irq_save64();
 	now_task = task_now_nolock();
 	new_task = task_switch_prepare_nolock();
-	platform_irq_restore64(irq_state);
 	if (now_task != NULL && new_task != NULL && new_task != now_task) {
 		platform_task_switch64(&now_task->context, &new_task->context);
 	}
+	platform_irq_restore64(irq_state);
 }
 
 int task_init64(void)

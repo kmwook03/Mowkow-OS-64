@@ -4,14 +4,11 @@
  * ELF64를 올리고, 스택과 힙을 붙이고, 링 3으로 들어갔다가 돌아오는 자리다.
  * 열린 파일 표도 프로세스마다 하나씩 갖고 있다.
  *
- * Prepared processes own private backing and inactive page tables. Until the
- * scheduler/entry transition is integrated, exec retains the serialized path.
+ * Each process owns private user backing, page tables and an entry stack.
+ * Exec resumes on its console stack before detaching or reclaiming resources.
  */
 #include <asmfunc64.h>
 #include <arch/platform64.h>
-#ifdef __aarch64__
-#include <arch/arch64.h>
-#endif
 #include <console64.h>
 #include <dsctbl64.h>
 #include <elf64_loader.h>
@@ -29,10 +26,8 @@
  * 64바이트다. 8 KiB짜리 4000줄 파일이 256 KiB의 98.5%를 먹었다. 1 MiB면
  * 같은 파일이 25% 언저리고, 64 KiB(MAX_FILE) 소스 파일도 편집할 여유가 남는다.
  * 스택: 나노가 472바이트, 다른 앱은 그보다 적게 썼다. 64 KiB는 135배 여유라
- * 줄일 이유가 없어 그대로 둔다. 페이즈 1이 여기에 가드 페이지를 붙인다.
+ * 사용자 스택 범위와 가드 페이지는 user_layout64.h에서 정의한다.
  */
-#define USER_STACK_SIZE (64 * 1024)
-#define USER_HEAP_SIZE  (1024 * 1024)
 #define USER_STACK_ALIGNMENT64 16U
 
 struct PROCESS64_ARGS {
@@ -118,7 +113,7 @@ struct PROCESS64 *process64_current(void)
 	return task != NULL ? (struct PROCESS64 *) task->process : NULL;
 }
 
-int process64_user_range_valid(const void *ptr, size_t size)
+static int process_user_access64(const void *ptr, size_t size, unsigned int access)
 {
 	struct PROCESS64 *process = process64_current();
 	uintptr_t p;
@@ -130,9 +125,20 @@ int process64_user_range_valid(const void *ptr, size_t size)
 	if (size > UINTPTR_MAX - p) {
 		return 0;
 	}
-	return range_contains64(&process->image, p, size) != 0 ||
-		range_contains64(&process->stack, p, size) != 0 ||
-		range_contains64(&process->heap, p, size) != 0;
+	if (!range_contains64(&process->image, p, size) &&
+		!range_contains64(&process->stack, p, size) &&
+		!range_contains64(&process->heap, p, size)) { return 0; }
+	return size == 0 || address_space_validate64(process->space, p, size, access) == 0;
+}
+
+int process64_user_range_valid(const void *ptr, size_t size)
+{
+	return process_user_access64(ptr, size, USER_READ64);
+}
+
+int process64_user_write_valid(void *ptr, size_t size)
+{
+	return process_user_access64(ptr, size, USER_WRITE64);
 }
 
 void process64_exit_current(int status)
@@ -221,7 +227,7 @@ static int parse_args64(const char *cmdline, struct PROCESS64_ARGS *args)
 }
 
 /* Plan all byte ranges before writing; argv pointers refer to user addresses,
-   while writes use the kernel backing alias on AArch64. */
+   while writes use the kernel backing alias on both architectures. */
 static int setup_args64(struct PROCESS64 *process, const struct PROCESS64_ARGS *args,
 	uintptr_t *rsp_out, uintptr_t *argv_out)
 {
@@ -286,153 +292,94 @@ static int setup_args64(struct PROCESS64 *process, const struct PROCESS64_ARGS *
 	return 0;
 }
 
-static void process_free_memory(struct PROCESS64 *process)
+static int runtime_ready64;
+
+void process64_switch_task64(const struct TASK64 *task)
 {
-#ifdef __aarch64__
-	if (process->user_mappings != 0) {
-		arch64_user_unmap_all();
-		process->user_mappings = 0;
+	const struct PROCESS64 *process = task != NULL ? task->process : NULL;
+
+	/* Before the first prepared execution, boot still owns its legacy root. */
+	if (!runtime_ready64) { return; }
+	if (address_space_activate64(process != NULL ? process->space : NULL) != 0) {
+		/* A bad scheduler/root invariant must not resume under another root. */
+		__builtin_trap();
 	}
-#endif
-	if (process->heap.base != 0 && process->heap.size != 0) {
-		(void) memman64_free_4k(&memman64,
-			process->heap_backing != 0 ? process->heap_backing :
-			process->heap.base, process->heap.size);
-		process->heap.base = 0;
-		process->heap.size = 0;
-		process->heap_backing = 0;
-		process->heap_next = 0;
-	}
-	if (process->stack.base != 0 && process->stack.size != 0) {
-		(void) memman64_free_4k(&memman64,
-			process->stack_backing != 0 ? process->stack_backing :
-			process->stack.base, process->stack.size);
-		process->stack.base = 0;
-		process->stack.size = 0;
-		process->stack_backing = 0;
-	}
-	/* 이미지는 가장 먼저 얻은 자원이다. 풀 밖의 고정 창이라 memman에
-	   돌려주는 대신 마지막에 소유권만 놓는다. */
-	elf64_release_process(process);
-	process->image.base = 0;
-	process->image.size = 0;
+	platform_process_stack64(process != NULL ? process->entry_storage.kernel_address +
+		process->entry_storage.size : 0);
 }
 
-static void process_cleanup64(struct PROCESS64 *process, struct TASK64 *task)
+uintptr_t process64_entry_stack_top(void)
 {
-	if (task != NULL && task->process == process) {
-		/* A console-less run must not reset the active console's terminal. */
-		console64_set_raw_con(process->console, 0);
-	}
-	/* FAT handles are value copies, with no backend close allocation. Writes
-	   already sync before returning, so closing cannot discard dirty cache data. */
-	memzero(process->files, sizeof(process->files));
-	if (task != NULL && task->process == process) {
-		task->process = NULL;
-		task->is_user = 0;
-		task->kernel_rsp = 0;
-	}
-	process_free_memory(process);
-	uint64_t irq = platform_irq_save64();
+	struct PROCESS64 *process = process64_current();
 
-	memzero(process, sizeof(*process));
-	platform_irq_restore64(irq);
+	if (process == NULL || process->state != PROCESS_RUNNING64 ||
+		process->entry_storage.size != PROCESS64_ENTRY_STACK_SIZE) { __builtin_trap(); }
+	return process->entry_storage.kernel_address + process->entry_storage.size;
+}
+
+/* Only exec's detached failures are collected here; explicit prepare callers
+ * keep ownership of their own failed handles. Each visit attempts one unwind.
+ */
+static void process_reap_pending64(void)
+{
+	for (size_t i = 0; i < USER_SPACE_LIMIT64; i++) {
+		struct PROCESS64 *process = &process_table[i];
+		uint64_t irq = platform_irq_save64();
+		int claimed = process->reap_pending;
+
+		process->reap_pending = 0;
+		platform_irq_restore64(irq);
+		if (!claimed) { continue; }
+		if (process64_discard_prepared(&process) != 0) {
+			irq = platform_irq_save64();
+			process->reap_pending = 1;
+			platform_irq_restore64(irq);
+		}
+	}
 }
 
 int process64_exec_file(const char *path, const char *cmdline,
 	struct CONSOLE64 *console)
 {
-	char name[FD64_NAME_MAX];
-	struct PROCESS64_ARGS args;
-	struct PROCESS64 *process;
-	uintptr_t stack;
-	uintptr_t heap;
-	uintptr_t user_rsp;
-	uintptr_t argv;
-	struct TASK64 *task = NULL;
+	struct PROCESS64 *process = NULL;
+	struct TASK64 *task = task_now64();
+	uint64_t irq;
 	int status;
 
-	status = copy_program_name64(path, name, sizeof(name));
-	if (status != 0) {
-		return status;
-	}
-	status = parse_args64(cmdline != NULL ? cmdline : path, &args);
-	if (status != 0) {
-		return status;
-	}
-	process = process_alloc();
-	if (process == NULL) {
-		return -1;
-	}
-	process->state = PROCESS_LEGACY64;
-	status = elf64_load_process(name, process);
-	if (status != 0) {
-		/* -8은 "이미지 창을 다른 앱이 쓰는 중"이다. 콘솔이 여럿이면
-		   실제로 일어나므로 뭉개지 않고 그대로 올려보낸다. */
-		status = status == -8 ? -8 : -2;
-		goto cleanup;
-	}
-	stack = memman64_alloc_4k(&memman64, USER_STACK_SIZE);
-	if (stack == 0) {
-		status = -3;
-		goto cleanup;
-	}
-	process->stack.base = stack;
-	process->stack.size = USER_STACK_SIZE;
-#ifdef __aarch64__
-	process->stack_backing = stack;
-	process->stack.base = arch64_virt_to_phys(stack);
-#endif
-	heap = memman64_alloc_4k(&memman64, USER_HEAP_SIZE);
-	if (heap == 0) {
-		status = -3;
-		goto cleanup;
-	}
-	process->heap.base = heap;
-	process->heap.size = USER_HEAP_SIZE;
-#ifdef __aarch64__
-	process->heap_backing = heap;
-	process->heap.base = arch64_virt_to_phys(heap);
-#endif
-	process->heap_next = heap;
-#ifdef __aarch64__
-	process->heap_next = process->heap.base;
-#endif
-	process->console = console;
-	status = setup_args64(process, &args, &user_rsp, &argv);
-	if (status != 0) {
-		goto cleanup;
-	}
-#ifdef __aarch64__
-	/* Mapping can fail after publishing part of the shared translation tree. */
-	process->user_mappings = 1;
-	if (arch64_user_map_range(process->image.base, process->image.size, 1) != 0 ||
-			arch64_user_map_range(process->stack.base,
-			process->stack.size, 0) != 0 ||
-			arch64_user_map_range(process->heap.base,
-			process->heap.size, 0) != 0) {
-		status = -5;
-		goto cleanup;
-	}
-#endif
-	task = task_now64();
-	if (task == NULL) {
-		/* 프로세스 소유자는 태스크다. 태스크가 없으면 syscall이 자기
-		   프로세스를 찾을 수 없으므로 진입 자체를 막는다. */
-		status = -4;
-		goto cleanup;
-	}
+	if (task == NULL || task->process != NULL) { return -4; }
+	process_reap_pending64();
+	status = process64_prepare_file(path, cmdline, console, &process);
+	if (status != 0) { goto cleanup; }
+	irq = platform_irq_save64();
+	runtime_ready64 = 1;
 	task->process = process;
 	task->is_user = 1;
-	status = enter_user_mode64(process->entry, user_rsp,
-		args.argc, argv, GDT64_USER_CODE, GDT64_USER_DATA, &process->saved_kernel_rsp);
-	task->kernel_rsp = process->saved_kernel_rsp;
-	if (process->exited != 0) {
-		status = process->exit_status;
-	}
-
+	task->entry_stack_base = process->entry_storage.kernel_address;
+	task->entry_stack_size = process->entry_storage.size;
+	process->state = PROCESS_RUNNING64;
+	process64_switch_task64(task);
+	status = enter_user_mode64(process->entry, process->initial_rsp,
+		process->initial_argc, process->initial_argv, GDT64_USER_CODE,
+		GDT64_USER_DATA, &process->saved_kernel_rsp);
+	/* Assembly returns on the console stack, with IRQs still disabled. */
+	if (process->exited) { status = process->exit_status; }
+	task->process = NULL;
+	task->is_user = 0;
+	task->kernel_rsp = 0;
+	task->entry_stack_base = 0;
+	task->entry_stack_size = 0;
+	task->context.stack_pointer = 0;
+	process64_switch_task64(task);
+	process->state = PROCESS_REAP64;
+	platform_irq_restore64(irq);
+	console64_set_raw_con(process->console, 0);
+	memzero(process->files, sizeof(process->files));
 cleanup:
-	process_cleanup64(process, task);
+	if (process != NULL && process64_discard_prepared(&process) != 0) {
+		irq = platform_irq_save64();
+		process->reap_pending = 1;
+		platform_irq_restore64(irq);
+	}
 	return status;
 }
 
@@ -460,7 +407,8 @@ int process64_discard_prepared(struct PROCESS64 **result)
 	process->state = PROCESS_REAP64;
 	platform_irq_restore64(irq);
 	if (status != 0) { return status; }
-	status = user_backing_free64(&process->heap_storage);
+	status = user_backing_free64(&process->entry_storage);
+	if (status == 0) { status = user_backing_free64(&process->heap_storage); }
 	if (status == 0) { status = user_backing_free64(&process->stack_storage); }
 	if (status == 0) { status = user_backing_free64(&process->image_storage); }
 	if (status == 0) { status = user_backing_free64(&process->elf_snapshot); }
@@ -515,6 +463,8 @@ int process64_prepare_file(const char *path, const char *cmdline,
 		status = address_space_map64(process->space, process->heap.base,
 			process->heap_storage.physical, process->heap.size, USER_READ64 | USER_WRITE64);
 	}
+	if (status != 0) { goto failed; }
+	status = user_backing_alloc64(&process->entry_storage, PROCESS64_ENTRY_STACK_SIZE);
 	if (status != 0) { goto failed; }
 	irq = platform_irq_save64();
 	process->state = PROCESS_READY64;

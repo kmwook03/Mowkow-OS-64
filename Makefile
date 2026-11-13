@@ -67,6 +67,7 @@ help :
 	@echo "    make nano64-apps    GNU nano ELF 양 아키텍처 링크"
 	@echo "    make test64-qemu       QEMU IDE 회귀 검사"
 	@echo "    make test64-qemu-ahci  QEMU AHCI 회귀 검사"
+	@echo "    make test64-process[-ahci]  네 앱 동시 실행·문맥 복귀 검사"
 	@echo "    make test64-nano-storage[-ahci]  일회용 이미지 nano 저장 검증"
 	@echo ""
 	@echo "  그 밖에"
@@ -95,6 +96,16 @@ test64-qemu : $(IMG64_FILE)
 
 test64-qemu-ahci : $(IMG64_FILE)
 	$(PYTHON) $(TOOL64PATH)/app_regression64.py --image $(IMG64_FILE) --ahci
+
+# Four concurrent private processes, preemption and blocking syscall return.
+.PHONY : test64-process test64-process-ahci
+test64-process : $(IMG64_FILE)
+	$(PYTHON) $(TOOL64PATH)/process_regression64.py --image $(IMG64_FILE) \
+		$(if $(PROCESS_LOG64),--log $(PROCESS_LOG64))
+
+test64-process-ahci : $(IMG64_FILE)
+	$(PYTHON) $(TOOL64PATH)/process_regression64.py --image $(IMG64_FILE) --ahci \
+		$(if $(PROCESS_LOG64),--log $(PROCESS_LOG64))
 
 # Exercise the shipped editor on disposable images, including exact readback.
 .PHONY : test64-nano-storage test64-nano-storage-ahci

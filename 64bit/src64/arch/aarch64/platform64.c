@@ -58,7 +58,14 @@ int platform_task_sleep_current64(struct TASK64 *task)
 	while (task->flags == TASK64_FLAGS_SLEEP_PENDING) {
 		platform_halt_with_irq64();
 	}
+	platform_irq_disable64();
 	return 1;
+}
+
+void platform_process_stack64(uintptr_t top)
+{
+	/* SP_EL1 is selected by the entry/exception assembly, not from C. */
+	(void) top;
 }
 
 void platform_task_switch64(struct CONTEXT64 *old_context,

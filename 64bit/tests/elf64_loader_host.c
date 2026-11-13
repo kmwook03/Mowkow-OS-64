@@ -2,6 +2,8 @@
 #include <string.h>
 
 #include "../src64/kernel/elf64_loader.c"
+#include "elf_loader_fixture64.h"
+#include <arch/platform64.h>
 
 #define CHECK64(condition) do { \
 	if (!(condition)) { \
@@ -62,6 +64,17 @@ size_t fd64_read(struct FDHANDLE64 *fh, void *dst, size_t size)
 	return size;
 }
 
+int fd64_open_checked(struct FDHANDLE64 *fh, const char *name, unsigned int flags)
+{
+	(void) flags;
+	return fd64_open(fh, name) ? 0 : -1;
+}
+
+int64_t fd64_read_checked(struct FDHANDLE64 *fh, void *dst, size_t size)
+{
+	return (int64_t) fd64_read(fh, dst, size);
+}
+
 static struct ELF64_EHDR *header64(void)
 {
 	return (struct ELF64_EHDR *) fixture;
@@ -120,9 +133,8 @@ static int reject_fixture64(int expected)
 	struct PROCESS64 process = {0};
 	size_t available = memman64_total(&memman64);
 
-	CHECK64(elf64_load_process("fixture", &process) == expected);
+	CHECK64(load_fixture64("fixture", &process) == expected);
 	CHECK64(memman64_total(&memman64) == available);
-	CHECK64(image_owner == NULL);
 	CHECK64(process.entry == 0 && process.image.size == 0);
 	CHECK64(irq_depth == 0 && irq_errors == 0);
 	return 0;
@@ -130,33 +142,12 @@ static int reject_fixture64(int expected)
 
 static int test_ownership_cleanup64(void)
 {
-	struct PROCESS64 owner = {0};
-	struct PROCESS64 other = {0};
-	size_t available = memman64_total(&memman64);
-	uint32_t saves;
-
-	reset_fixture64();
-	fixture_open_failure = 1;
+	reset_fixture64(); fixture_open_failure = 1;
 	CHECK64(reject_fixture64(-1) == 0);
-	reset_fixture64();
-	fixture_size = sizeof allocation_pool + MEMMAN64_PAGE_SIZE;
-	CHECK64(reject_fixture64(-2) == 0);
-	reset_fixture64();
-	fixture_size = 0;
-	CHECK64(reject_fixture64(-2) == 0);
-	reset_fixture64();
-	image_owner = &owner;
-	CHECK64(elf64_load_process("fixture", &other) == -8);
-	CHECK64(image_owner == &owner);
-	CHECK64(memman64_total(&memman64) == available);
-	saves = irq_saves;
-	elf64_release_process(&other);
-	CHECK64(image_owner == &owner && irq_saves == saves + 1);
-	elf64_release_process(&owner);
-	CHECK64(image_owner == NULL);
-	elf64_release_process(&owner);
-	CHECK64(image_owner == NULL);
-	CHECK64(irq_depth == 0 && irq_errors == 0);
+	reset_fixture64(); fixture_size = sizeof allocation_pool + MEMMAN64_PAGE_SIZE;
+	CHECK64(reject_fixture64(-12) == 0);
+	reset_fixture64(); fixture_size = 0;
+	CHECK64(reject_fixture64(-4) == 0);
 	return 0;
 }
 

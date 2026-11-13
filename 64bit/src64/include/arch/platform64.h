@@ -30,6 +30,8 @@ void platform_framebuffer_sync64(void);
 int platform_task_context_init64(struct CONTEXT64 *context,
 	void (*entry)(void), uintptr_t stack_base, size_t stack_size);
 int platform_task_sleep_current64(struct TASK64 *task);
+/* Select the privilege-entry stack; zero restores the kernel fallback. */
+void platform_process_stack64(uintptr_t top);
 void platform_task_switch64(struct CONTEXT64 *old_context,
 	struct CONTEXT64 *new_context);
 

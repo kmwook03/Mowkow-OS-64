@@ -1,7 +1,3 @@
-#include <arch/platform64.h>
-#ifdef __aarch64__
-#include <arch/arch64.h>
-#endif
 #include <elf64_loader.h>
 #include <fd64.h>
 #include <memory64.h>
@@ -78,16 +74,6 @@ static void copy_bytes(void *dst, const void *src, size_t size)
 	s = (const uint8_t *) src;
 	while (size-- > 0) {
 		*d++ = *s++;
-	}
-}
-
-static void zero_bytes(void *dst, size_t size)
-{
-	uint8_t *d;
-
-	d = (uint8_t *) dst;
-	while (size-- > 0) {
-		*d++ = 0;
 	}
 }
 
@@ -191,113 +177,6 @@ static int image_range64(const uint8_t *file, size_t file_size,
 	}
 	/* Empty PT_LOAD entries cannot establish an image or a usable entry. */
 	return *low < *high && executable_entry ? 0 : -6;
-}
-
-/* 이미지 창 [USER_IMAGE_MIN, USER_IMAGE_MAX)는 풀 밖에 예약된 고정 구간이라
-   (memory64.h) 한 번에 프로세스 하나만 담을 수 있다. 페이징 격리가 없는 동안은
-   앱 실행을 시스템 전체에서 직렬화한다 -- 콘솔이 여러 개여도 마찬가지다. */
-static struct PROCESS64 *image_owner;
-
-/* 이미지 창 하나. 앱을 동시에 돌려야 하면 프로세스별 페이징. */
-void elf64_release_process(struct PROCESS64 *process)
-{
-	uint64_t flags = platform_irq_save64();
-
-	if (image_owner == process) {
-		image_owner = NULL;
-	}
-	platform_irq_restore64(flags);
-}
-
-int elf64_load_process(const char *path, struct PROCESS64 *process)
-{
-	struct FDHANDLE64 fh;
-	uint8_t *file = NULL;
-	size_t file_size = 0;
-	size_t read_size;
-	const struct ELF64_EHDR *ehdr;
-	const struct ELF64_PHDR *phdr;
-	uint16_t i;
-	uintptr_t low;
-	uintptr_t high;
-	uintptr_t image_base;
-	uintptr_t image_end;
-	size_t image_size;
-	uint64_t flags;
-	int status = -1;
-
-	flags = platform_irq_save64();
-	if (image_owner != NULL) {
-		platform_irq_restore64(flags);
-		return -8;
-	}
-	image_owner = process;
-	platform_irq_restore64(flags);
-
-	if (fd64_open(&fh, path) == 0) {
-		goto cleanup;
-	}
-	file_size = fh.info.size;
-	file = (uint8_t *) memman64_alloc_4k(&memman64, file_size);
-	if (file == NULL) {
-		status = -2;
-		goto cleanup;
-	}
-	read_size = fd64_read(&fh, file, file_size);
-	if (read_size != file_size) {
-		status = -3;
-		goto cleanup;
-	}
-	ehdr = (const struct ELF64_EHDR *) file;
-	if (valid_header(ehdr, file_size) == 0) {
-		status = -4;
-		goto cleanup;
-	}
-	status = image_range64(file, file_size, &low, &high);
-	if (status != 0) {
-		goto cleanup;
-	}
-	/* The image window is outside memman64's pool; image_owner serializes use. */
-	if (align_down_checked64(low, MEMMAN64_PAGE_SIZE, &image_base) != 0 ||
-		align_up_checked64(high, MEMMAN64_PAGE_SIZE, &image_end) != 0 ||
-		image_end > USER_IMAGE_MAX || image_base >= image_end) {
-		status = -5;
-		goto cleanup;
-	}
-	image_size = (size_t) (image_end - image_base);
-#ifdef __aarch64__
-	zero_bytes((void *) arch64_phys_to_virt(image_base), image_size);
-#else
-	zero_bytes((void *) image_base, image_size);
-#endif
-	phdr = (const struct ELF64_PHDR *) (file + ehdr->e_phoff);
-	for (i = 0; i < ehdr->e_phnum; i++) {
-		if (phdr[i].p_type == PT_LOAD) {
-#ifdef __aarch64__
-			copy_bytes((void *) arch64_phys_to_virt(
-				(uintptr_t) phdr[i].p_vaddr), file + phdr[i].p_offset,
-				(size_t) phdr[i].p_filesz);
-#else
-			copy_bytes((void *) (uintptr_t) phdr[i].p_vaddr, file + phdr[i].p_offset,
-				(size_t) phdr[i].p_filesz);
-#endif
-		}
-	}
-#ifdef __aarch64__
-	arch64_sync_user_code(image_base, image_size);
-#endif
-	process->entry = (uintptr_t) ehdr->e_entry;
-	process->image.base = image_base;
-	process->image.size = image_size;
-
-cleanup:
-	if (file != NULL) {
-		(void) memman64_free_4k(&memman64, (uintptr_t) file, file_size);
-	}
-	if (status != 0) {
-		elf64_release_process(process);
-	}
-	return status;
 }
 
 /* All headers and page permission unions were validated before allocation. */

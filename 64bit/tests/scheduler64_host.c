@@ -1,4 +1,5 @@
 #include <arch/platform64.h>
+#include <assert.h>
 #include <memory64.h>
 #include <mtask64.h>
 #include <stddef.h>
@@ -65,6 +66,7 @@ int platform_task_context_init64(struct CONTEXT64 *context,
 
 int platform_task_sleep_current64(struct TASK64 *task)
 {
+	assert(irq_enabled == 0);
 	if (wake_during_sleep != 0) {
 		CHECK64(task_run64(task, -1, 0) == 0);
 		return 1;
@@ -75,6 +77,7 @@ int platform_task_sleep_current64(struct TASK64 *task)
 void platform_task_switch64(struct CONTEXT64 *old_context,
 	struct CONTEXT64 *new_context)
 {
+	assert(irq_enabled == 0);
 	(void) old_context;
 	(void) new_context;
 	context_switches++;
@@ -153,6 +156,18 @@ static int test_stack_contract64(void)
 	CHECK64(task_stack_check64(task, &used) == 0 && used == 128U);
 	bytes[task->stack_usable_size - 64U] = 0;
 	CHECK64(task_stack_check64(task, &used) == 0 && used == 128U);
+	uintptr_t saved_sp = task->context.stack_pointer;
+
+	task->entry_stack_base = 0x100000;
+	task->entry_stack_size = 0x10000;
+	task->context.stack_pointer = 0x10fff0;
+	CHECK64(task_stack_check64(task, &used) == 0);
+	task->context.stack_pointer = 0x110001;
+	CHECK64(task_stack_check64(task, &used) == TASK64_ERR_INVALID);
+	task->entry_stack_base = UINTPTR_MAX - 0x100;
+	CHECK64(task_stack_check64(task, &used) == TASK64_ERR_INVALID);
+	task->entry_stack_base = task->entry_stack_size = 0;
+	task->context.stack_pointer = saved_sp;
 	guard = ((uint8_t *) stack)[0];
 	((uint8_t *) stack)[0] ^= 1U;
 	CHECK64(task_stack_check64(task, &used) == TASK64_ERR_INVALID);
@@ -215,6 +230,9 @@ static int test_entry_and_kill64(void)
 	CHECK64(task->flags == TASK64_FLAGS_RUNNING);
 	CHECK64(task_sleep64(task) == 0);
 	CHECK64(task->flags == TASK64_FLAGS_ALLOCATED);
+	task->process = task; /* An attached process owns resources beyond the task stack. */
+	CHECK64(task_kill64(task) == TASK64_ERR_INVALID);
+	task->process = NULL;
 	CHECK64(task_kill64(task) == 0);
 	CHECK64(task->flags == TASK64_FLAGS_UNUSED);
 	CHECK64(memman64_total(&memman64) == free_before);

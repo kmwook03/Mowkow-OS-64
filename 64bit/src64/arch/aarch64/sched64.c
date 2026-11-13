@@ -3,6 +3,7 @@
 #include <arch/exception_frame64.h>
 #include <memory64.h>
 #include <mtask64.h>
+#include <process64.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -169,10 +170,17 @@ uintptr_t arch64_scheduler_tick(uintptr_t frame)
 			scheduler_ticks % SCHEDULER_QUANTUM_TICKS != 0) {
 		return frame;
 	}
+	__asm__ volatile ("mrs %0, tpidr_el0" : "=r" (current->context.thread_pointer));
+	__asm__ volatile ("mrs %0, tpidrro_el0" :
+		"=r" (current->context.readonly_thread_pointer));
 	next = task_switch_prepare64();
 	if (next == NULL || next->context.stack_pointer == 0) {
 		return frame;
 	}
+	process64_switch_task64(next);
+	__asm__ volatile ("msr tpidr_el0, %0" :: "r" (next->context.thread_pointer));
+	__asm__ volatile ("msr tpidrro_el0, %0" ::
+		"r" (next->context.readonly_thread_pointer));
 	return next->context.stack_pointer;
 }
 

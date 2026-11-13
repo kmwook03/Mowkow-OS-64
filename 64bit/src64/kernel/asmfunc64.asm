@@ -17,6 +17,7 @@ global load_idtr64
 global load_tr64
 global reload_segments64
 global context_switch64
+global task_start64
 global asm_exception_default
 global asm_exception00
 global asm_exception01
@@ -65,6 +66,7 @@ extern irq_handler64
 extern syscall_handler64
 extern process64_current_exit_rsp
 extern process64_current_exit_status
+extern process64_entry_stack_top
 
 section .text
 ; copy_kernel(loader64.asm)은 디스크에서 늘 KERNEL_SECTORS*512바이트를 통째로 옮긴다.
@@ -180,8 +182,15 @@ context_switch64:
 	push r13
 	push r14
 	push r15
+	mov rbx, rsp
+	sub rsp, 520
+	and rsp, -16
+	fxsave64 [rsp]
+	mov [rsp + 512], rbx
 	mov [rdi], rsp
 	mov rsp, [rsi]
+	fxrstor64 [rsp]
+	mov rsp, [rsp + 512]
 	pop r15
 	pop r14
 	pop r13
@@ -189,6 +198,16 @@ context_switch64:
 	pop rbp
 	pop rbx
 	ret
+
+; Fresh kernel tasks have no suspended IRQ-restore caller.
+task_start64:
+	sti
+	sub rsp, 8
+	call r12
+	cli
+.halt:
+	hlt
+	jmp .halt
 
 asm_exception_default:
 	iretq
@@ -255,7 +274,7 @@ asm_syscall80:
 	push qword 0x80
 	jmp syscall_common
 
-exception_common:
+%macro SAVE_REGS64 0
 	push rax
 	push rbx
 	push rcx
@@ -271,21 +290,30 @@ exception_common:
 	push r13
 	push r14
 	push r15
-
+	cld
 	mov ax, KERNEL_DATA_SEL
 	mov ds, ax
 	mov es, ax
-
-	; 커널 예외는 임의의 명령 경계에서 들어오므로 C ABI 정렬을 다시 맞춘다.
-	; rbx 원래 값은 이미 프레임에 저장했고 C 호출 규약도 rbx를 보존한다.
-	mov rdi, rsp
+	; Preserve FP before any C, and give the kernel a clean control environment.
 	mov rbx, rsp
 	and rsp, -16
-	call exception_handler64
-	mov rsp, rbx
-	cmp rax, 1
-	je syscall_exit_to_kernel
+	sub rsp, 512
+	fxsave64 [rsp]
+	fxrstor64 [rel clean_fp64]
+	mov rdi, rbx
+%endmacro
 
+%macro RESTORE_REGS64 0
+	fxrstor64 [rsp]
+	mov rsp, rbx
+	; The kernel also uses flat segments. Restore a user selector only for CPL3.
+	mov ax, KERNEL_DATA_SEL
+	test byte [rsp + 144], 3
+	jz %%segments
+	mov ax, USER_DATA_SEL
+%%segments:
+	mov ds, ax
+	mov es, ax
 	pop r15
 	pop r14
 	pop r13
@@ -303,104 +331,37 @@ exception_common:
 	pop rax
 	add rsp, 16
 	iretq
+%endmacro
+
+exception_common:
+	SAVE_REGS64
+	call exception_handler64
+	cmp rax, 1
+	je syscall_exit_to_kernel
+	RESTORE_REGS64
 
 irq_common:
-	push rax
-	push rbx
-	push rcx
-	push rdx
-	push rbp
-	push rsi
-	push rdi
-	push r8
-	push r9
-	push r10
-	push r11
-	push r12
-	push r13
-	push r14
-	push r15
-
-	mov rdi, rsp
+	SAVE_REGS64
 	call irq_handler64
-
-	pop r15
-	pop r14
-	pop r13
-	pop r12
-	pop r11
-	pop r10
-	pop r9
-	pop r8
-	pop rdi
-	pop rsi
-	pop rbp
-	pop rdx
-	pop rcx
-	pop rbx
-	pop rax
-	add rsp, 16
-	iretq
+	RESTORE_REGS64
 
 syscall_common:
-	push rax
-	push rbx
-	push rcx
-	push rdx
-	push rbp
-	push rsi
-	push rdi
-	push r8
-	push r9
-	push r10
-	push r11
-	push r12
-	push r13
-	push r14
-	push r15
-
-	mov ax, KERNEL_DATA_SEL
-	mov ds, ax
-	mov es, ax
-
-	mov rdi, rsp
+	SAVE_REGS64
+	; Blocking and preemption use this process's own entry stack.
+	sti
 	call syscall_handler64
+	cli
 	cmp rax, 1
 	je syscall_exit_to_kernel
-
-	; rax를 꺼내기 전에 유저 데이터 셀렉터를 되돌린다. 순서를 바꾸면 모든
-	; 시스템 콜 반환값의 아래 16비트가 0x2b로 덮인다.
-	mov ax, USER_DATA_SEL
-	mov ds, ax
-	mov es, ax
-
-	pop r15
-	pop r14
-	pop r13
-	pop r12
-	pop r11
-	pop r10
-	pop r9
-	pop r8
-	pop rdi
-	pop rsi
-	pop rbp
-	pop rdx
-	pop rcx
-	pop rbx
-	pop rax
-	add rsp, 16
-	iretq
+	RESTORE_REGS64
 
 syscall_exit_to_kernel:
 	call process64_current_exit_rsp
-	push rax
+	mov r12, rax
 	call process64_current_exit_status
 	mov esi, eax
-	pop rdi
-	mov rsp, rdi
-	mov eax, esi
-	ret
+	mov rdi, r12
+	jmp leave_user_mode64
 
 enter_user_mode64:
 	mov r10, [rsp + 8]
@@ -411,39 +372,81 @@ enter_user_mode64:
 	push r13
 	push r14
 	push r15
+	mov rbx, rsp
+	mov r12, rdi
+	mov r13, rsi
+	mov r14, rdx
+	mov r15, rcx
+	sub rsp, 520
+	and rsp, -16
+	fxsave64 [rsp]
+	mov [rsp + 512], rbx
 	lea r11, [rel .kernel_resume]
 	push r11
 	mov [r10], rsp
-	mov rax, rdi
-	mov r11, rsi
-	mov rdi, rdx
-	mov rsi, rcx
-	mov dx, r9w
-	mov ds, dx
-	mov es, dx
-	push r9
-	push r11
-	pushfq
-	pop rcx
-	or rcx, 0x200
-	push rcx
-	push r8
-	push rax
+	sub rsp, 8
+	call process64_entry_stack_top
+	mov rsp, rax
+	push qword USER_DATA_SEL
+	push r13
+	push qword 0x202
+	push qword 0x33
+	push r12
+	fxrstor64 [rel clean_fp64]
+	mov ax, USER_DATA_SEL
+	mov ds, ax
+	mov es, ax
+	mov fs, ax
+	mov gs, ax
+	mov rdi, r14
+	mov rsi, r15
+	xor eax, eax
+	xor ebx, ebx
+	xor ecx, ecx
+	xor edx, edx
+	xor ebp, ebp
+	xor r8d, r8d
+	xor r9d, r9d
+	xor r10d, r10d
+	xor r11d, r11d
+	xor r12d, r12d
+	xor r13d, r13d
+	xor r14d, r14d
+	xor r15d, r15d
 	iretq
 .kernel_resume:
+	fxrstor64 [rsp]
+	mov rsp, [rsp + 512]
 	pop r15
 	pop r14
 	pop r13
 	pop r12
 	pop rbp
 	pop rbx
-	sti
+	; The C owner restores its IRQ token after switching back to the kernel root.
 	ret
 
 leave_user_mode64:
+	cli
+	cld
+	mov ax, KERNEL_DATA_SEL
+	mov ds, ax
+	mov es, ax
 	mov rsp, rdi
 	mov eax, esi
 	ret
+
+section .rodata
+align 16
+clean_fp64:
+	dw 0x037f
+	times 22 db 0
+	dd 0x1f80
+	dd 0
+	times 480 db 0
+%if ($ - clean_fp64) != 512
+	%error "FXSAVE image size"
+%endif
 
 section .bss
 align 16

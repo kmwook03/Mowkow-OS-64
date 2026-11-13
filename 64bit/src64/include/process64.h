@@ -14,6 +14,7 @@
 #define PROCESS64_ERR_INVALID (-22)
 #define PROCESS64_ERR_STACK (-34)
 #define PROCESS64_EXIT_FAULT_BASE 128
+#define PROCESS64_ENTRY_STACK_SIZE 65536U
 
 struct PROCESS64_RANGE {
 	uintptr_t base;
@@ -26,10 +27,11 @@ struct PROCESS64_FILE {
 };
 
 struct CONSOLE64;
+struct TASK64;
 
 enum PROCESS_STATE64 {
 	PROCESS_FREE64, PROCESS_LOADING64, PROCESS_READY64,
-	PROCESS_LEGACY64, PROCESS_REAP64
+	PROCESS_RUNNING64, PROCESS_REAP64
 };
 
 struct PROCESS64 {
@@ -39,6 +41,8 @@ struct PROCESS64 {
 	struct USER_BACKING64 stack_storage;
 	struct USER_BACKING64 heap_storage;
 	struct USER_BACKING64 elf_snapshot;
+	struct USER_BACKING64 entry_storage;
+	int reap_pending;
 	uintptr_t initial_rsp;
 	uintptr_t initial_argv;
 	size_t initial_argc;
@@ -50,8 +54,6 @@ struct PROCESS64 {
 	uintptr_t stack_backing;
 	uintptr_t heap_backing;
 	uintptr_t heap_next;
-	/* Set before the first mapping attempt, including partial failure. */
-	int user_mappings;
 	uintptr_t saved_kernel_rsp;
 	int exited;
 	int exit_status;
@@ -67,18 +69,23 @@ int process64_exec_file(const char *path, const char *cmdline,
 	struct CONSOLE64 *console);
 /* Prepare only: no root switch, task attachment, or user execution. One task
  * owns each handle. *result starts NULL; a non-NULL result on failure retains
- * resources and must be discarded again. READY is not yet runnable before M3.
+ * resources and must be discarded again.
  */
 int process64_prepare_file(const char *path, const char *cmdline,
 	struct CONSOLE64 *console, struct PROCESS64 **result);
 /* Inactive prepared processes only; failed frees retain the handle and slot. */
 int process64_discard_prepared(struct PROCESS64 **process);
+/* IRQ-off scheduler/entry boundary. No allocation or sleeping. */
+void process64_switch_task64(const struct TASK64 *task);
+uintptr_t process64_entry_stack_top(void);
 struct PROCESS64 *process64_current(void);
 /* Requires a current process and a non-NULL pointer. The whole buffer must fit
    one nonempty image/stack/heap range with nonzero base and valid end.
-   Ranges are not joined.
+   Ranges are not joined; nonempty ranges also require readable mapped pages.
    For size 0, the pointer must be within such a range or at its end. */
 int process64_user_range_valid(const void *ptr, size_t size);
+/* Same range contract, requiring writable leaves for kernel output. */
+int process64_user_write_valid(void *ptr, size_t size);
 /* Mark termination from SYS_EXIT or a user fault. Release terminal/files and
    memory after returning to exec's kernel frame, not from the exception frame. */
 void process64_exit_current(int status);

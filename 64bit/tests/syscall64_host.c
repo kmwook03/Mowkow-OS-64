@@ -81,6 +81,12 @@ int process64_user_range_valid(const void *ptr, size_t size)
 		size <= user_limit - (p - base);
 }
 
+int process64_user_write_valid(void *ptr, size_t size)
+{
+	return process64_user_range_valid(ptr, size);
+}
+
+
 static void capture_name64(char *dst, const char *name)
 {
 	size_t i;
