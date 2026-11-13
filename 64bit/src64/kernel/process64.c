@@ -141,6 +141,23 @@ int process64_user_write_valid(void *ptr, size_t size)
 	return process_user_access64(ptr, size, USER_WRITE64);
 }
 
+void *process64_io_buffer(size_t size)
+{
+	struct PROCESS64 *process = process64_current();
+	uintptr_t rounded;
+
+	if (process == NULL || size > USER_IMAGE_END64 - USER_IMAGE_BASE64) { return NULL; }
+	if (size == 0) { return &process->io_empty; }
+	if (!process->io_ready || size > process->io_storage.size) {
+		if (align_up_checked64(size, USER_PAGE_SIZE64, &rounded) != 0 ||
+			user_backing_free64(&process->io_storage) != 0) { return NULL; }
+		process->io_ready = 0;
+		if (user_backing_alloc64(&process->io_storage, rounded) != 0) { return NULL; }
+		process->io_ready = 1;
+	}
+	return (void *) process->io_storage.kernel_address;
+}
+
 void process64_exit_current(int status)
 {
 	struct PROCESS64 *process = process64_current();
@@ -407,7 +424,8 @@ int process64_discard_prepared(struct PROCESS64 **result)
 	process->state = PROCESS_REAP64;
 	platform_irq_restore64(irq);
 	if (status != 0) { return status; }
-	status = user_backing_free64(&process->entry_storage);
+	status = user_backing_free64(&process->io_storage);
+	if (status == 0) { status = user_backing_free64(&process->entry_storage); }
 	if (status == 0) { status = user_backing_free64(&process->heap_storage); }
 	if (status == 0) { status = user_backing_free64(&process->stack_storage); }
 	if (status == 0) { status = user_backing_free64(&process->image_storage); }

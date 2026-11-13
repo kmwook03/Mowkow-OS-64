@@ -42,6 +42,10 @@ struct PROCESS64 {
 	struct USER_BACKING64 heap_storage;
 	struct USER_BACKING64 elf_snapshot;
 	struct USER_BACKING64 entry_storage;
+	/* Supervisor-only syscall snapshot, retained for reuse until teardown. */
+	struct USER_BACKING64 io_storage;
+	int io_ready;
+	uint8_t io_empty;
 	int reap_pending;
 	uintptr_t initial_rsp;
 	uintptr_t initial_argv;
@@ -79,6 +83,11 @@ int process64_discard_prepared(struct PROCESS64 **process);
 void process64_switch_task64(const struct TASK64 *task);
 uintptr_t process64_entry_stack_top(void);
 struct PROCESS64 *process64_current(void);
+/* Current task only, no nested use. Lazily grows a supervisor-only I/O buffer
+ * up to the largest user range. Failed frees retain ownership; return NULL.
+ * Size zero returns a valid kernel address without allocating.
+ */
+void *process64_io_buffer(size_t size);
 /* Requires a current process and a non-NULL pointer. The whole buffer must fit
    one nonempty image/stack/heap range with nonzero base and valid end.
    Ranges are not joined; nonempty ranges also require readable mapped pages.

@@ -29,6 +29,7 @@ A64_BOOT_STAGE_SPECS = config.txt=$(A64_PI5_CONFIG) \
 	CAT.ELF=$(A64_APP_BUILD_DIR)/cat.elf \
 	KTEST.ELF=$(A64_APP_BUILD_DIR)/ktest.elf \
 	ISOTEST.ELF=$(A64_APP_BUILD_DIR)/isotest.elf \
+	FAULTTEST.ELF=$(A64_APP_BUILD_DIR)/faulttest.elf \
 	MTEST.ELF=$(A64_APP_BUILD_DIR)/mtest.elf \
 	WTEST.ELF=$(A64_APP_BUILD_DIR)/wtest.elf \
 	나노.ELF=$(A64_APP_BUILD_DIR)/나노.elf \

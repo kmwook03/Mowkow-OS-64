@@ -97,7 +97,7 @@ test64-qemu : $(IMG64_FILE)
 test64-qemu-ahci : $(IMG64_FILE)
 	$(PYTHON) $(TOOL64PATH)/app_regression64.py --image $(IMG64_FILE) --ahci
 
-# Four concurrent private processes, preemption and blocking syscall return.
+# Concurrent private processes, user-copy boundaries and isolated protection faults.
 .PHONY : test64-process test64-process-ahci
 test64-process : $(IMG64_FILE)
 	$(PYTHON) $(TOOL64PATH)/process_regression64.py --image $(IMG64_FILE) \

@@ -4,8 +4,8 @@
  * x86은 int 0x80 프레임을 사용한다. AArch64의 SVC 경계도 x8과 x0-x5를
  * 같은 프레임으로 변환한다. syscall 번호·레지스터 규약·음수 오류는 유지한다.
  *
- * 유저가 준 포인터는 반드시 process64_user_range_valid로 확인한 뒤에 쓴다.
- * Page permissions are checked before direct access; roots follow blocked tasks.
+ * User buffers are preflighted directionally and copied through supervisor
+ * aliases. Filesystem/console operations receive only kernel-owned snapshots.
  */
 #include <console64.h>
 #ifdef __aarch64__
@@ -20,39 +20,7 @@
 #include <syscall64.h>
 #include <timer64.h>
 #include <utf864.h>
-
-/* Return the copied length excluding NUL, or a negative errno. Never reread a
-   user byte after copying it; parsing must use only the kernel snapshot. */
-static int64_t copy_string_from_user64(char *dst, size_t capacity, const char *src)
-{
-	uintptr_t base = (uintptr_t) src;
-	size_t i;
-	char byte;
-	int error = -36;
-
-	if (dst == NULL || capacity == 0 || capacity > INT64_MAX) {
-		return -22;
-	}
-	dst[0] = '\0';
-	if (src == NULL) {
-		return -14;
-	}
-	for (i = 0; i < capacity; i++) {
-		/* Check the growing prefix before address arithmetic or dereference. */
-		if (i >= UINTPTR_MAX - base ||
-			process64_user_range_valid(src, i + 1) == 0) {
-			error = -14;
-			break;
-		}
-		byte = *(const char *) (base + i);
-		dst[i] = byte;
-		if (byte == '\0') {
-			return (int64_t) i;
-		}
-	}
-	dst[0] = '\0';
-	return error;
-}
+#include <user_access64.h>
 
 /* Filenames reject malformed UTF; display callers may use the replacement. */
 static int validate_filename_utf864(const char *name, size_t length)
@@ -114,33 +82,47 @@ static int64_t syscall_write64(struct PROCESS64 *process, uint64_t fd,
 	const void *buffer, uint64_t size)
 {
 	struct FDHANDLE64 *fh;
+	void *snapshot;
 
 	if (size > INT64_MAX ||
-		process64_user_range_valid(buffer, (size_t) size) == 0) {
+		!process64_user_range_valid(buffer, (size_t) size)) { return -1; }
+	fh = syscall_file64(process, fd);
+	if (fh == NULL && !((fd == 1 || fd == 2) && process->console != NULL)) { return -1; }
+	snapshot = process64_io_buffer((size_t) size);
+	if (snapshot == NULL || copy_from_user64(snapshot, buffer, (size_t) size) != 0) {
 		return -1;
 	}
-	if ((fd == 1 || fd == 2) && process->console != NULL) {
-		console64_write_con(process->console, buffer, size);
+	if (fd == 1 || fd == 2) {
+		console64_write_con(process->console, snapshot, size);
 		return (int64_t) size;
 	}
-	fh = syscall_file64(process, fd);
-	return fh != NULL ? (int64_t) fd64_write(fh, buffer, (size_t) size) : -1;
+	return (int64_t) fd64_write(fh, snapshot, (size_t) size);
 }
 
+/* Preserve one backend call, partial counts and negative errors. In particular,
+ * do not split cooked input, UTF display runs or checked reads into chunks.
+ * Failed checked reads publish no bytes; their file position may have advanced.
+ */
 static int64_t syscall_read64(struct PROCESS64 *process, uint64_t fd,
-	void *buffer, uint64_t size)
+	void *buffer, uint64_t size, int checked)
 {
-	struct FDHANDLE64 *fh;
+	struct FDHANDLE64 *fh = syscall_file64(process, fd);
+	void *snapshot;
+	int64_t result;
 
-	if (size > INT64_MAX ||
-		process64_user_write_valid(buffer, (size_t) size) == 0) {
-		return -1;
-	}
-	if (fd == 0 && process->console != NULL) {
-		return (int64_t) console64_read_con(process->console, buffer, size);
-	}
-	fh = syscall_file64(process, fd);
-	return fh != NULL ? (int64_t) fd64_read(fh, buffer, (size_t) size) : -1;
+	if (checked && fh == NULL) { return -9; }
+	if (size > INT64_MAX) { return checked ? -22 : -1; }
+	if (!process64_user_write_valid(buffer, (size_t) size)) { return checked ? -14 : -1; }
+	if (fh == NULL && !(fd == 0 && process->console != NULL)) { return -1; }
+	snapshot = process64_io_buffer((size_t) size);
+	if (snapshot == NULL) { return checked ? -12 : -1; }
+	if (checked) { result = fd64_read_checked(fh, snapshot, (size_t) size); }
+	else if (fd == 0) { result = (int64_t) console64_read_con(process->console, snapshot, size); }
+	else { result = (int64_t) fd64_read(fh, snapshot, (size_t) size); }
+	if (result < 0) { return result; }
+	if ((uint64_t) result > size) { return -5; }
+	if (copy_to_user64(buffer, snapshot, (size_t) result) != 0) { return checked ? -14 : -1; }
+	return result;
 }
 
 static int syscall_seek64(struct PROCESS64 *process, uint64_t fd,
@@ -184,7 +166,7 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 		}
 		if (operation == FILE_STAT64) {
 			status = fd64_stat_checked(NULL, name, &info);
-			if (status == 0) { memcpy((void *) arg1, &info, sizeof(info)); }
+			if (status == 0) { status = copy_to_user64((void *) arg1, &info, sizeof(info)); }
 			return status;
 		}
 		for (size_t i = 3; i < PROCESS64_MAX_FILES; i++) {
@@ -203,9 +185,7 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 	fh = syscall_file64(process, arg0);
 	if (fh == NULL) { return -9; }
 	if (operation == FILE_READ64) {
-		if (arg2 > INT64_MAX) { return -22; }
-		if (!process64_user_write_valid((void *) arg1, (size_t) arg2)) { return -14; }
-		return fd64_read_checked(fh, (void *) arg1, (size_t) arg2);
+		return syscall_read64(process, arg0, (void *) arg1, arg2, 1);
 	}
 	if (arg2 != 0) { return -22; }
 	if (operation == FILE_SYNC64) {
@@ -214,7 +194,7 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 	}
 	if (!process64_user_write_valid((void *) arg1, sizeof(info))) { return -14; }
 	status = fd64_stat_checked(fh, NULL, &info);
-	if (status == 0) { memcpy((void *) arg1, &info, sizeof(info)); }
+	if (status == 0) { status = copy_to_user64((void *) arg1, &info, sizeof(info)); }
 	return status;
 }
 
@@ -351,7 +331,7 @@ uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame)
 		frame->rax = (uint64_t) syscall_write64(process, a0, (const void *) a1, a2);
 		break;
 	case SYS_READ:
-		frame->rax = (uint64_t) syscall_read64(process, a0, (void *) a1, a2);
+		frame->rax = (uint64_t) syscall_read64(process, a0, (void *) a1, a2, 0);
 		break;
 	case SYS_OPEN:
 		frame->rax = (uint64_t) syscall_open64(process, (const char *) a0, a1);

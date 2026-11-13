@@ -232,9 +232,11 @@ int main(int argc, char **argv)
 	unsigned char *heap;
 	unsigned long id, start, duration;
 	int failed = 0;
+	int live = argc == 3 && strcmp(argv[2], "live") == 0;
+	unsigned long heartbeat;
 
 	if (argc < 2 || argc > 3 || argv[1][0] < '1' || argv[1][0] > '4' || argv[1][1]) {
-		puts("isotest: use ID 1..4 and optional short/fault");
+		puts("isotest: use ID 1..4 and optional short/fault/live");
 		return 1;
 	}
 	id = (unsigned long) (argv[1][0] - '0');
@@ -254,6 +256,7 @@ int main(int argc, char **argv)
 	}
 	duration = argc == 3 && strcmp(argv[2], "short") == 0 ? 100 : 3000;
 	start = ticks();
+	heartbeat = start;
 	do {
 		failed |= context_probe64(id, 0);
 		if (image_cookie64 != 0x12345678UL + id) { failed = 1; }
@@ -263,7 +266,11 @@ int main(int argc, char **argv)
 		for (size_t i = 0; i < 16384; i++) {
 			if (heap[i] != (unsigned char) (id + i)) { failed = 1; }
 		}
-	} while (!failed && ticks() - start < duration);
+		if (live && ticks() - heartbeat >= 200) {
+			report64(id, failed ? "FAIL live" : "LIVE");
+			heartbeat = ticks();
+		}
+	} while (!failed && (live || ticks() - start < duration));
 	if (!failed) {
 		report64(id, "WAIT");
 		failed |= context_probe64(id, 1);

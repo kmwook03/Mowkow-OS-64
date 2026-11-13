@@ -17,6 +17,13 @@
 
 #include <file_api64.h>
 
+/* Read/write buffers are preflighted in their access direction before I/O.
+ * Kernel snapshots preserve one backend call, EOF and partial counts. Invalid
+ * legacy pointers or unavailable snapshot memory return -1. Checked SYS_FILE
+ * reports -14/-12 respectively; a failed read publishes no copied prefix.
+ * Zero sizes still require a non-NULL pointer in a declared range or at its end.
+ */
+
 /* SYS_OPEN accepts only these two bits; 0 opens an existing file for I/O.
    Names are copied into a FD64_NAME_MAX-byte kernel buffer including NUL and
    checked for well-formed UTF-8 before filesystem access. Bad input returns -1. */

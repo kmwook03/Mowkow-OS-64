@@ -54,6 +54,8 @@ static uint32_t last_cols;
 static uint8_t last_fg;
 static uint8_t last_bg;
 static size_t user_limit;
+static int readonly64, io_failure64;
+static unsigned char snapshot64[512];
 static int mutate_user_name;
 static int name_error;
 static char opened_name[FD64_NAME_MAX];
@@ -83,7 +85,21 @@ int process64_user_range_valid(const void *ptr, size_t size)
 
 int process64_user_write_valid(void *ptr, size_t size)
 {
-	return process64_user_range_valid(ptr, size);
+	return !readonly64 && process64_user_range_valid(ptr, size);
+}
+
+int address_space_query64(const struct ADDRESS_SPACE64 *space, uintptr_t address,
+	struct USER_PAGE64 *page)
+{
+	(void) space;
+	if (!process64_user_range_valid((void *) address, 1)) { return -14; }
+	page->kernel_address = address;
+	return 0;
+}
+
+void *process64_io_buffer(size_t size)
+{
+	return io_failure64 || size > sizeof(snapshot64) ? NULL : snapshot64;
 }
 
 
@@ -139,7 +155,8 @@ int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size)
 size_t fd64_read(struct FDHANDLE64 *fh, void *dst, size_t size)
 {
 	(void) fh;
-	(void) dst;
+	if ((void *) dst != snapshot64) { abi_error = 1; }
+	memset(dst, 0x6b, io_result < size ? io_result : size);
 	read_calls++;
 	return io_result < size ? io_result : size;
 }
@@ -147,7 +164,7 @@ size_t fd64_read(struct FDHANDLE64 *fh, void *dst, size_t size)
 size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
 {
 	(void) fh;
-	(void) src;
+	if ((const void *) src != snapshot64) { abi_error = 1; }
 	write_calls++;
 	return io_result < size ? io_result : size;
 }
@@ -179,14 +196,16 @@ int fd64_open_checked(struct FDHANDLE64 *fh, const char *name, unsigned int flag
 }
 int64_t fd64_read_checked(struct FDHANDLE64 *fh, void *dst, size_t size)
 {
-	(void) fh; (void) dst; (void) size;
+	(void) fh;
+	if ((void *) dst != snapshot64) { abi_error = 1; }
+	memset(dst, 0x7c, size);
 	checked_calls64++; return checked_error64 ? checked_error64 : 7;
 }
 int fd64_sync(void) { sync_calls64++; return checked_error64 ? -1 : 3; }
 
 void console64_write_con(struct CONSOLE64 *con, const char *src, uint64_t len)
 {
-	(void) src;
+	if ((const void *) src != snapshot64) { abi_error = 1; }
 	(void) len;
 	if (con != process.console) {
 		abi_error = 1;
@@ -196,8 +215,10 @@ void console64_write_con(struct CONSOLE64 *con, const char *src, uint64_t len)
 
 uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 {
-	(void) dst;
-	(void) len;
+	if ((void *) dst != snapshot64) { abi_error = 1; }
+	if (console_read_result > 0 && (uint64_t) console_read_result <= len) {
+		memset(dst, 0x5a, (size_t) console_read_result);
+	}
 	if (con != process.console) {
 		abi_error = 1;
 	}
@@ -297,6 +318,9 @@ static void reset64(void)
 	memcpy(user_buffer, "app.txt", 8);
 	current = &process;
 	user_limit = sizeof user_buffer;
+	readonly64 = io_failure64 = 0;
+	checked_error64 = checked_calls64 = sync_calls64 = 0;
+	abi_error = 0;
 	mutate_user_name = 0;
 	name_error = 0;
 	opened_name[0] = created_name[0] = '\0';
@@ -613,8 +637,46 @@ static int test_checked_files64(void)
 	return 0;
 }
 
+static int test_copy_boundary64(void)
+{
+	uintptr_t buffer = (uintptr_t) user_buffer;
+	struct FILE_INFO64 info;
+
+	reset64();
+	process.files[3].used = 1;
+	memset(user_buffer, 0xa5, sizeof(user_buffer));
+	readonly64 = 1;
+	CHECK64(call64(SYS_READ, 0, buffer, 8, 0, 0) == ERROR64);
+	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == ERROR64);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, buffer, 8, 0) == -14);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_FSTAT64, 3, buffer, 0, 0) == -14);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_STAT64, buffer, buffer, 0, 0) == -14);
+	CHECK64(read_calls == 0 && console_reads == 0 && checked_calls64 == 0);
+	CHECK64(call64(SYS_WRITE, 1, buffer, 8, 0, 0) == 8);
+	CHECK64(memcmp(snapshot64, user_buffer, 8) == 0);
+	readonly64 = 0;
+	io_failure64 = 1;
+	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == ERROR64);
+	CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == ERROR64);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, buffer, 8, 0) == -12);
+	CHECK64(read_calls == 0 && write_calls == 0 && checked_calls64 == 0);
+	io_failure64 = 0;
+	checked_error64 = -5;
+	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, buffer, 8, 0) == -5);
+	CHECK64(user_buffer[0] == 0xa5 && user_buffer[7] == 0xa5);
+	checked_error64 = 0;
+	CHECK64(call64(SYS_FILE, FILE_READ64, 3, buffer, 8, 0) == 7);
+	CHECK64(user_buffer[0] == 0x7c && user_buffer[6] == 0x7c && user_buffer[7] == 0xa5);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, buffer, 1, 0) == -5);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_FSTAT64, 3,
+		buffer + user_limit - sizeof(info) + 1, 0, 0) == -14);
+	CHECK64(abi_error == 0);
+	return 0;
+}
+
 int main(void)
 {
+	CHECK64(test_copy_boundary64() == 0);
 	CHECK64(test_checked_files64() == 0);
 	CHECK64(test_open64() == 0);
 	CHECK64(test_name_snapshot64() == 0);
