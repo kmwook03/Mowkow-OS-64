@@ -670,9 +670,7 @@ static void close_during_capture64(void)
 	console64_reap_closed();
 	assert(con->slot_state == CONSOLE64_LIVE && live64 == resources);
 	current64 = owner;
-	assert(console64_post_input_key(con, 0x1d) == 0);
-	assert(console64_post_input_key(con, 0x2e) == 0);
-	assert(console64_post_input_key(con, 0x9d) == 0);
+	/* Close alone must release the read; no synthetic Ctrl-C is needed. */
 }
 
 static void capture_close64(struct CONSOLE64 *con)
@@ -691,8 +689,48 @@ static void capture_close64(struct CONSOLE64 *con)
 	assert(con->close_ready && fifo64_status(&con->keys) == 1);
 	irq64 = 0;
 	current64 = &tasks64[0];
+	process_busy_console64 = con;
+	console64_reap_closed();
+	assert(con->slot_state == CONSOLE64_LIVE && con->close_ready);
+	assert(gui_close_console_checked64(con) == -16);
+	process_busy_console64 = NULL;
 	console64_reap_closed();
 	assert(con->slot_state == CONSOLE64_FREE);
+}
+
+static void close_input_wait64(void)
+{
+	struct CONSOLE64 *con = console_self64();
+
+	assert(!con->close_requested);
+	console64_request_close(con);
+}
+
+static void close_input64(void)
+{
+	for (int raw = 0; raw < 2; raw++) {
+		struct CONSOLE64 *con = console64_create();
+		char byte = 'X';
+
+		assert(con != NULL);
+		current64 = con->task;
+		console64_set_raw(raw);
+		/* Discard initial RESIZE; the close must wake an empty input wait. */
+		con->raw_queue_head = con->raw_queue_tail;
+		on_sleep64 = close_input_wait64;
+		if (raw) { assert(console64_read_key() == 0); }
+		else { assert(console64_read_con(con, &byte, 1) == 0 && byte == 'X'); }
+		on_sleep64 = unexpected_sleep64;
+		/* A repeated call after close must not re-enter sleep. */
+		if (raw) { assert(console64_read_key() == 0); }
+		else { assert(console64_read_con(con, &byte, 1) == 0); }
+		on_sleep64 = NULL;
+		assert(!con->close_ready && con->render_users == 0);
+		con->close_ready = 1;
+		current64 = &tasks64[0];
+		console64_reap_closed();
+		assert(con->slot_state == CONSOLE64_FREE);
+	}
 }
 
 static void focus_close64(void)
@@ -799,6 +837,7 @@ int main(void)
 	caret_ime64();
 	input_mode64();
 	status_indicator64();
+	close_input64();
 	focus_close64();
 	small_status64();
 	return 0;

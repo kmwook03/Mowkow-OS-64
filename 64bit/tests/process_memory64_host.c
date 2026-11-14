@@ -24,9 +24,16 @@ static unsigned int execution_depth64, execution_limit64, entry_calls64, raw_cal
 static int exit_status64, fail_exit_free64 = -1;
 static struct PROCESS64 *returned_process64;
 static unsigned char console_tokens64[4];
+static int close_on_read64, close_on_return64;
+static const struct CONSOLE64 *closing_console64;
 static char opened_name64[FD64_NAME_MAX];
 
 struct TASK64 *task_now64(void) { return current_task64; }
+
+int console64_close_requested(const struct CONSOLE64 *console)
+{
+	return console != NULL && console == closing_console64;
+}
 
 void platform_process_stack64(uintptr_t top)
 {
@@ -98,7 +105,17 @@ int enter_user_mode64(uintptr_t entry, uintptr_t stack, uint64_t argc, uintptr_t
 		assert(snapshot[0] == depth + 9 && process64_io_buffer(17) == snapshot);
 	}
 	frees = free_calls64;
-	process64_exit_current(exit_status64);
+	if (close_on_return64) {
+		closing_console64 = process->console;
+		assert(process64_console_busy64(process->console));
+		assert(process64_reap_console64(process->console) == -16);
+		assert(process64_return_to_user64(0) == 0 && !process->exited);
+		assert(free_calls64 == frees && process->files[3].used);
+		assert(process64_return_to_user64(1) == 1);
+		assert(process->exit_status == PROCESS64_EXIT_CLOSED);
+	} else {
+		process64_exit_current(exit_status64);
+	}
 	assert(process64_current_exit_rsp() == 0x123000 + depth * 0x1000);
 	assert(process64_current_exit_status() == exit_status64);
 	assert(process64_current() == process && process->files[3].used);
@@ -123,6 +140,11 @@ int fd64_open_checked(struct FDHANDLE64 *file, const char *name, unsigned int fl
 int64_t fd64_read_checked(struct FDHANDLE64 *file, void *buffer, size_t size)
 {
 	assert(file->info.size == size && !irq_off64);
+	if (close_on_read64) {
+		closing_console64 = (struct CONSOLE64 *) &console_tokens64[0];
+		assert(current_task64->process == NULL);
+		assert(process64_reap_console64(closing_console64) == -16);
+	}
 	memcpy(buffer, elf_bytes64, size);
 	if (reserve_during_read64) {
 		/* A preempting task reserves a different slot while the owner loads. */
@@ -423,6 +445,45 @@ static void user_copy64(void)
 	assert(process64_discard_prepared(&peer) == 0 && live_pages64 == base);
 }
 
+static void close_lifetime64(void)
+{
+	struct CONSOLE64 *console = (struct CONSOLE64 *) &console_tokens64[0];
+	unsigned int base = live_pages64;
+	unsigned int calls = entry_calls64;
+
+	event_count64 = clean_count64 = 0;
+	current_task64 = &execution_tasks64[0];
+	execution_limit64 = 1;
+	closing_console64 = console;
+	assert(process64_exec_file("fixture", "fixture 한글 abc", console) == 143);
+	assert(entry_calls64 == calls && live_pages64 == base);
+	closing_console64 = NULL;
+	close_on_read64 = 1;
+	assert(process64_exec_file("fixture", "fixture 한글 abc", console) == 143);
+	assert(entry_calls64 == calls && live_pages64 == base);
+	assert(!process64_console_busy64(console));
+	close_on_read64 = 0;
+	closing_console64 = NULL;
+	close_on_return64 = 1;
+	exit_status64 = 143;
+	/* Persistent failures keep the console, tables/backing and slot reserved. */
+	fail_exit_free64 = 0;
+	assert(process64_exec_file("fixture", "fixture 한글 abc", console) == 143);
+	assert(process64_console_busy64(console) && live_pages64 > base);
+	assert(process64_reap_console64(console) == -16);
+	assert(process64_console_busy64(console) && live_pages64 > base);
+	free_fail64 = -1;
+	free_persistent64 = 0;
+	fail_exit_free64 = -1;
+	assert(process64_reap_console64(console) == 0);
+	assert(!process64_console_busy64(console) && live_pages64 == base);
+	closing_console64 = NULL;
+	close_on_return64 = 0;
+	exit_status64 = 0;
+	assert(process64_exec_file("fixture", "fixture 한글 abc", console) == 0);
+	assert(live_pages64 == base);
+}
+
 static void execution64(void)
 {
 	size_t base = live_pages64;
@@ -521,7 +582,7 @@ int main(void)
 	reset64(); assert(address_space_init64() == 0);
 	isolation64();
 	user_copy64(); failures_process64(); permissions_process64();
-	execution64(); command_limits64();
+	execution64(); close_lifetime64(); command_limits64();
 	puts("process memory: private ELF, argv, W^X, slots, execution, exit/reap and rollback PASS");
 	return 0;
 }

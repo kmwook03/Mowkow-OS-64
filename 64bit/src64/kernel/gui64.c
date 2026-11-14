@@ -856,10 +856,9 @@ void gui64_close_console(struct CONSOLE64 *con)
 	(void) gui_close_console_checked64(con);
 }
 
-/* 닫기 버튼. 콘솔 창은 여기서 부수지 않는다 -- py나 머꼬나 앱이 돌고 있으면
-   그 태스크가 쥔 전역 자물쇠(MicroPython 하나, 앱 자리 하나)를 놓지 못한 채
-   죽어서 재부팅 전까지 잠긴다. 표시만 남기면 콘솔이 프롬프트로 돌아온 뒤
-   스스로 접히고, 그때 커널이 gui64_close_console로 돌아온다. */
+/* Request only: user-return cancellation and kernel unwinding belong to the
+ * console task. The main task retires the window after its owner parks.
+ */
 static void handle_close(struct SHEET64 *sht)
 {
 	struct GUI64_WIN *win = find_win(sht);

@@ -169,6 +169,17 @@ void process64_exit_current(int status)
 	process->exit_status = status;
 }
 
+int process64_return_to_user64(int user_mode)
+{
+	struct PROCESS64 *process = process64_current();
+
+	if (!user_mode || process == NULL) { return 0; }
+	if (!process->exited && console64_close_requested(process->console)) {
+		process64_exit_current(PROCESS64_EXIT_CLOSED);
+	}
+	return process->exited;
+}
+
 uintptr_t process64_current_exit_rsp(void)
 {
 	struct PROCESS64 *process = process64_current();
@@ -355,6 +366,44 @@ static void process_reap_pending64(void)
 	}
 }
 
+int process64_console_busy64(const struct CONSOLE64 *console)
+{
+	uint64_t irq = platform_irq_save64();
+	int busy = 0;
+
+	for (size_t i = 0; i < USER_SPACE_LIMIT64; i++) {
+		if (process_table[i].state != PROCESS_FREE64 &&
+			process_table[i].console == console) { busy = 1; break; }
+	}
+	platform_irq_restore64(irq);
+	return busy;
+}
+
+int process64_reap_console64(const struct CONSOLE64 *console)
+{
+	int busy = 0;
+
+	if (console == NULL) { return -22; }
+	for (size_t i = 0; i < USER_SPACE_LIMIT64; i++) {
+		struct PROCESS64 *process = &process_table[i];
+		uint64_t irq = platform_irq_save64();
+		int matches = process->state != PROCESS_FREE64 && process->console == console;
+		int claimed = matches && process->reap_pending;
+
+		if (claimed) { process->reap_pending = 0; }
+		platform_irq_restore64(irq);
+		if (!matches) { continue; }
+		if (!claimed) { busy = -16; continue; }
+		if (process64_discard_prepared(&process) != 0) {
+			irq = platform_irq_save64();
+			process->reap_pending = 1;
+			platform_irq_restore64(irq);
+			busy = -16;
+		}
+	}
+	return busy;
+}
+
 int process64_exec_file(const char *path, const char *cmdline,
 	struct CONSOLE64 *console)
 {
@@ -364,10 +413,17 @@ int process64_exec_file(const char *path, const char *cmdline,
 	int status;
 
 	if (task == NULL || task->process != NULL) { return -4; }
+	if (console64_close_requested(console)) { return PROCESS64_EXIT_CLOSED; }
 	process_reap_pending64();
 	status = process64_prepare_file(path, cmdline, console, &process);
 	if (status != 0) { goto cleanup; }
 	irq = platform_irq_save64();
+	/* Loading may sleep. Close wins before publishing the task/root pair. */
+	if (console64_close_requested(console)) {
+		platform_irq_restore64(irq);
+		status = PROCESS64_EXIT_CLOSED;
+		goto cleanup;
+	}
 	runtime_ready64 = 1;
 	task->process = process;
 	task->is_user = 1;

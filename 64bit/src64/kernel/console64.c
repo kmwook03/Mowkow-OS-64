@@ -7,6 +7,7 @@
 #include <kstring64.h>
 #include <memory64.h>
 #include <mtask64.h>
+#include <process64.h>
 #include <sheet64.h>
 
 /* Slot 0 is reserved for boot; slot_state also reserves incomplete cleanup. */
@@ -118,6 +119,15 @@ static void console_input_task_main64(void)
 	}
 }
 
+int console64_close_requested(const struct CONSOLE64 *con)
+{
+	uint64_t irq = platform_irq_save64();
+	int closing = con != NULL && con->close_requested;
+
+	platform_irq_restore64(irq);
+	return closing;
+}
+
 void console64_request_close(struct CONSOLE64 *con)
 {
 	uint64_t irq_state = platform_irq_save64();
@@ -134,13 +144,21 @@ void console64_request_close(struct CONSOLE64 *con)
 
 void console64_reap_closed(void)
 {
-	uint64_t irq_state = platform_irq_save64();
+	uint64_t irq_state;
+	int process_busy[CONSOLE64_MAX];
 
+	/* Process frees happen outside the GUI transaction. A failed free keeps
+	 * the console reserved too, including after a failed ELF preparation.
+	 */
+	for (uint32_t i = 0; i < CONSOLE64_MAX; i++) {
+		process_busy[i] = process64_reap_console64(&console_table[i]);
+	}
+	irq_state = platform_irq_save64();
 	(void) gui_reclaim64();
 	for (uint32_t i = 0; i < CONSOLE64_MAX; i++) {
 		struct CONSOLE64 *con = &console_table[i];
 
-		if (con->close_ready == 0) { continue; }
+		if (con->close_ready == 0 || process_busy[i] != 0) { continue; }
 		/* Keep ready set until successful teardown so failures retry next tick. */
 		if (gui_has_console64(con)) {
 			(void) gui_close_console_checked64(con);
@@ -204,7 +222,7 @@ int console_stop_checked64(struct CONSOLE64 *con)
 	enum CONSOLE_SLOT_STATE64 old_state;
 
 	if (con == NULL) { return -22; }
-	if (con->render_users != 0) { return -16; }
+	if (con->render_users != 0 || process64_console_busy64(con)) { return -16; }
 	if (con->pending_stack != 0) {
 		status = memman64_free_4k(&memman64, con->pending_stack, con->pending_stack_size);
 		if (status != 0) { return status; }

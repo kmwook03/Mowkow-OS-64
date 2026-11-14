@@ -38,6 +38,7 @@ uint16_t console_wait_key64(struct CONSOLE64 *con)
 	uint16_t key;
 
 	for (;;) {
+		if (console64_close_requested(con)) { return 0; }
 		if (console_pump_event64(con, &key) != 0) {
 			return key;
 		}

@@ -14,6 +14,7 @@
 #define PROCESS64_ERR_INVALID (-22)
 #define PROCESS64_ERR_STACK (-34)
 #define PROCESS64_EXIT_FAULT_BASE 128
+#define PROCESS64_EXIT_CLOSED 143
 #define PROCESS64_ENTRY_STACK_SIZE 65536U
 
 struct PROCESS64_RANGE {
@@ -82,6 +83,12 @@ int process64_discard_prepared(struct PROCESS64 **process);
 /* IRQ-off scheduler/entry boundary. No allocation or sleeping. */
 void process64_switch_task64(const struct TASK64 *task);
 uintptr_t process64_entry_stack_top(void);
+/* IRQ-off return boundary only; never abandon a suspended kernel operation. */
+int process64_return_to_user64(int user_mode);
+/* Task context, outside GUI guards. Retry detached frees once; -16 while owned. */
+int process64_reap_console64(const struct CONSOLE64 *console);
+/* IRQ-safe ownership query, including detached cleanup in progress. */
+int process64_console_busy64(const struct CONSOLE64 *console);
 struct PROCESS64 *process64_current(void);
 /* Current task only, no nested use. Lazily grows a supervisor-only I/O buffer
  * up to the largest user range. Failed frees retain ownership; return NULL.
@@ -95,8 +102,8 @@ void *process64_io_buffer(size_t size);
 int process64_user_range_valid(const void *ptr, size_t size);
 /* Same range contract, requiring writable leaves for kernel output. */
 int process64_user_write_valid(void *ptr, size_t size);
-/* Mark termination from SYS_EXIT or a user fault. Release terminal/files and
-   memory after returning to exec's kernel frame, not from the exception frame. */
+/* Mark termination from SYS_EXIT, user fault or close at a user-return boundary.
+   Release terminal/files/memory after returning to exec's kernel frame. */
 void process64_exit_current(int status);
 uintptr_t process64_current_exit_rsp(void);
 int process64_current_exit_status(void);

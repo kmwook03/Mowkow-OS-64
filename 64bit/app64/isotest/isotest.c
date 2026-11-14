@@ -226,6 +226,33 @@ static void report64(unsigned long id, const char *result)
 	if (write(1, line, used) != (long) used) { exit(2); }
 }
 
+/* Disposable-media close probe. Rewriting the same bytes makes every completed
+ * write independently verifiable after termination, including an open handle.
+ */
+static int close_io64(unsigned long id, const unsigned char *bytes)
+{
+	char name[] = "CLOSE1.TXT";
+	unsigned long heartbeat = 0;
+	int first = 1;
+	int fd;
+
+	name[5] = (char) ('0' + id);
+	fd = open(name, O_CREAT | O_TRUNC);
+	if (fd < 0) { report64(id, "FAIL open"); return 1; }
+	for (;;) {
+		if (seek(fd, 0, 0) < 0 || write(fd, bytes, 16384) != 16384 ||
+			file_call64(FILE_SYNC64, (unsigned long) fd, 0, 0) != 0) {
+			report64(id, "FAIL io");
+			return 1;
+		}
+		if (first || ticks() - heartbeat >= 200) {
+			report64(id, "IO");
+			heartbeat = ticks();
+			first = 0;
+		}
+	}
+}
+
 int main(int argc, char **argv)
 {
 	volatile unsigned long stack_cookie[16];
@@ -236,7 +263,7 @@ int main(int argc, char **argv)
 	unsigned long heartbeat;
 
 	if (argc < 2 || argc > 3 || argv[1][0] < '1' || argv[1][0] > '4' || argv[1][1]) {
-		puts("isotest: use ID 1..4 and optional short/fault/live");
+		puts("isotest: use ID 1..4 and optional short/fault/live/spin/io");
 		return 1;
 	}
 	id = (unsigned long) (argv[1][0] - '0');
@@ -247,6 +274,11 @@ int main(int argc, char **argv)
 	for (size_t i = 0; i < 16384; i++) { heap[i] = (unsigned char) (id + i); }
 	tty_raw(1);
 	report64(id, "READY");
+	if (argc == 3 && strcmp(argv[2], "spin") == 0) {
+		/* No syscall or voluntary yield: only a user IRQ return can stop us. */
+		for (;;) { __asm__ volatile ("" ::: "memory"); }
+	}
+	if (argc == 3 && strcmp(argv[2], "io") == 0) { return close_io64(id, heap); }
 	if (argc == 3 && strcmp(argv[2], "fault") == 0) {
 #ifdef __aarch64__
 		__asm__ volatile ("brk #0");

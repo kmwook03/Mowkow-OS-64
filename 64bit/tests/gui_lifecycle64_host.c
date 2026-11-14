@@ -13,6 +13,16 @@
 #define STRIDE64 328
 #define MAX_ALLOCATIONS64 64
 
+static const struct CONSOLE64 *process_busy_console64;
+int process64_reap_console64(const struct CONSOLE64 *con)
+{
+	return con == process_busy_console64 ? -16 : 0;
+}
+int process64_console_busy64(const struct CONSOLE64 *con)
+{
+	return con == process_busy_console64;
+}
+
 struct MEMMAN64 memman64;
 const uint8_t hankaku64[4096] = { ['A' * 16] = 0xff };
 static struct TASK64 tasks64[32];

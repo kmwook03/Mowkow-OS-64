@@ -58,6 +58,7 @@ arch64_vector_table:
 	.extern arch64_kernel_sync_handler
 	.extern arch64_irq_dispatch
 	.extern arch64_sync_dispatch
+	.extern process64_return_to_user64
 	.extern process64_current_exit_rsp
 	.extern process64_current_exit_status
 	.extern arch64_leave_user_mode
@@ -94,6 +95,13 @@ arch64_sync_common:
 	bl	arch64_sync_dispatch
 	msr	daifset, #2
 	cbnz	x0, .Lsync_exit
+	/* Inspect the selected frame after scheduling, with IRQs masked. */
+	ldr	x0, [sp, #ARCH64_FRAME_SPSR_OFFSET]
+	and	x0, x0, #0xf
+	cmp	x0, #0
+	cset	x0, eq
+	bl	process64_return_to_user64
+	cbnz	x0, .Lsync_exit
 	RESTORE_EXCEPTION_FRAME
 	eret
 .Lsync_exit:
@@ -113,6 +121,13 @@ arch64_irq_common:
 	msr	fpsr, xzr
 	bl	arch64_irq_dispatch
 	mov	sp, x0
+	/* Inspect the selected frame after scheduling, with IRQs masked. */
+	ldr	x0, [sp, #ARCH64_FRAME_SPSR_OFFSET]
+	and	x0, x0, #0xf
+	cmp	x0, #0
+	cset	x0, eq
+	bl	process64_return_to_user64
+	cbnz	x0, .Lsync_exit
 	RESTORE_EXCEPTION_FRAME
 	eret
 

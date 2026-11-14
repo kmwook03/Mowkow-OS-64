@@ -66,6 +66,7 @@ extern irq_handler64
 extern syscall_handler64
 extern process64_current_exit_rsp
 extern process64_current_exit_status
+extern process64_return_to_user64
 extern process64_entry_stack_top
 
 section .text
@@ -304,6 +305,12 @@ asm_syscall80:
 %endmacro
 
 %macro RESTORE_REGS64 0
+	; Only abandon a user return. Kernel IRQ frames may own locks/references.
+	mov rdi, [rbx + 144]
+	and edi, 3
+	call process64_return_to_user64
+	test eax, eax
+	jnz syscall_exit_to_kernel
 	fxrstor64 [rsp]
 	mov rsp, rbx
 	; The kernel also uses flat segments. Restore a user selector only for CPL3.
