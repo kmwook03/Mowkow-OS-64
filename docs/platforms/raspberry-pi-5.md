@@ -44,6 +44,9 @@ make aarch64
 
 `aarch64-boot/`에는 `config.txt`, `kernel_2712.img`, 한글 글꼴, AArch64 앱, MicroPython 및 머꼬 스크립트가 함께 들어갑니다. staging 파일 묶음만 다시 동기화하려면 `make aarch64-stage`, AArch64 산출물을 지우려면 `make clean-a64`를 사용합니다.
 
+프로세스 격리 검증용 `ISOTEST.ELF`와 `FAULTTEST.ELF`도 포함합니다.
+프로세스 격리 변경 이후의 실기기 검증은 아직 수행하지 않았습니다.
+
 staging은 같은 파일시스템의 임시 디렉터리에 복사하고 파일 목록과 SHA-256을
 검증한 뒤 공개합니다. 기존 staging을 갱신할 때는 Linux libc의 `renameat2`
 및 파일시스템의 `RENAME_EXCHANGE` 지원이 필요합니다. 지원하지 않거나 교체가
@@ -182,15 +185,18 @@ Pi 5 커널은 물리 `0x80000`에 적재되고 `ARCH64_KERNEL_VA_BASE`
 high-half 주소로 관리하며, ELF 앱은 공용 `app64.ld`의 낮은 가상 주소를 씁니다.
 
 MMU는 4KiB 페이지를 사용합니다. 부팅 중 저주소 bootstrap 매핑에서 TTBR1의
-high-half 커널로 전환한 뒤 TTBR0를 사용자 매핑용으로 사용합니다. 프로세스마다
-별도 페이지 테이블을 두지는 않으며, ELF 이미지 창은 공용 실행 정책에 따라
-한 앱만 소유할 수 있습니다. 사용자 매핑은 범위와 필요한 L3 테이블 수를
+high-half 커널로 전환한 뒤 TTBR0를 사용자 매핑용으로 사용합니다. 최대 4개
+프로세스가 각각 TTBR0 root와 image/heap/stack backing을 소유하고,
+공용 TTBR1은 supervisor 전용으로 유지합니다. 사용자 매핑은 범위와 필요한 L3 테이블 수를
 먼저 확인하며, 테이블 부족 시 기존 매핑을 보존합니다. cache maintenance는
 CTR_EL0에서 D/I line 크기를 각각 읽고 끝 주소·정렬 overflow를 검사합니다.
 
 `arch/aarch64/sched64.c`는 Generic Timer IRQ의 예외 복귀 프레임을 바꾸어
 태스크를 전환합니다. 공용 `mtask64.c`의 run queue·sleep/wake 정책을 사용하고,
-아키텍처별 저장 프레임에 일반 레지스터와 FP/SIMD 상태를 보존합니다.
+아키텍처별 저장 프레임에 SP_EL0·일반 레지스터·FP/SIMD·FPCR/FPSR를 보존하며,
+태스크별 thread pointer와 TTBR0도 함께 전환합니다. 블로킹 SVC는 자신의
+64KiB EL1 진입 스택에서 재개합니다. 사용자 페이지는 R/RW/RX로 제한하고
+스택 양쪽 guard, 코드 쓰기 금지, 힙·스택 실행 금지를 적용합니다.
 
 ### 사용자 모드와 syscall
 

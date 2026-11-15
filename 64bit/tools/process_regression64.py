@@ -15,6 +15,11 @@ import time
 from pathlib import Path
 
 from mowkow_parity import Console, DEFAULT_IMAGE, PROMPT
+from nano_storage_regression64 import verify
+
+
+MIXED_FILES = {"M6A.TXT": "첫째 한글\n".encode(),
+               "M6B.TXT": "둘째 독립\n".encode()}
 
 
 class ProcessConsole(Console):
@@ -209,6 +214,78 @@ class ProcessConsole(Console):
         self.wait_seen(before, "종료 코드: 143\n", 20)
         self.wait_seen(len(self.text()), "isotest 2: LIVE\n", 20)
 
+    def start_app(self, index: int, command: str, ready: str) -> int:
+        self.focus(index)
+        before = len(self.text())
+        self.type(command)
+        self.modes[index] = self.hangul
+        self._send(["ret"])
+        self.wait_seen(before, ready, 20)
+        return before
+
+    def expect_exit(self, before: int, marker: str) -> None:
+        self._wait_after(before, PROMPT, 20, marker)
+        output = self.text()[before:]
+        if marker not in output or output.count("종료 코드: 0\n") != 1:
+            raise AssertionError(f"{marker}: exit mismatch: {output!r}")
+
+    def mixed_apps(self) -> None:
+        self.setup_windows()
+        live = self.launch(0, " live")
+        self.start_app(1, "나노 M6A.TXT", "^X 종료")
+        self.start_app(2, "ktest --auto", "ktest: READY\n")
+        self.start_app(3, "faulttest input", "faulttest: INPUT\n")
+        # All four different ELF apps remain attached at this point.
+        self.wait_seen(len(self.text()), "isotest 1: LIVE\n", 20)
+        self.focus(2)
+        raw = len(self.text())
+        self.type("a")
+        self._send(["left"])
+        self._send(["ctrl", "x"])
+        self.expect_exit(raw, "ktest: PASS\n")
+        self.focus(3)
+        cooked = len(self.text())
+        self.type("ok")
+        self._send(["ret"])
+        self.expect_exit(cooked, "faulttest: PASS input\n")
+        print("four different apps, live CPU, raw/cooked resume: PASS", flush=True)
+
+        self.start_app(2, "나노 M6B.TXT", "^X 종료")
+        # Leave both editors dirty, switch focus, then append and save in reverse
+        # order. Full disk readback proves input did not leak between consoles.
+        for index, text in ((1, "첫째 "), (2, "둘째 "), (1, "한글"), (2, "독립")):
+            self.focus(index)
+            self.type(text)
+            self.modes[index] = self.hangul
+        for index in (2, 1):
+            self.focus(index)
+            before = len(self.text())
+            self._send(["ctrl", "o"])
+            self.wait_seen(before, "저장할 파일", 20)
+            self._send(["ret"])
+            self.wait_seen(before, "줄 저장됨", 20)
+            self._send(["ctrl", "x"])
+            self.expect_exit(before, "줄 저장됨")
+        self.focus(3)
+        for command, marker in (("hello", "종료 코드: 0\n"),
+                                ("mtest", "mtest: PASS"), ("wtest", "wtest: PASS")):
+            before = len(self.text())
+            output = self.run(command)
+            self.modes[3] = self.hangul
+            if marker not in output or output.count("종료 코드: 0\n") != 1:
+                raise AssertionError(f"mixed {command}: {self.text()[before:]!r}")
+        self.wait_seen(len(self.text()), "isotest 1: LIVE\n", 20)
+        if re.search(r"FAIL|EXCEPTION|PANIC", self.text()[live:]):
+            raise AssertionError("mixed apps corrupted a peer or the kernel")
+        print("two nano buffers, Hangul focus, independent saves and I/O: PASS", flush=True)
+
+    def mixed_reboot(self) -> None:
+        for filename, expected in MIXED_FILES.items():
+            output = self.run(f"cat {filename}")
+            if expected.decode() not in output or output.count("종료 코드: 0\n") != 1:
+                raise AssertionError(f"mixed reboot: {filename}: {output!r}")
+        print("mixed nano reboot readback and cooked recovery: PASS", flush=True)
+
     def closings(self) -> None:
         self.setup_windows()
         survivor = self.launch(1, " live")
@@ -279,17 +356,30 @@ def main() -> None:
     parser.add_argument("--image", default=DEFAULT_IMAGE)
     parser.add_argument("--ahci", action="store_true")
     parser.add_argument("--close-only", action="store_true")
+    parser.add_argument("--mixed-only", action="store_true")
     parser.add_argument("--log", default=f"/tmp/mowkow-process-{time.time_ns()}.log")
     args = parser.parse_args()
+    if args.close_only and args.mixed_only:
+        parser.error("--close-only and --mixed-only are mutually exclusive")
     with tempfile.TemporaryDirectory(prefix="process-regression64-") as temporary:
         image = Path(temporary) / "disk.img"
         shutil.copyfile(args.image, image)
-        if not args.close_only:
+        if not args.close_only and not args.mixed_only:
             with ProcessConsole(str(image), args.ahci, args.log) as console:
                 console.exercise()
-        with ProcessConsole(str(image), args.ahci, args.log + "-close") as console:
-            console.closings()
-        verify_closing_files(image, Path(temporary))
+        if not args.mixed_only:
+            with ProcessConsole(str(image), args.ahci, args.log + "-close") as console:
+                console.closings()
+            verify_closing_files(image, Path(temporary))
+        if not args.close_only:
+            with ProcessConsole(str(image), args.ahci, args.log + "-mixed") as console:
+                console.mixed_apps()
+            for filename, expected in MIXED_FILES.items():
+                verify(image, filename, expected, Path(temporary))
+            with ProcessConsole(str(image), args.ahci, args.log + "-reboot") as console:
+                console.mixed_reboot()
+            for filename, expected in MIXED_FILES.items():
+                verify(image, filename, expected, Path(temporary))
 
 
 if __name__ == "__main__":
