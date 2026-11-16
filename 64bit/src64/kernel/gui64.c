@@ -251,14 +251,14 @@ static void set_title(struct GUI64_WIN *win, const char *title)
    "top-2로 올린다"만으로는 표시줄이 창 밑으로 내려간다. */
 static void raise_win(struct SHEET64 *sht)
 {
-	sheet64_updown(sht, gui_context64.ctl->top);
+	sheet64_updown(sht, gui_context64.ctl->top + 1);
 	if (gui_context64.taskbar != NULL && gui_context64.taskbar->height >= 0) {
 		sheet64_updown(gui_context64.taskbar, gui_context64.ctl->top);
 	}
 	if (gui_context64.status != NULL && gui_context64.status->height >= 0) {
 		sheet64_updown(gui_context64.status, gui_context64.ctl->top);
 	}
-	if (gui_context64.cursor != NULL) {
+	if (gui_context64.cursor != NULL && gui_context64.cursor->height >= 0) {
 		sheet64_updown(gui_context64.cursor, gui_context64.ctl->top);
 	}
 }
@@ -315,12 +315,13 @@ static void taskbar_show(int on)
 {
 	if (on != 0) {
 		if (gui_context64.taskbar != NULL) {
-			sheet64_updown(gui_context64.taskbar, gui_context64.ctl->top);
+			sheet64_updown(gui_context64.taskbar, gui_context64.ctl->top + 1);
 		}
-		sheet64_updown(gui_context64.status, gui_context64.ctl->top);
-		sheet64_updown(gui_context64.cursor, gui_context64.ctl->top);
+		sheet64_updown(gui_context64.status, gui_context64.ctl->top + 1);
+		sheet64_updown(gui_context64.cursor, gui_context64.ctl->top + 1);
 		taskbar_redraw();
 	} else {
+		sheet64_updown(gui_context64.cursor, -1);
 		sheet64_updown(gui_context64.status, -1);
 		sheet64_updown(gui_context64.taskbar, -1);
 	}
@@ -445,7 +446,6 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	gui_context64.mode = GUI64_MODE_FULL;
 	sheet64_updown(gui_context64.back, 0);
 	sheet64_updown(gui_context64.console, 1);
-	sheet64_updown(gui_context64.cursor, 2);
 	gui_context64.ready = 1;
 	taskbar_show(0);
 	(void) gui_reclaim64();
@@ -748,17 +748,18 @@ void gui_update_status64(void)
 	platform_irq_restore64(state);
 }
 
-/* 클릭 지점에서 가장 위에 있는 시트를 찾는다. 커서 시트는 항상 맨 위이므로
-   top-1부터 훑는다 (32비트 bootpack.c:337-343). 바탕화면(높이 0)까지 내려가는
-   건 거기 실행 아이콘이 있기 때문이다 -- 배경인지는 호출자가 가려낸다. */
+/* The pointer can be hidden in fullscreen, so scan from the actual top and
+ * explicitly skip it. Desktop icons still need hit testing at height zero.
+ */
 static struct SHEET64 *hit_test(int32_t mx, int32_t my, int32_t *bx, int32_t *by)
 {
 	struct SHEET64 *sht;
 	int32_t j;
 	int64_t x, y;
 
-	for (j = gui_context64.ctl->top - 1; j >= 0; j--) {
+	for (j = gui_context64.ctl->top; j >= 0; j--) {
 		sht = gui_context64.ctl->sheets[j];
+		if (sht == gui_context64.cursor) { continue; }
 		x = (int64_t) mx - sht->vx0;
 		y = (int64_t) my - sht->vy0;
 		if (0 <= x && x < sht->bxsize && 0 <= y && y < sht->bysize) {
@@ -781,7 +782,7 @@ static struct SHEET64 *focus_after_hide(const struct SHEET64 *hidden)
 	struct SHEET64 *sht;
 	int32_t j;
 
-	for (j = gui_context64.ctl->top - 1; j > 0; j--) {
+	for (j = gui_context64.ctl->top; j > 0; j--) {
 		sht = gui_context64.ctl->sheets[j];
 		if (sht != hidden && sht != gui_context64.cursor && find_win(sht) != NULL &&
 			find_win(sht)->published) {

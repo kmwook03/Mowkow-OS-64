@@ -238,10 +238,12 @@ static void verify64(void)
 	assert(gui_context64.ready);
 	assert(gui_context64.status != NULL);
 	if (gui_context64.mode == GUI64_MODE_FULL) {
+		assert(gui_context64.cursor->height == -1);
 		assert(gui_context64.status->height == -1);
 		assert(gui_context64.taskbar == NULL || gui_context64.taskbar->height == -1);
 		assert(gui_context64.console->bysize == gui_context64.scrny);
 	} else {
+		assert(gui_context64.cursor->height == gui_context64.ctl->top);
 		assert(gui_context64.status->height == gui_context64.ctl->top - 1);
 	}
 	assert(gui_context64.status->buf == gui_context64.status_buf);

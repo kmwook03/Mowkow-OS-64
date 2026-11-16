@@ -483,14 +483,44 @@ static void expect_fullscreen64(struct CONSOLE64 *con)
 			uint8_t owner = gui_context64.ctl->map[y * WIDTH64 + x];
 
 			assert(con->vram[y * con->stride + x] == 0);
-			if (owner == (uint8_t) (gui_context64.cursor - gui_context64.ctl->sheets0)) {
-				continue;
-			}
 			assert(owner == (uint8_t) (con->sheet - gui_context64.ctl->sheets0));
 			assert(vram64[y * STRIDE64 + x] == 0);
 		}
 	}
 	verify64();
+}
+
+static void mouse_visibility64(void)
+{
+	struct CONSOLE64 *con = console64_active();
+	struct CONSOLE64 *other;
+	unsigned long image = screen_hash64();
+
+	/* A hidden pointer must neither repaint nor click through the full console. */
+	gui64_mouse_event(16 - gui_context64.mx, 16 - gui_context64.my, 1);
+	gui64_mouse_event(0, 0, 0);
+	gui64_raise_bottom_window();
+	assert(gui_context64.win_count == 1 && gui64_focused_console() == con);
+	assert(screen_hash64() == image);
+	other = console64_create();
+	assert(other != NULL);
+	gui64_raise_bottom_window();
+	verify64();
+	other->close_ready = 1;
+	console64_reap_closed();
+	assert(gui64_focused_console() == con);
+	current64 = con->task;
+	for (int i = 0; i < 2; i++) {
+		assert(gui_toggle_window_checked64() == 0);
+		gui64_mouse_event(308 - gui_context64.mx, 226 - gui_context64.my, 0);
+		assert(gui_context64.ctl->map[226 * WIDTH64 + 308] ==
+			(uint8_t) (gui_context64.cursor - gui_context64.ctl->sheets0));
+		verify64();
+		assert(gui_toggle_window_checked64() == 0);
+		expect_fullscreen64(con);
+	}
+	current64 = &tasks64[0];
+	puts("GUI mouse: hidden in fullscreen, restored in windows, click/F11/close focus: PASS");
 }
 
 static void status_during_capture64(void)
@@ -829,6 +859,7 @@ int main(void)
 	initialize64();
 	memset(hangul_font64, 0xff, sizeof(hangul_font64));
 	console64_set_hangul_font(hangul_font64);
+	mouse_visibility64();
 	mode_sequences64();
 	capture64();
 	resize_waits64();
