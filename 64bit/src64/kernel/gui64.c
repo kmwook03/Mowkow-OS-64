@@ -619,7 +619,9 @@ int gui_prepare_console64(struct CONSOLE64 *con, const char *title)
 	retire_slot = gui_retire_slot64();
 	if (retire_slot < 0) { return retire_slot; }
 	allocation = &gui_context64.retired[retire_slot];
-	allocation->size = (size_t) gui_context64.win_w * gui_context64.win_h;
+	/* Reopened console 0 must retain capacity for fullscreen transitions. */
+	allocation->size = con == console64_active() ? gui_context64.screen_size :
+		(size_t) gui_context64.win_w * gui_context64.win_h;
 	allocation->address = memman64_alloc_4k(&memman64, allocation->size);
 	if (allocation->address == 0) {
 		*allocation = (struct GUI_ALLOCATION64) { 0 };
@@ -663,6 +665,11 @@ void gui_publish_console64(struct CONSOLE64 *con)
 	struct GUI64_WIN *win = find_console64(con);
 
 	if (win == NULL || win->published) { return; }
+	if (con == console64_active()) {
+		gui_context64.console = win->sht;
+		gui_context64.console_buf = win->buffer;
+		gui_context64.console_buf_size = win->buffer_size;
+	}
 	win->published = 1;
 	raise_win(win->sht);
 	keywin_off(gui_context64.key_win);
@@ -855,6 +862,21 @@ out:
 void gui64_close_console(struct CONSOLE64 *con)
 {
 	(void) gui_close_console_checked64(con);
+}
+
+int gui_request_console_close64(struct CONSOLE64 *con)
+{
+	uint64_t irq_state = platform_irq_save64();
+	struct GUI64_WIN *win = find_console64(con);
+	int status = -22;
+
+	if (gui_context64.ready && gui_context64.mode == GUI64_MODE_WINDOW &&
+		win != NULL && win->published && win->decorated) {
+		console64_request_close(con);
+		status = 0;
+	}
+	platform_irq_restore64(irq_state);
+	return status;
 }
 
 /* Request only: user-return cancellation and kernel unwinding belong to the

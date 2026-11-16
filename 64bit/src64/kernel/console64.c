@@ -10,7 +10,9 @@
 #include <process64.h>
 #include <sheet64.h>
 
-/* Slot 0 is reserved for boot; slot_state also reserves incomplete cleanup. */
+/* Slot 0 is reused after all consoles finish teardown; slot_state also
+ * reserves resources retained by incomplete cleanup.
+ */
 static struct CONSOLE64 console_table[CONSOLE64_MAX];
 static struct CONSOLE64 *console_active = &console_table[0];
 
@@ -181,8 +183,15 @@ struct CONSOLE64 *console64_create(void)
 {
 	struct CONSOLE64 *con = NULL;
 	uint64_t irq_state = platform_irq_save64();
+	int32_t first_slot = 0;
 
 	for (int32_t slot = 1; slot < CONSOLE64_MAX; slot++) {
+		if (console_table[slot].slot_state != CONSOLE64_FREE) {
+			first_slot = 1;
+			break;
+		}
+	}
+	for (int32_t slot = first_slot; slot < CONSOLE64_MAX; slot++) {
 		if (console_table[slot].slot_state == CONSOLE64_FREE) {
 			con = &console_table[slot];
 			break;

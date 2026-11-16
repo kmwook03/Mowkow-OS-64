@@ -30,8 +30,8 @@ void gui64_bind_console(struct SHEET64 *sht, struct CONSOLE64 *con);
 struct CONSOLE64 *gui64_focused_console(void);
 
 /* 콘솔용 창을 하나 연다. 버퍼와 시트를 만들고 창을 그린 뒤 콘솔을 붙이고
-   포커스를 준다. 실패하면 -1. 콘솔 0의 전체 화면 창과 달리 창 크기 버퍼만
-   잡는다 (화면 크기 버퍼는 콘솔 0 하나로 족하다). */
+   포커스를 준다. 실패하면 -1. 콘솔 0은 전체 화면 전환을 위해 화면 크기
+   버퍼를 유지하고, 다른 콘솔은 창 크기 버퍼만 잡는다. */
 int gui64_open_console_window(struct CONSOLE64 *con, const char *title);
 
 /* 콘솔 창을 실제로 없앤다. 콘솔이 접힌 뒤 커널이 부른다

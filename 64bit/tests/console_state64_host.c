@@ -839,18 +839,71 @@ static void focus_close64(void)
 	boot->close_ready = 1;
 	console64_reap_closed();
 	assert(boot->slot_state == CONSOLE64_FREE && gui64_focused_console() == reused);
+	struct CONSOLE64 *extra = console64_create();
+
+	assert(extra == second); /* Keep slot 0 reserved while another console survives. */
+	extra->close_ready = 1;
+	console64_reap_closed();
 	reused->close_ready = 1;
 	console64_reap_closed();
 	assert(gui_context64.win_count == 0 && gui64_focused_console() == NULL);
 	assert(gui_context64.key_win == gui_context64.back);
 	assert(gui_context64.status_mode < 0 && gui_context64.status_owner == NULL);
+	size_t baseline = live64;
+
+	fail_run64 = 1;
+	assert(console64_create() == NULL);
+	assert(boot->slot_state == CONSOLE64_FREE && gui_context64.console == NULL);
+	assert(gui_context64.win_count == 0 && live64 == baseline);
+	no_failures64();
 	reused = console64_create();
-	assert(reused == first && gui64_focused_console() == reused);
+	assert(reused == boot && gui64_focused_console() == reused);
 	assert(reused->size_generation == 1 && fifo64_status(&reused->keys) == 0);
+	assert(gui_context64.console == reused->sheet);
+	assert(gui_context64.console_buf == reused->sheet->buf);
+	assert(gui_context64.console_buf_size == WIDTH64 * HEIGHT64);
+	current64 = reused->task;
+	for (int i = 0; i < 2; i++) {
+		assert(gui_toggle_window_checked64() == 0);
+		expect_fullscreen64(reused);
+		assert(gui_request_console_close64(reused) == -22);
+		assert(gui_toggle_window_checked64() == 0);
+		assert(reused->width == 160 && reused->height == 100);
+	}
 	verify64();
 	cleanup64();
 	assert(gui64_focused_console() == console64_active()); /* compositor fallback */
 	puts("Console state: four-console routing, modifiers, close/retry and slot reuse: PASS");
+}
+
+static void command_close64(void)
+{
+	struct CONSOLE64 *boot, *other;
+
+	initialize64();
+	boot = console64_active();
+	other = console64_create();
+	assert(other != NULL);
+	assert(gui_request_console_close64(boot) == -22 && !boot->close_requested);
+	assert(gui_request_console_close64(other) == -22 && !other->close_requested);
+	assert(gui_toggle_window_checked64() == 0);
+	assert(gui_request_console_close64(NULL) == -22);
+	assert(gui_request_console_close64(other) == 0);
+	assert(other->close_requested && !other->close_ready && !boot->close_requested);
+	/* Requesting close retains the task and surface until the owner parks. */
+	console64_reap_closed();
+	assert(other->task != NULL && other->vram != NULL && gui_has_console64(other));
+	current64 = other->task;
+	sleep_checks64 = 0;
+	if (setjmp(sleep_stop64) == 0) { entries64[current64 - tasks64](); assert(0); }
+	irq64 = 0;
+	current64 = &tasks64[0];
+	console64_reap_closed();
+	assert(other->slot_state == CONSOLE64_FREE && gui64_focused_console() == boot);
+	assert(gui_request_console_close64(boot) == 0 && boot->close_requested);
+	cleanup64();
+	assert(gui_request_console_close64(boot) == -22 && irq64 == 0);
+	puts("GUI command close: CLI rejection, owner parking, focus and cleanup: PASS");
 }
 
 int main(void)
@@ -871,5 +924,6 @@ int main(void)
 	close_input64();
 	focus_close64();
 	small_status64();
+	command_close64();
 	return 0;
 }
