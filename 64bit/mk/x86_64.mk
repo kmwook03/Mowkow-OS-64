@@ -30,6 +30,7 @@ X64_PLATFORM_C_SRCS = \
 	$(SRC64_DIR)/arch/x86_64/boot_diag64.c \
 	$(SRC64_DIR)/arch/x86_64/boot_smoke64.c \
 	$(SRC64_DIR)/arch/x86_64/platform64.c \
+	$(SRC64_DIR)/arch/x86_64/power64.c \
 	$(SRC64_DIR)/drivers/ahci64.c \
 	$(SRC64_DIR)/drivers/ata64.c \
 	$(SRC64_DIR)/drivers/int64.c \

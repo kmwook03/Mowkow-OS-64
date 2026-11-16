@@ -92,6 +92,22 @@ Pi 5의 부트 펌웨어는 EEPROM에 있으므로 `bootcode.bin`, `start.elf`, 
 * USB 키보드를 전원을 넣기 전에 연결했는지
 * ACT LED가 일정한 heartbeat 대신 반복적인 panic 점멸 패턴을 보이는지
 
+## 시스템 종료
+
+프롬프트에서 `시스템종료` 또는 `shutdown`을 입력합니다. 나노 등에서 편집 중인
+내용은 먼저 저장하세요. 파일시스템의 진행 중인 쓰기를 마무리하고 SD CMD13으로
+카드가 READY_FOR_DATA 및 TRANSFER 상태인지 확인한 뒤 새 쓰기를 차단합니다.
+오류나 시간 초과가 있으면 종료를 취소하며, 전원을 분리해도 된다고 표시하지 않습니다.
+
+그 뒤 IRQ를 끄고 PSCI SYSTEM_OFF(`0x84000008`, `smc #0`)를 호출합니다.
+SMC 경로는 [Pi 5의 BCM2712 장치 트리](https://github.com/raspberrypi/linux/blob/rpi-6.12.y/arch/arm64/boot/dts/broadcom/bcm2712.dtsi)에
+명시된 펌웨어 인터페이스를 사용합니다. 실제 대기 전력과 전원 상태는
+[EEPROM의 POWER_OFF_ON_HALT 설정](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#POWER_OFF_ON_HALT)에
+따릅니다. 펌웨어 호출이 돌아오면 CPU를 안전하게 정지하고 전원을 분리해도 된다고 표시합니다.
+
+호스트 테스트와 cross-build는 SD 카드·PMIC의 실기 동작을 보증하지 않습니다.
+보드에서 파일 저장 → 종료 → 전원 재인가 → 파일 재확인 및 전원/LED 상태를 확인해야 합니다.
+
 ## 시스템 구조
 
 ### 부트 시퀀스

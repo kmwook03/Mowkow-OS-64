@@ -5,6 +5,7 @@
  * AHCI 컨트롤러가 없을 때 쓰는 대비책.
  */
 #include <asmfunc64.h>
+#include <arch/x86_boot64.h>
 #include <block64.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -208,9 +209,25 @@ static int ata64_write(uint64_t lba, uint32_t count, const void *src)
 	return 0;
 }
 
+static int ata64_flush(void)
+{
+	if (ata_wait_not_busy() == 0) {
+		io_out8(ATA_DRIVE, 0xe0);
+		io_out8(ATA_COMMAND, ATA_CMD_FLUSH);
+		if (ata_wait_not_busy() == 0) {
+			return 0;
+		}
+	}
+	x86_boot_log64("ata: flush failed STATUS=");
+	x86_boot_log_uint64(io_in8(ATA_STATUS));
+	x86_boot_log64("\n");
+	return -5;
+}
+
 const struct BLOCK64_OPS ata64_ops = {
 	"ata",
 	ata64_read,
 	ata64_write,
-	ata64_sector_count
+	ata64_sector_count,
+	ata64_flush
 };

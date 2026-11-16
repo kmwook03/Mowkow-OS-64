@@ -39,6 +39,22 @@ void platform_wait_for_interrupt64(void)
 	arch64_halt_with_irq();
 }
 
+int platform_poweroff64(void)
+{
+	register uint64_t function __asm__("x0") = 0x84000008U;
+
+	/* Pi 5 firmware provides PSCI through the EL3 SMC conduit. SYSTEM_OFF
+	 * does not return on success; firmware owns PMIC/EEPROM halt policy.
+	 */
+	__asm__ volatile ("dsb sy\n\tsmc #0"
+		: "+r" (function)
+		:
+		: "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9",
+		  "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17",
+		  "memory", "cc");
+	return -5;
+}
+
 int platform_task_context_init64(struct CONTEXT64 *context,
 	void (*entry)(void), uintptr_t stack_base, size_t stack_size)
 {

@@ -69,6 +69,7 @@ help :
 	@echo "    make test64-qemu-ahci  QEMU AHCI 회귀 검사"
 	@echo "    make test64-process[-ahci]  네 앱 동시 실행·문맥 복귀 검사"
 	@echo "    make test64-nano-storage[-ahci]  일회용 이미지 nano 저장 검증"
+	@echo "    make test64-shutdown[-ahci]  시스템 종료·재부팅 파일 보존 검사"
 	@echo ""
 	@echo "  그 밖에"
 	@echo "    make info       찾아낸 소스와 앱 목록 보기"
@@ -96,6 +97,15 @@ test64-qemu : $(IMG64_FILE)
 
 test64-qemu-ahci : $(IMG64_FILE)
 	$(PYTHON) $(TOOL64PATH)/app_regression64.py --image $(IMG64_FILE) --ahci
+
+.PHONY : test64-shutdown test64-shutdown-ahci
+test64-shutdown : $(IMG64_FILE)
+	$(PYTHON) $(TOOL64PATH)/shutdown_regression64.py --image $(IMG64_FILE) \
+		$(if $(SHUTDOWN_LOG64),--log $(SHUTDOWN_LOG64))
+
+test64-shutdown-ahci : $(IMG64_FILE)
+	$(PYTHON) $(TOOL64PATH)/shutdown_regression64.py --image $(IMG64_FILE) --ahci \
+		$(if $(SHUTDOWN_LOG64),--log $(SHUTDOWN_LOG64))
 
 # Concurrent private processes, user-copy boundaries and isolated protection faults.
 .PHONY : test64-process test64-process-ahci

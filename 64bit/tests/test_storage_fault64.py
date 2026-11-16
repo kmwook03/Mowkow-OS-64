@@ -76,6 +76,10 @@ class StorageFault64Test(unittest.TestCase):
                     mode = "sync-persistent" if persistent else "sync-once"
                     self.run_image(mode, str(target))
 
+    def test_shutdown_drains_dirty_data_and_rejects_queued_writers(self) -> None:
+        self.run_image("shutdown")
+        self.run_image("shutdown-failure")
+
     def test_malformed_elf_releases_memory_and_owner(self) -> None:
         failures = {
             -4: ("magic", "machine", "phoff-overflow", "truncated-header", "truncated-table"),

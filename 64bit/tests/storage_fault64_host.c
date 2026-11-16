@@ -28,6 +28,7 @@ static struct BLOCK_FAULT64 backend64;
 static uint32_t mutex_depth64;
 static uint64_t irq_depth64;
 static int guard_error64;
+static int device_flush_calls64;
 _Alignas(MEMMAN64_PAGE_SIZE)
 static uint8_t memory_pool64[6 * 1024 * 1024];
 
@@ -79,11 +80,18 @@ static uint64_t transport_sectors64(void)
 	return backend64.sectors;
 }
 
+static int transport_flush64(void)
+{
+	CHECK64(mutex_depth64 == 1);
+	device_flush_calls64++;
+	return 0;
+}
+
 const struct BLOCK64_OPS ahci64_ops = {
-	"fault64", transport_read64, transport_write64, transport_sectors64
+	"fault64", transport_read64, transport_write64, transport_sectors64, transport_flush64
 };
 const struct BLOCK64_OPS ata64_ops = {
-	"fault64", transport_read64, transport_write64, transport_sectors64
+	"fault64", transport_read64, transport_write64, transport_sectors64, NULL
 };
 
 int ahci64_probe(void)
@@ -244,6 +252,30 @@ static int run_case64(const char *mode, const char *argument)
 		return 0;
 	}
 	CHECK64(fd64_init() == 0);
+	if (strcmp(mode, "shutdown") == 0 || strcmp(mode, "shutdown-failure") == 0) {
+		uint8_t *data;
+		size_t events;
+
+		CHECK64(fd64_open(&file, FIXTURE_NAME64) == 1);
+		data = cache64_get(FIXTURE_FILE64, CACHE64_WRITE);
+		CHECK64(data != NULL);
+		data[0] = 0x6a;
+		if (strcmp(mode, "shutdown-failure") == 0) {
+			block_fault_arm64(&backend64, 1, FIXTURE_FILE64, 257, 1);
+			CHECK64(fd64_shutdown() == -5 && device_flush_calls64 == 0);
+			CHECK64(cache64_get(FIXTURE_FILE64, CACHE64_READ)[0] == 0x6a);
+			backend64.armed = 0;
+		}
+		CHECK64(fd64_shutdown() == 0 && device_flush_calls64 == 1);
+		CHECK64(fd64_read_only == 1 && backend64.media[FIXTURE_FILE64 * 512] == 0x6a);
+		events = backend64.event_count;
+		CHECK64(fd64_write(&file, "x", 1) == 0);
+		CHECK64(fd64_truncate(&file, 0) == -1);
+		CHECK64(fd64_create(&file, "new.txt") == 0);
+		CHECK64(fd64_open_checked(&file, "new.txt", FILE_WRITING64 | FILE_CREATE64) == -13);
+		CHECK64(backend64.event_count == events);
+		return 0;
+	}
 	if (strcmp(mode, "directory-read-fail") == 0) {
 		block_fault_arm64(&backend64, 0, FIXTURE_DATA64, 257, 0);
 		CHECK64(fd64_open(&file, FIXTURE_NAME64) == 0);

@@ -31,6 +31,7 @@ static uint8_t reset_value;
 static uint32_t reset_writes;
 static int reset_stuck, probe_model64;
 static uint32_t present64, command64;
+static uint32_t status_values64[2], status_index64;
 
 static void set_interrupts(const uint32_t *values, uint32_t count)
 {
@@ -69,6 +70,11 @@ uint32_t sdhci64_test_read32(uint32_t offset)
 	uint32_t value;
 
 	if (offset == SDHCI_PRESENT_STATE) { return present64; }
+	if (!probe_model64 && offset == SDHCI_RESPONSE0 && command64 == 13) {
+		value = status_values64[status_index64];
+		if (status_index64 == 0) { status_index64++; }
+		return value;
+	}
 	if (probe_model64 && offset == SDHCI_RESPONSE0) { return command64 == 8 ? 0x1aa : 0; }
 	if (probe_model64 && offset == SDHCI_CLOCK_CONTROL) { return SDHCI_CLOCK_INT_STABLE; }
 	if (offset == SDHCI_BUFFER) {
@@ -290,11 +296,43 @@ static void test_poll_deadlines64(void)
 	probe_model64 = 0;
 }
 
+static void test_flush_ready64(void)
+{
+	const uint32_t complete[] = { 1 };
+	unsigned int failures;
+
+	set_interrupts(complete, 1);
+	card_ready = 1;
+	card_rca = 1;
+	present64 = 0;
+	status_index64 = 0;
+	status_values64[0] = 7U << 9; /* Programming, not ready. */
+	status_values64[1] = (1U << 8) | (4U << 9);
+	assert(sdhci64_ops.flush() == 0 && command64 == 13 && status_index64 == 1);
+
+	status_index64 = 0;
+	status_values64[0] = status_values64[1] = 7U << 9;
+	test_clock64 = UINT64_MAX - 500U;
+	failures = poll_failures64;
+	assert(sdhci64_ops.flush() == -110 && poll_failures64 == failures + 1);
+	assert(strcmp(poll_last64.stage, "flush-ready") == 0);
+	assert(poll_last64.value == (7U << 9) && poll_last64.error == -110);
+
+	status_index64 = 0;
+	status_values64[0] = 1U << 19; /* R1 generic card error. */
+	assert(sdhci64_ops.flush() == -5);
+	assert(strcmp(poll_last64.stage, "flush-status") == 0);
+	assert(poll_last64.value == (1U << 19) && poll_last64.error == -5);
+	card_ready = 0;
+	assert(sdhci64_ops.flush() == -5);
+}
+
 int main(void)
 {
 	int status;
 
 	test_poll_deadlines64();
+	test_flush_ready64();
 	status = test_capacity_decode();
 	if (status != 0) {
 		return status;

@@ -80,5 +80,11 @@ size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size);
 int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size);
 /* dirty 섹터만 내보낸다. 내보낸 섹터 수를 돌려주고, 입출력 오류면 -1. */
 int fd64_sync(void);
+/* Task context: drain writers under the filesystem mutex, write back in
+ * data/FAT/directory order, flush the device, then seal the volume read-only.
+ * Returns 0 or negative errno. Failure never authorizes power removal; retry
+ * remains possible, preserving any read-only state set by writeback recovery.
+ */
+int fd64_shutdown(void);
 
 #endif

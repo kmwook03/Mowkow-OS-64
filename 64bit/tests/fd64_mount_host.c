@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <assert.h>
 
 #include "../src64/kernel/fd64.c"
 
@@ -18,6 +19,9 @@ static uint8_t boot_sector[FD64_SECTOR_SIZE];
 static uint64_t device_sectors;
 static int root_chain_valid;
 static int flush_failures;
+static int device_flush_status;
+static int device_flush_calls;
+static int flush_steps;
 static uint32_t mutex_depth;
 static uint32_t mutex_locks;
 static uint32_t mutex_unlocks;
@@ -82,17 +86,30 @@ uint8_t *cache64_get(uint32_t lba, int mode)
 
 int cache64_flush(uint32_t start, uint32_t end, int meta)
 {
-	(void) start;
-	(void) end;
-	(void) meta;
+	const uint32_t data = TEST_RESERVED_SECTORS + TEST_FAT_COUNT * TEST_SECTORS_PER_FAT;
+	int step = flush_steps++ % 3;
+
+	assert(mutex_depth == 1);
+	assert(start == (step == 0 ? data : 0));
+	assert(end == (step == 1 ? data : UINT32_MAX));
+	assert(meta == (step == 2));
 	if (flush_failures < 0) {
+		flush_steps = 0;
 		return -1;
 	}
 	if (flush_failures > 0) {
 		flush_failures--;
+		flush_steps = 0;
 		return -1;
 	}
 	return 0;
+}
+
+int block64_flush(void)
+{
+	assert(mutex_depth == 1 && flush_steps == 3);
+	device_flush_calls++;
+	return device_flush_status;
 }
 
 uint64_t block64_sector_count(void)
@@ -125,6 +142,9 @@ static void make_valid_bpb(void)
 	device_sectors = TEST_TOTAL_SECTORS;
 	root_chain_valid = 1;
 	flush_failures = 0;
+	flush_steps = 0;
+	device_flush_calls = 0;
+	device_flush_status = 0;
 	fd64_initialized = 0;
 }
 
@@ -226,8 +246,36 @@ static int test_sync_read_only(void)
 	CHECK64(fd64_sync() == 0);
 	CHECK64(fd64_read_only == 0);
 	flush_failures = -1;
+	flush_steps = 0;
 	CHECK64(fd64_sync() == -1);
 	CHECK64(fd64_read_only == 1);
+	return 0;
+}
+
+static int test_shutdown_durability(void)
+{
+	make_valid_bpb();
+	CHECK64(fd64_init() == 0);
+	device_flush_status = -5;
+	CHECK64(fd64_shutdown() == -5);
+	CHECK64(device_flush_calls == 1 && fd64_read_only == 0);
+	flush_steps = 0;
+	device_flush_status = 0;
+	CHECK64(fd64_shutdown() == 0);
+	CHECK64(device_flush_calls == 2 && fd64_read_only == 1);
+
+	make_valid_bpb();
+	CHECK64(fd64_init() == 0);
+	flush_failures = -1;
+	CHECK64(fd64_shutdown() == -5);
+	CHECK64(device_flush_calls == 0 && fd64_read_only == 1);
+	flush_failures = 0;
+	CHECK64(fd64_shutdown() == 0);
+	CHECK64(device_flush_calls == 1 && fd64_read_only == 1);
+
+	make_valid_bpb();
+	CHECK64(fd64_shutdown() == -5);
+	CHECK64(device_flush_calls == 0);
 	return 0;
 }
 
@@ -251,6 +299,8 @@ int main(void)
 	if (status != 0) {
 		return status;
 	}
+	CHECK64(mutex_depth == 0 && mutex_locks == mutex_unlocks);
+	CHECK64(test_shutdown_durability() == 0);
 	CHECK64(mutex_depth == 0 && mutex_locks == mutex_unlocks);
 	return mutex_locks != 0 ? 0 : __LINE__;
 }

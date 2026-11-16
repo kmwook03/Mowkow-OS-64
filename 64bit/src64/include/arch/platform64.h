@@ -19,6 +19,10 @@ void platform_irq_enable64(void);
 void platform_halt64(void);
 void platform_halt_with_irq64(void);
 void platform_wait_for_interrupt64(void);
+/* Final power transition, called with IRQs disabled after storage is sealed.
+ * Returns negative errno if unavailable/unsuccessful; caller must halt safely.
+ */
+int platform_poweroff64(void);
 
 /* Non-sleeping display visibility hook; bytes must not wrap the address.
  * AArch64 cleans enclosing D-cache lines to PoC; x86 VBE needs no cache clean.

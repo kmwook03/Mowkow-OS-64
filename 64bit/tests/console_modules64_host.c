@@ -16,6 +16,7 @@
 #include <mtask64.h>
 #include <process64.h>
 #include <sheet64.h>
+#include <shutdown64.h>
 #include <syscall64.h>
 #include <timer64.h>
 #include <window64.h>
@@ -47,6 +48,15 @@ static int shift64, ctrl64, irq64, sleeps64, wakes64, refreshes64;
 static int opens64, closes64, toggles64, executions64, interpreters64;
 static int close_status64 = -22;
 static struct CONSOLE64 *close_owner64;
+static int shutdown_calls64;
+static struct CONSOLE64 *shutdown_owner64;
+
+void shutdown64(struct CONSOLE64 *con)
+{
+	shutdown_calls64++;
+	shutdown_owner64 = con;
+}
+
 static int nano_elf64;
 static int force_status64, program_status64;
 static size_t allocations64, frees64;
@@ -501,6 +511,11 @@ int main(void)
 	post64(&input, ascii, sizeof(ascii) / sizeof(ascii[0]));
 	assert(console64_drain_input(&input) == 5 && input.input_len == 0);
 	console64_destroy(&input);
+	command64(second, "shutdown");
+	assert(shutdown_calls64 == 1 && shutdown_owner64 == second);
+	command64(third, "시스템종료");
+	assert(shutdown_calls64 == 2 && shutdown_owner64 == third);
+	assert(closes64 == 0 && !second->close_requested && !third->close_requested);
 	close_status64 = 0;
 	command64(second, "exit");
 	assert(close_owner64 == second && !boot->close_requested && !third->close_requested);
