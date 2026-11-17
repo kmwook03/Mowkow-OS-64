@@ -473,6 +473,7 @@ static void expect_status64(int language)
 
 static void expect_fullscreen64(struct CONSOLE64 *con)
 {
+	while (gui64_present()) { }
 	gui_update_status64();
 	assert(gui_context64.mode == GUI64_MODE_FULL);
 	assert(gui_context64.status->height == -1 && gui_context64.taskbar->height == -1);
@@ -513,6 +514,7 @@ static void mouse_visibility64(void)
 	for (int i = 0; i < 2; i++) {
 		assert(gui_toggle_window_checked64() == 0);
 		gui64_mouse_event(308 - gui_context64.mx, 226 - gui_context64.my, 0);
+		while (gui64_present()) { }
 		assert(gui_context64.ctl->map[226 * WIDTH64 + 308] ==
 			(uint8_t) (gui_context64.cursor - gui_context64.ctl->sheets0));
 		verify64();
@@ -596,9 +598,11 @@ static void status_indicator64(void)
 	gui64_mouse_event(0, 0, 0);
 	assert(gui64_focused_console() == con && gui_context64.drag == NULL);
 	assert(memcmp(snapshot, gui_context64.status_buf, sizeof(snapshot)) == 0);
+	while (gui64_present()) { }
 	assert(gui_context64.ctl->map[226 * WIDTH64 + 308] ==
 		(uint8_t) (gui_context64.cursor - gui_context64.ctl->sheets0));
 	gui64_mouse_event(-308, -226, 0);
+	while (gui64_present()) { }
 	assert(vram64[226 * STRIDE64 + 308] == snapshot[14 * 32 + 20]);
 	/* A drag cannot move application content into the reserved footer. */
 	gui64_mouse_event(con->sheet->vx0 + 32 - gui_context64.mx,

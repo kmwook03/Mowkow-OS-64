@@ -14,6 +14,8 @@ struct CONSOLE64;
    콘솔 시트를 돌려주며, 실패하면 NULL (호출자는 LFB 직접 그리기로 되돌아간다). */
 struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info);
 int gui64_available(void);
+/* Main-loop task context, IRQs enabled. Bounded presentation; 1 means pending. */
+int gui64_present(void);
 
 /* 콘솔 창을 전체 화면 <-> 바탕화면 위의 창 모드로 전환한다. */
 void gui64_toggle_window(void);

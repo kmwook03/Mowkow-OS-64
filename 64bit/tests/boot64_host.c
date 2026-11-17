@@ -196,6 +196,13 @@ void init_palette64(void)
 }
 void console64_init(const struct BOOTINFO64 *info) { assert(info != NULL); phase_expect64(7); }
 int gui64_available(void) { return mode64 != GUI_FAIL64; }
+static int presents64;
+int gui64_present(void)
+{
+	assert(irq64 == 0);
+	/* Keep work pending beyond all five events to exercise the empty-FIFO path. */
+	return ++presents64 < 8;
+}
 int task_init64(void)
 {
 	phase_expect64(8);
@@ -221,6 +228,7 @@ int task_run64(struct TASK64 *task, int level, int priority)
 int task_sleep64(struct TASK64 *task)
 {
 	assert(task == &main_task64 && irq64 == 1 && phase64 == 13);
+	assert(presents64 == 8);
 	longjmp(stop64, 1);
 }
 void init_pit64(struct FIFO64 *fifo) { assert(fifo->task == &main_task64); phase_expect64(10); }
@@ -270,6 +278,7 @@ static void run_case64(int mode)
 
 	mode64 = mode;
 	phase64 = 0;
+	presents64 = 0;
 	irq64 = 1;
 	uart_writes64 = reaps64 = routed64 = system64 = 0;
 	creates64 = writes64 = syncs64 = font_installs64 = reads64 = 0;

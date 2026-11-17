@@ -7,6 +7,8 @@
 #include <stdint.h>
 
 #define MAX_SHEETS64 256
+#define SHEET64_TILE_WIDTH 32
+#define SHEET64_TILE_HEIGHT 8
 
 struct SHTCTL64;
 struct TASK64;
@@ -28,7 +30,11 @@ struct SHTCTL64 {
 	struct FRAMEBUFFER64 framebuffer;
 	uint8_t *vram;
 	size_t vram_size;
-	uint8_t *map;                   /* 픽셀별 시트 ID, xsize 간격 */
+	uint8_t *map;                   /* Last presented owners; not a hit-test map. */
+	size_t map_size;               /* Owner map and trailing tile damage bytes. */
+	uint8_t *dirty;
+	size_t tile_columns, tile_count, dirty_count, scan_tile;
+	int presenting;
 	int32_t xsize, ysize;
 	uint32_t stride;                /* VRAM 한 행의 바이트 수 (xsize와 다를 수 있음) */
 	uint8_t bpp;                    /* 출력 VRAM: 8bpp indexed 또는 32bpp RGB */
@@ -42,7 +48,7 @@ struct SHTCTL64 *shtctl64_init(struct MEMMAN64 *man, uint8_t *vram, size_t vram_
 struct SHEET64 *sheet64_alloc(struct SHTCTL64 *ctl);
 /* Invalid buffer descriptors return -22 without changing the sheet.
  * Caller owns buf and must keep size bytes live until hidden/rebound/freed.
- * Task/IRQ safe; operations serialize with irq-save and never sleep.
+ * Mutations only mark damage. Task/IRQ safe, irq-save, never sleep.
  */
 int sheet64_setbuf(struct SHEET64 *sht, uint8_t *buf, size_t size, uint32_t stride,
 	int32_t xsize, int32_t ysize, int32_t col_inv);
@@ -52,5 +58,12 @@ void sheet64_refresh(struct SHEET64 *sht, int32_t bx0, int32_t by0, int32_t bx1,
 void sheet64_slide(struct SHEET64 *sht, int32_t vx0, int32_t vy0);
 void sheet64_free(struct SHEET64 *sht);
 void sheet64_refresh_all(struct SHTCTL64 *ctl);
+/* Main-loop task context with IRQs enabled; boot probes may call before IRQ init.
+ * Copies at most one 32x8 tile under irq-save, then converts/flushes outside it.
+ * ctl/framebuffer must outlive the call. No source pointer survives the guard.
+ * Processes at most tile_budget tiles; returns 1 if work remains, otherwise 0.
+ * Concurrent/reentrant presenters leave work to the active presenter.
+ */
+int sheet64_present(struct SHTCTL64 *ctl, size_t tile_budget);
 
 #endif

@@ -227,6 +227,7 @@ static struct BOOTINFO64 info64(void)
 
 static unsigned long screen_hash64(void)
 {
+	while (gui64_present()) { }
 	unsigned long hash = 0;
 	for (size_t i = 0; i < sizeof(vram64); i++) { hash = hash * 33 + vram64[i]; }
 	return hash;

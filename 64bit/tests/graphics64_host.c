@@ -15,6 +15,8 @@
 const uint8_t hankaku64[4096] = { [65 * 16] = 0xff };
 struct MEMMAN64 memman64;
 static int allocations64, frees64, fail_at64, irq_depth64;
+static size_t converted64, flushed64;
+static void (*during_output64)(void);
 
 uint64_t platform_irq_save64(void)
 {
@@ -46,6 +48,14 @@ int memman64_free_4k(struct MEMMAN64 *man, uintptr_t address, size_t size)
 
 uint32_t graphic64_rgb32(uint8_t index)
 {
+	assert(irq_depth64 == 0);
+	converted64++;
+	if (during_output64 != NULL) {
+		void (*hook)(void) = during_output64;
+
+		during_output64 = NULL;
+		hook();
+	}
 	return (uint32_t) index * 0x010101U;
 }
 
@@ -148,6 +158,7 @@ static void validation64(void)
 	sheet = sheet64_alloc(ctl);
 	assert(sheet != NULL && sheet->buf == NULL && sheet->vx0 == 0);
 	sheet64_updown(sheet, 0);
+	assert(sheet64_present(ctl, ctl->tile_count) == 0);
 	assert(ctl->top == -1);
 	assert(sheet64_setbuf(sheet, vram, 16, 4, 4, 4, -1) == 0);
 	saved = *sheet;
@@ -195,6 +206,7 @@ static void composition64(uint8_t bpp)
 			sheet64_slide(front, positions[a], positions[b]);
 			sheet64_refresh(front, INT_MIN, INT_MIN, INT_MAX, INT_MAX);
 			sheet64_refresh_all(ctl);
+			assert(sheet64_present(ctl, ctl->tile_count) == 0);
 			for (int y = 0; y < 6; y++) {
 				for (int x = 0; x < 5; x++) {
 					int64_t bx = (int64_t) x - positions[a];
@@ -256,6 +268,7 @@ static void large_stride64(void)
 	sheet = sheet64_alloc(ctl);
 	assert(sheet64_setbuf(sheet, compact, sizeof(compact), 1, 1, 3, -1) == 0);
 	sheet64_updown(sheet, 0);
+	assert(sheet64_present(ctl, ctl->tile_count) == 0);
 	for (size_t y = 0; y < 3; y++) { assert(rows[y * stride] == y + 1); }
 	destroy_ctl64(ctl);
 	memset(compact, 0, sizeof(compact));
@@ -264,6 +277,7 @@ static void large_stride64(void)
 	sheet = sheet64_alloc(ctl);
 	assert(sheet64_setbuf(sheet, rows, (size_t) stride * 2 + 1, stride, 1, 3, -1) == 0);
 	sheet64_updown(sheet, 0);
+	assert(sheet64_present(ctl, ctl->tile_count) == 0);
 	for (size_t y = 0; y < 3; y++) { assert(compact[y] == y + 1); }
 	destroy_ctl64(ctl);
 	assert(munmap(rows, extent) == 0);
@@ -313,6 +327,7 @@ static void guarded_console64(void)
 	/* Hit testing must subtract in int64 and use source stride. */
 	gui_context64.ctl = ctl;
 	sheet64_updown(sheet, 0);
+	assert(sheet64_present(ctl, ctl->tile_count) == 0);
 	ctl->top = 1; /* hit_test excludes the top cursor slot */
 	int32_t bx, by;
 	assert(hit_test(2, 2, &bx, &by) == sheet && bx == 2 && by == 2);
@@ -324,6 +339,150 @@ static void guarded_console64(void)
 	assert(munmap(memory, 3 * page) == 0);
 }
 
+/* Independent oracle paints bottom to top without using the damage/owner map. */
+static void expect_scene64(struct SHTCTL64 *ctl)
+{
+	for (int y = 0; y < ctl->ysize; y++) {
+		for (int x = 0; x < ctl->xsize; x++) {
+			uint8_t expected = 0;
+			uint32_t actual;
+
+			for (int h = 0; h <= ctl->top; h++) {
+				struct SHEET64 *sht = ctl->sheets[h];
+				int64_t bx = (int64_t) x - sht->vx0;
+				int64_t by = (int64_t) y - sht->vy0;
+				uint8_t color;
+
+				if (bx < 0 || by < 0 || bx >= sht->bxsize || by >= sht->bysize) { continue; }
+				color = sht->buf[(size_t) by * sht->stride + (size_t) bx];
+				if (sht->col_inv == -1 || color != sht->col_inv) { expected = color; }
+			}
+			memcpy(&actual, ctl->vram + (size_t) y * ctl->stride + x * 4, 4);
+			assert(actual == (uint32_t) expected * 0x010101U);
+		}
+	}
+}
+
+static void deferred_damage64(void)
+{
+	uint32_t pixels[76 * 19];
+	uint8_t background[70 * 19], overlay[41 * 13], replacement[9 * 7];
+	struct SHTCTL64 *ctl;
+	struct SHEET64 *back, *front;
+	size_t before;
+
+	memset(pixels, 0xa5, sizeof(pixels));
+	memset(background, 1, sizeof(background));
+	memset(overlay, 2, sizeof(overlay));
+	memset(replacement, 3, sizeof(replacement));
+	ctl = shtctl64_init(&memman64, (uint8_t *) pixels, sizeof(pixels), 70, 19, 76 * 4, 32);
+	assert(ctl != NULL);
+	back = sheet64_alloc(ctl);
+	front = sheet64_alloc(ctl);
+	assert(sheet64_setbuf(back, background, sizeof(background), 70, 70, 19, -1) == 0);
+	assert(sheet64_setbuf(front, overlay, sizeof(overlay), 41, 41, 13, 0) == 0);
+	before = flushed64;
+	sheet64_updown(back, 0);
+	sheet64_updown(front, 1);
+	assert(flushed64 == before && pixels[0] == 0xa5a5a5a5U);
+	assert(sheet64_present(ctl, 0) == 1 && flushed64 == before);
+	before = converted64;
+	assert(sheet64_present(ctl, 1) == 1);
+	assert(converted64 - before == 32 * 8);
+	while (sheet64_present(ctl, 2)) { }
+	expect_scene64(ctl);
+	before = flushed64;
+	for (int i = 0; i < 50; i++) { sheet64_slide(front, 0, 0); }
+	assert(sheet64_present(ctl, 1) == 0 && flushed64 == before);
+	/* Repeated refreshes of one pixel collapse to one tile, with no full refresh. */
+	for (int i = 0; i < 50; i++) { sheet64_refresh(front, 1, 1, 2, 2); }
+	before = converted64;
+	assert(sheet64_present(ctl, 1) == 0 && converted64 - before == 32 * 8);
+	for (int step = 0; step < 120; step++) {
+		before = flushed64;
+		sheet64_slide(front, (step * 17) % 100 - 30, (step * 7) % 40 - 13);
+		sheet64_updown(front, step % 5 == 0 ? -1 : step % 2);
+		overlay[(step * 11) % sizeof(overlay)] ^= 2; /* Opaque <-> transparent. */
+		sheet64_refresh(front, INT_MIN, INT_MIN, INT_MAX, INT_MAX);
+		assert(flushed64 == before);
+		while (sheet64_present(ctl, 1)) { }
+		expect_scene64(ctl);
+	}
+	sheet64_updown(front, 1);
+	sheet64_slide(front, 17, 5);
+	while (sheet64_present(ctl, 2)) { }
+	assert(sheet64_setbuf(front, replacement, sizeof(replacement), 9, 9, 7, -1) == 0);
+	while (sheet64_present(ctl, 2)) { }
+	expect_scene64(ctl); /* Rebind invalidates the old extent as well as the new. */
+	sheet64_free(front);
+	while (sheet64_present(ctl, 2)) { }
+	expect_scene64(ctl);
+	sheet64_free(back);
+	while (sheet64_present(ctl, 2)) { }
+	expect_scene64(ctl); /* No remaining sheet clears uncovered pixels to black. */
+	for (int y = 0; y < 19; y++) {
+		for (int x = 70; x < 76; x++) { assert(pixels[y * 76 + x] == 0xa5a5a5a5U); }
+	}
+	destroy_ctl64(ctl);
+}
+
+static struct SHEET64 *preempted_sheet64;
+static uint8_t *old_buffer64;
+static size_t old_capacity64;
+static uint8_t new_buffer64[32 * 8];
+
+static void close_during_output64(void)
+{
+	struct SHTCTL64 *ctl = preempted_sheet64->ctl;
+	struct SHEET64 *reused;
+
+	assert(irq_depth64 == 0);
+	assert(sheet64_present(ctl, 1) == 1); /* A nested presenter cannot overwrite output. */
+	sheet64_free(preempted_sheet64);
+	assert(mprotect(old_buffer64, old_capacity64, PROT_NONE) == 0);
+	reused = sheet64_alloc(ctl);
+	assert(reused == preempted_sheet64);
+	assert(sheet64_setbuf(reused, new_buffer64, sizeof(new_buffer64), 32, 32, 8, -1) == 0);
+	sheet64_updown(reused, 0);
+}
+
+static void preempted_composition64(void)
+{
+	uint32_t pixels[32 * 8];
+	struct SHTCTL64 *ctl;
+	struct SHEET64 *hidden;
+	size_t page = (size_t) sysconf(_SC_PAGESIZE);
+	uint8_t *inaccessible = mmap(NULL, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+	old_capacity64 = page;
+	old_buffer64 = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	assert(inaccessible != MAP_FAILED && old_buffer64 != MAP_FAILED);
+	memset(old_buffer64, 4, page);
+	memset(new_buffer64, 7, sizeof(new_buffer64));
+	ctl = shtctl64_init(&memman64, (uint8_t *) pixels, sizeof(pixels), 32, 8, 128, 32);
+	assert(ctl != NULL);
+	hidden = sheet64_alloc(ctl);
+	preempted_sheet64 = sheet64_alloc(ctl);
+	assert(sheet64_setbuf(hidden, inaccessible, page, 32, 32, 8, -1) == 0);
+	assert(sheet64_setbuf(preempted_sheet64, old_buffer64, page, 32, 32, 8, -1) == 0);
+	sheet64_updown(hidden, 0);
+	sheet64_updown(preempted_sheet64, 1);
+	assert(sheet64_present(ctl, 1) == 0); /* Fully hidden buffers are never read. */
+	for (int i = 0; i < 32 * 8; i++) { assert(pixels[i] == 0x040404U); }
+	sheet64_free(hidden);
+	sheet64_refresh(preempted_sheet64, 0, 0, 32, 8);
+	/* The slot reuse must target the same slot as the snapshot. */
+	hidden = sheet64_alloc(ctl);
+	during_output64 = close_during_output64;
+	assert(sheet64_present(ctl, 1) == 1);
+	for (int i = 0; i < 32 * 8; i++) { assert(pixels[i] == 0x040404U); }
+	assert(sheet64_present(ctl, 1) == 0); /* Damage arriving during output survives. */
+	expect_scene64(ctl);
+	sheet64_free(hidden);
+	destroy_ctl64(ctl);
+	assert(munmap(old_buffer64, page) == 0 && munmap(inaccessible, page) == 0);
+}
+
 int main(void)
 {
 	rectangles64();
@@ -332,17 +491,23 @@ int main(void)
 	composition64(32);
 	large_stride64();
 	guarded_console64();
+	deferred_damage64();
+	preempted_composition64();
 	assert(irq_depth64 == 0);
 	puts("Graphics rectangles/windows, sheet geometry/stride, clipping and guard pages: PASS");
+	puts("Deferred composition: damage, budgets, occlusion, IRQ-on output and preempted close: PASS");
 	return 0;
 }
 
 void platform_framebuffer_flush64(uintptr_t address, size_t bytes)
 {
+	assert(irq_depth64 == 0);
+	flushed64++;
 	(void) address;
 	(void) bytes;
 }
 
 void platform_framebuffer_sync64(void)
 {
+	assert(irq_depth64 == 0);
 }

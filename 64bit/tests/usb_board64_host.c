@@ -19,7 +19,7 @@ static enum BOARD_CASE64 mode64;
 static uint32_t selected64, keyboard_controller64;
 static unsigned int quarantined64[2], starts64[2], polls64[2], mouse_events64;
 static uint32_t enum_port64[2];
-static unsigned int loops64, beats64, reaps64;
+static unsigned int loops64, beats64, reaps64, presents64;
 static uint64_t clock64;
 static jmp_buf finish64;
 static char serial64[16384];
@@ -140,6 +140,7 @@ void gui64_mouse_event(int32_t dx, int32_t dy, int32_t buttons)
 	mouse_events64++;
 }
 int aarch64_boot_smoke_sheet64(void) { return 0; }
+int gui64_present(void) { presents64++; return 0; }
 int aarch64_boot_smoke_mouse64(void) { return 0; }
 int aarch64_boot_smoke_framebuffer64(const struct BOOTINFO64 *info) { (void) info; return 0; }
 int aarch64_boot_smoke_window64(const struct BOOTINFO64 *info, const uint8_t *font)
@@ -343,11 +344,13 @@ int main(void)
 		memset(enum_port64, 0, sizeof(enum_port64));
 		memset(starts64, 0, sizeof(starts64)); memset(polls64, 0, sizeof(polls64));
 		mouse_events64 = loops64 = beats64 = reaps64 = cursor_updates64 = 0;
+		presents64 = 0;
 		system_keys64 = console_keys64 = 0;
 		clock64 = serial_used64 = 0;
 		assert(setjmp(finish64) == 0 ? (aarch64_high_main(), 0) : loops64 == 6);
 		assert(starts64[0] == 1 && starts64[1] == 1 && beats64 >= 5 && reaps64 == 6);
 		assert(cursor_updates64 == 6);
+		assert(presents64 == 6);
 		if (mode64 == NORMAL64) { assert(system_keys64 == 6 && console_keys64 == 5); }
 		if (mode64 == MOUSE_PREFIX64 || mode64 == MOUSE_CONFIG64) {
 			assert(quarantined64[keyboard_controller64 ^ 1U] == 1);

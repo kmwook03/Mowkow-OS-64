@@ -109,6 +109,14 @@ struct GUI_CONTEXT64 {
 
 static struct GUI_CONTEXT64 gui_context64 = { .mmx = -1 };
 
+int gui64_present(void)
+{
+	/* The published controller lives for the entire runtime. Yield back to
+	 * input processing after at most 16 Ki pixels, even during a full redraw.
+	 */
+	return gui_context64.ready ? sheet64_present(gui_context64.ctl, 64) : 0;
+}
+
 static void gui_status_update64(void);
 
 static int gui_release_init64(void)
@@ -133,7 +141,7 @@ static int gui_release_init64(void)
 	if (gui_context64.ctl != NULL) {
 		if (gui_context64.ctl->map != NULL) {
 			status = memman64_free_4k(&memman64, (uintptr_t) gui_context64.ctl->map,
-				gui_context64.screen_size);
+				gui_context64.ctl->map_size);
 			if (status != 0) { return status; }
 			gui_context64.ctl->map = NULL;
 		}
