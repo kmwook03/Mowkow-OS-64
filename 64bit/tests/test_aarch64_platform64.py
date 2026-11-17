@@ -11,10 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class Aarch64Platform64Test(unittest.TestCase):
-    def test_boot_keyboard_and_explicit_storage_probes(self) -> None:
+    def test_boot_gui_keyboard_and_explicit_storage_probes(self) -> None:
         self.run_native(
             "aarch64_boot_smoke64_host.c",
-            ("arch/aarch64/boot_smoke64.c", "arch/aarch64/usbhid64.c", "lib/fifo64.c"),
+            ("arch/aarch64/boot_smoke64.c", "arch/aarch64/usbhid64.c", "lib/fifo64.c",
+             "kernel/sheet64.c", "kernel/framebuffer64.c", "kernel/window64.c",
+             "drivers/graphic64.c", "lib/draw64.c", "lib/hangul64.c", "lib/utf864.c"),
             ("-DMOWKOW64_BOOT_TESTS=1",),
         )
 

@@ -457,6 +457,10 @@ int aarch64_boot_smoke_gui64(const struct BOOTINFO64 *bootinfo,
 
 	putstr64(&surface, 64, 64, COL64_FFFFFF, label);
 	sheet64_refresh(console_sheet, 64, 64, 400, 80);
+	/* Refresh only records damage. Present the boot frame before readback;
+	 * the live GUI loop and console task have not started yet.
+	 */
+	(void) sheet64_present(console_sheet->ctl, console_sheet->ctl->tile_count);
 	found = 0;
 	for (y = 64U; y < 80U && found == 0; y++) {
 		row = (volatile uint32_t *) (void *) ((uint8_t *) bootinfo->vram +
