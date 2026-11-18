@@ -161,3 +161,14 @@ int block64_write(uint64_t lba, uint32_t count, const void *src)
 	}
 	return ops->write(physical, count, src);
 }
+
+int block64_flush(void)
+{
+	if (ops == NULL) {
+		return -19;
+	}
+	if (ops->flush == NULL) {
+		return -95;
+	}
+	return ops->flush();
+}

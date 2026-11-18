@@ -193,6 +193,7 @@ static void sheet_smoke64(void)
 	b->vy0 = 8;
 	sheet64_updown(a, 0);
 	sheet64_updown(b, 1);
+	(void) sheet64_present(ctl, ctl->tile_count);
 
 	/* b는 (8,8)에서 16x16이므로 x,y 8..23을 덮는다. */
 	if (smoke_pixel64(0, 0) != 1) { ok = 0; }            /* a만 있는 곳 */
@@ -202,13 +203,14 @@ static void sheet_smoke64(void)
 	if (smoke_vram64[8 * SMOKE_WIDTH64 + 8] != 0) { ok = 0; }  /* 스트라이드를 xsize로 잘못 쓰면 여기 값이 남는다 */
 
 	sheet64_slide(b, 40, 0);
+	(void) sheet64_present(ctl, ctl->tile_count);
 	if (smoke_pixel64(8, 8) != 1) { ok = 0; }            /* b가 비켜난 자리를 a가 되칠함 */
 	if (smoke_pixel64(40, 0) != 2) { ok = 0; }
 
 	x86_boot_log64(ok ? "sheet64 smoke=ok\r\n" : "sheet64 smoke=FAIL\r\n");
 
 	memman64_free_4k(&memman64, (uintptr_t) ctl->map,
-		(size_t) SMOKE_WIDTH64 * (size_t) SMOKE_HEIGHT64);
+		ctl->map_size);
 	memman64_free_4k(&memman64, (uintptr_t) ctl, sizeof (struct SHTCTL64));
 }
 

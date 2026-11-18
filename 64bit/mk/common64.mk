@@ -7,6 +7,7 @@
 # ---------------------------------------------------------------------------
 
 COMMON64_C_SRCS = \
+	$(SRC64_DIR)/kernel/address_space64.c \
 	$(SRC64_DIR)/drivers/block64.c \
 	$(SRC64_DIR)/drivers/graphic64.c \
 	$(SRC64_DIR)/kernel/cache64.c \
@@ -26,7 +27,9 @@ COMMON64_C_SRCS = \
 	$(SRC64_DIR)/kernel/mutex64.c \
 	$(SRC64_DIR)/kernel/process64.c \
 	$(SRC64_DIR)/kernel/sheet64.c \
+	$(SRC64_DIR)/kernel/shutdown64.c \
 	$(SRC64_DIR)/kernel/syscall64.c \
+	$(SRC64_DIR)/kernel/user_access64.c \
 	$(SRC64_DIR)/kernel/window64.c \
 	$(SRC64_DIR)/lib/draw64.c \
 	$(SRC64_DIR)/lib/fifo64.c \

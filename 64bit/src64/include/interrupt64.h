@@ -7,6 +7,7 @@
 #define INTERRUPT64_FRAME_VECTOR_OFFSET 120
 #define INTERRUPT64_FRAME_ERROR_OFFSET  128
 #define INTERRUPT64_FRAME_RIP_OFFSET    136
+#define INTERRUPT64_FRAME_CS_OFFSET     144
 #define INTERRUPT64_FRAME_RSP_OFFSET    160
 #define INTERRUPT64_FRAME_SIZE          176
 
@@ -41,6 +42,8 @@ _Static_assert(offsetof(struct INTERRUPT_FRAME64, error) ==
 	INTERRUPT64_FRAME_ERROR_OFFSET, "x86_64 error frame offset mismatch");
 _Static_assert(offsetof(struct INTERRUPT_FRAME64, rip) ==
 	INTERRUPT64_FRAME_RIP_OFFSET, "x86_64 RIP frame offset mismatch");
+_Static_assert(offsetof(struct INTERRUPT_FRAME64, cs) ==
+	INTERRUPT64_FRAME_CS_OFFSET, "x86_64 user-return CS offset mismatch");
 _Static_assert(offsetof(struct INTERRUPT_FRAME64, rsp) ==
 	INTERRUPT64_FRAME_RSP_OFFSET, "x86_64 RSP frame offset mismatch");
 _Static_assert(sizeof(struct INTERRUPT_FRAME64) == INTERRUPT64_FRAME_SIZE,

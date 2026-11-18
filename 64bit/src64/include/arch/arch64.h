@@ -37,7 +37,7 @@ void arch64_exception_handler(uint64_t vector, uint64_t esr, uint64_t elr,
 void arch64_kernel_sync_handler(const struct ARCH64_EXCEPTION_FRAME *frame,
 	uint64_t esr, uint64_t far);
 uint64_t arch64_sync_dispatch(struct ARCH64_EXCEPTION_FRAME *frame,
-	uint64_t esr);
+	uint64_t esr, uint64_t far);
 void arch64_mmu_init(void);
 void arch64_mmu_finish_high(void);
 int arch64_mmu_self_test(void);

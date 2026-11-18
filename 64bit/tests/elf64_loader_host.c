@@ -2,6 +2,8 @@
 #include <string.h>
 
 #include "../src64/kernel/elf64_loader.c"
+#include "elf_loader_fixture64.h"
+#include <arch/platform64.h>
 
 #define CHECK64(condition) do { \
 	if (!(condition)) { \
@@ -62,6 +64,17 @@ size_t fd64_read(struct FDHANDLE64 *fh, void *dst, size_t size)
 	return size;
 }
 
+int fd64_open_checked(struct FDHANDLE64 *fh, const char *name, unsigned int flags)
+{
+	(void) flags;
+	return fd64_open(fh, name) ? 0 : -1;
+}
+
+int64_t fd64_read_checked(struct FDHANDLE64 *fh, void *dst, size_t size)
+{
+	return (int64_t) fd64_read(fh, dst, size);
+}
+
 static struct ELF64_EHDR *header64(void)
 {
 	return (struct ELF64_EHDR *) fixture;
@@ -120,9 +133,8 @@ static int reject_fixture64(int expected)
 	struct PROCESS64 process = {0};
 	size_t available = memman64_total(&memman64);
 
-	CHECK64(elf64_load_process("fixture", &process) == expected);
+	CHECK64(load_fixture64("fixture", &process) == expected);
 	CHECK64(memman64_total(&memman64) == available);
-	CHECK64(image_owner == NULL);
 	CHECK64(process.entry == 0 && process.image.size == 0);
 	CHECK64(irq_depth == 0 && irq_errors == 0);
 	return 0;
@@ -130,33 +142,12 @@ static int reject_fixture64(int expected)
 
 static int test_ownership_cleanup64(void)
 {
-	struct PROCESS64 owner = {0};
-	struct PROCESS64 other = {0};
-	size_t available = memman64_total(&memman64);
-	uint32_t saves;
-
-	reset_fixture64();
-	fixture_open_failure = 1;
+	reset_fixture64(); fixture_open_failure = 1;
 	CHECK64(reject_fixture64(-1) == 0);
-	reset_fixture64();
-	fixture_size = sizeof allocation_pool + MEMMAN64_PAGE_SIZE;
-	CHECK64(reject_fixture64(-2) == 0);
-	reset_fixture64();
-	fixture_size = 0;
-	CHECK64(reject_fixture64(-2) == 0);
-	reset_fixture64();
-	image_owner = &owner;
-	CHECK64(elf64_load_process("fixture", &other) == -8);
-	CHECK64(image_owner == &owner);
-	CHECK64(memman64_total(&memman64) == available);
-	saves = irq_saves;
-	elf64_release_process(&other);
-	CHECK64(image_owner == &owner && irq_saves == saves + 1);
-	elf64_release_process(&owner);
-	CHECK64(image_owner == NULL);
-	elf64_release_process(&owner);
-	CHECK64(image_owner == NULL);
-	CHECK64(irq_depth == 0 && irq_errors == 0);
+	reset_fixture64(); fixture_size = sizeof allocation_pool + MEMMAN64_PAGE_SIZE;
+	CHECK64(reject_fixture64(-12) == 0);
+	reset_fixture64(); fixture_size = 0;
+	CHECK64(reject_fixture64(-4) == 0);
 	return 0;
 }
 
@@ -211,6 +202,11 @@ static int test_segment_ranges64(void)
 	segments64()[1].p_memsz = 0;
 	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
 	CHECK64(high == USER_IMAGE_MIN + 0x1000);
+	/* GNU ld can emit an unused explicit data PHDR for tiny AArch64 apps. */
+	segments64()[1].p_vaddr = 0;
+	segments64()[1].p_offset = 0xe8;
+	segments64()[1].p_align = 0x10000;
+	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
 	reset_fixture64();
 	segments64()[0].p_offset = UINT64_MAX - 0xfff;
 	segments64()[0].p_filesz = 0x2000;
@@ -286,6 +282,8 @@ static int test_alignment_and_overlap64(void)
 	segments64()[0].p_memsz = 16;
 	segments64()[1].p_vaddr = USER_IMAGE_MIN + 16;
 	segments64()[1].p_offset += 16;
+	CHECK64(reject_fixture64(-5) == 0);
+	segments64()[1].p_flags = PF_R64;
 	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
 	return 0;
 }
@@ -398,11 +396,14 @@ static int test_segment_flags64(void)
 		segments64()[1].p_flags |= invalid_flags[i];
 		CHECK64(reject_fixture64(-5) == 0);
 	}
-	/* Validate the mask without claiming that hardware enforces W^X/NX. */
+	/* Only readable R, RW and RX pages are representable under W^X. */
 	for (flags = 0; flags <= PF_MASK64; flags++) {
 		reset_fixture64();
 		segments64()[1].p_flags = flags;
-		CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+		int expected = flags == PF_R64 || flags == (PF_R64 | PF_W64) ||
+			flags == (PF_R64 | PF_X64) ? 0 : -5;
+
+		CHECK64(image_range64(fixture, fixture_size, &low, &high) == expected);
 	}
 	for (i = 0; i < sizeof unsupported_types / sizeof unsupported_types[0]; i++) {
 		reset_fixture64();

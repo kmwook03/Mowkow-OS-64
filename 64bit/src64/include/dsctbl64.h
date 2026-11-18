@@ -86,6 +86,8 @@ _Static_assert(offsetof(struct TSS64, io_map_base) == 102,
 _Static_assert(sizeof(struct TSS64) == 104, "invalid x86_64 TSS size");
 
 void init_gdtidt64(void);
+/* IRQ-off; top is a prepared, aligned process entry stack or zero fallback. */
+void set_tss_stack64(uintptr_t top);
 void init_fpu64(void);
 void set_gdt64_desc(struct GDT64_DESCRIPTOR *sd, uint32_t limit,
 	uint32_t base, uint8_t access, uint8_t flags);

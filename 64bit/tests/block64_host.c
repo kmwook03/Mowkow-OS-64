@@ -17,6 +17,8 @@ static uint32_t last_count;
 static uint32_t read_calls;
 static uint32_t write_calls;
 static int invalid_probe;
+static int flush_calls;
+static int flush_status;
 
 static void write32(uint8_t *p, uint32_t value)
 {
@@ -78,25 +80,34 @@ static uint64_t fake_sector_count(void)
 	return fake_sectors;
 }
 
+static int fake_flush(void)
+{
+	flush_calls++;
+	return flush_status;
+}
+
 const struct BLOCK64_OPS ahci64_ops = {
 	"fake-ahci",
 	fake_read,
 	fake_write,
-	fake_sector_count
+	fake_sector_count,
+	fake_flush
 };
 
 const struct BLOCK64_OPS ata64_ops = {
 	"fake-ata",
 	fake_read,
 	fake_write,
-	fake_sector_count
+	fake_sector_count,
+	fake_flush
 };
 
 const struct BLOCK64_OPS sdhci64_ops = {
 	"fake-sdhci",
 	fake_read,
 	fake_write,
-	fake_sector_count
+	fake_sector_count,
+	fake_flush
 };
 
 int ahci64_probe(void)
@@ -176,6 +187,8 @@ int main(void)
 {
 	int status;
 
+	CHECK64(block64_flush() == -19);
+	CHECK64(flush_calls == 0);
 	status = test_partition_and_capacity();
 	if (status != 0) {
 		return status;
@@ -184,5 +197,10 @@ int main(void)
 	if (status != 0) {
 		return status;
 	}
+	CHECK64(block64_flush() == 0 && flush_calls == 1);
+	flush_status = -5;
+	CHECK64(block64_flush() == -5 && flush_calls == 2);
+	flush_status = -110;
+	CHECK64(block64_flush() == -110 && flush_calls == 3);
 	return test_unknown_capacity();
 }

@@ -107,6 +107,7 @@ int aarch64_boot_smoke_sheet64(void)
 	sheet->vx0 = 0;
 	sheet->vy0 = 0;
 	sheet64_updown(sheet, 0);
+	(void) sheet64_present(ctl, ctl->tile_count);
 	row0 = (uint32_t *) (void *) sheet_smoke_vram64;
 	row1 = (uint32_t *) (void *) (sheet_smoke_vram64 + SHEET_SMOKE_STRIDE64);
 	if (row0[0] != 0x00ff0000U || row0[1] != 0x0000ff00U ||
@@ -199,6 +200,7 @@ int aarch64_boot_smoke_framebuffer64(const struct BOOTINFO64 *bootinfo)
 	sheet->vx0 = 0;
 	sheet->vy0 = 0;
 	sheet64_updown(sheet, 0);
+	(void) sheet64_present(ctl, ctl->tile_count);
 	first_row = (volatile uint32_t *) (void *) vram;
 	if (first_row[0] != 0x00ff0000U || first_row[32] != 0x0000ff00U ||
 			first_row[64] != 0x000000ffU || first_row[96] != 0x00ffffffU ||
@@ -249,6 +251,7 @@ int aarch64_boot_smoke_window64(const struct BOOTINFO64 *bootinfo,
 	sheet->vx0 = 0;
 	sheet->vy0 = 0;
 	sheet64_updown(sheet, 0);
+	(void) sheet64_present(ctl, ctl->tile_count);
 	row0 = (volatile uint32_t *) (void *) vram;
 	row1 = (volatile uint32_t *) (void *) (vram + bootinfo->bytes_per_scanline);
 	if (row0[0] != 0x00c6c6c6U || row0[WINDOW_SMOKE_WIDTH64 - 1U] != 0U ||
@@ -454,6 +457,10 @@ int aarch64_boot_smoke_gui64(const struct BOOTINFO64 *bootinfo,
 
 	putstr64(&surface, 64, 64, COL64_FFFFFF, label);
 	sheet64_refresh(console_sheet, 64, 64, 400, 80);
+	/* Refresh only records damage. Present the boot frame before readback;
+	 * the live GUI loop and console task have not started yet.
+	 */
+	(void) sheet64_present(console_sheet->ctl, console_sheet->ctl->tile_count);
 	found = 0;
 	for (y = 64U; y < 80U && found == 0; y++) {
 		row = (volatile uint32_t *) (void *) ((uint8_t *) bootinfo->vram +

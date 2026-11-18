@@ -473,6 +473,7 @@ static void expect_status64(int language)
 
 static void expect_fullscreen64(struct CONSOLE64 *con)
 {
+	while (gui64_present()) { }
 	gui_update_status64();
 	assert(gui_context64.mode == GUI64_MODE_FULL);
 	assert(gui_context64.status->height == -1 && gui_context64.taskbar->height == -1);
@@ -483,14 +484,45 @@ static void expect_fullscreen64(struct CONSOLE64 *con)
 			uint8_t owner = gui_context64.ctl->map[y * WIDTH64 + x];
 
 			assert(con->vram[y * con->stride + x] == 0);
-			if (owner == (uint8_t) (gui_context64.cursor - gui_context64.ctl->sheets0)) {
-				continue;
-			}
 			assert(owner == (uint8_t) (con->sheet - gui_context64.ctl->sheets0));
 			assert(vram64[y * STRIDE64 + x] == 0);
 		}
 	}
 	verify64();
+}
+
+static void mouse_visibility64(void)
+{
+	struct CONSOLE64 *con = console64_active();
+	struct CONSOLE64 *other;
+	unsigned long image = screen_hash64();
+
+	/* A hidden pointer must neither repaint nor click through the full console. */
+	gui64_mouse_event(16 - gui_context64.mx, 16 - gui_context64.my, 1);
+	gui64_mouse_event(0, 0, 0);
+	gui64_raise_bottom_window();
+	assert(gui_context64.win_count == 1 && gui64_focused_console() == con);
+	assert(screen_hash64() == image);
+	other = console64_create();
+	assert(other != NULL);
+	gui64_raise_bottom_window();
+	verify64();
+	other->close_ready = 1;
+	console64_reap_closed();
+	assert(gui64_focused_console() == con);
+	current64 = con->task;
+	for (int i = 0; i < 2; i++) {
+		assert(gui_toggle_window_checked64() == 0);
+		gui64_mouse_event(308 - gui_context64.mx, 226 - gui_context64.my, 0);
+		while (gui64_present()) { }
+		assert(gui_context64.ctl->map[226 * WIDTH64 + 308] ==
+			(uint8_t) (gui_context64.cursor - gui_context64.ctl->sheets0));
+		verify64();
+		assert(gui_toggle_window_checked64() == 0);
+		expect_fullscreen64(con);
+	}
+	current64 = &tasks64[0];
+	puts("GUI mouse: hidden in fullscreen, restored in windows, click/F11/close focus: PASS");
 }
 
 static void status_during_capture64(void)
@@ -566,9 +598,11 @@ static void status_indicator64(void)
 	gui64_mouse_event(0, 0, 0);
 	assert(gui64_focused_console() == con && gui_context64.drag == NULL);
 	assert(memcmp(snapshot, gui_context64.status_buf, sizeof(snapshot)) == 0);
+	while (gui64_present()) { }
 	assert(gui_context64.ctl->map[226 * WIDTH64 + 308] ==
 		(uint8_t) (gui_context64.cursor - gui_context64.ctl->sheets0));
 	gui64_mouse_event(-308, -226, 0);
+	while (gui64_present()) { }
 	assert(vram64[226 * STRIDE64 + 308] == snapshot[14 * 32 + 20]);
 	/* A drag cannot move application content into the reserved footer. */
 	gui64_mouse_event(con->sheet->vx0 + 32 - gui_context64.mx,
@@ -670,9 +704,7 @@ static void close_during_capture64(void)
 	console64_reap_closed();
 	assert(con->slot_state == CONSOLE64_LIVE && live64 == resources);
 	current64 = owner;
-	assert(console64_post_input_key(con, 0x1d) == 0);
-	assert(console64_post_input_key(con, 0x2e) == 0);
-	assert(console64_post_input_key(con, 0x9d) == 0);
+	/* Close alone must release the read; no synthetic Ctrl-C is needed. */
 }
 
 static void capture_close64(struct CONSOLE64 *con)
@@ -691,8 +723,48 @@ static void capture_close64(struct CONSOLE64 *con)
 	assert(con->close_ready && fifo64_status(&con->keys) == 1);
 	irq64 = 0;
 	current64 = &tasks64[0];
+	process_busy_console64 = con;
+	console64_reap_closed();
+	assert(con->slot_state == CONSOLE64_LIVE && con->close_ready);
+	assert(gui_close_console_checked64(con) == -16);
+	process_busy_console64 = NULL;
 	console64_reap_closed();
 	assert(con->slot_state == CONSOLE64_FREE);
+}
+
+static void close_input_wait64(void)
+{
+	struct CONSOLE64 *con = console_self64();
+
+	assert(!con->close_requested);
+	console64_request_close(con);
+}
+
+static void close_input64(void)
+{
+	for (int raw = 0; raw < 2; raw++) {
+		struct CONSOLE64 *con = console64_create();
+		char byte = 'X';
+
+		assert(con != NULL);
+		current64 = con->task;
+		console64_set_raw(raw);
+		/* Discard initial RESIZE; the close must wake an empty input wait. */
+		con->raw_queue_head = con->raw_queue_tail;
+		on_sleep64 = close_input_wait64;
+		if (raw) { assert(console64_read_key() == 0); }
+		else { assert(console64_read_con(con, &byte, 1) == 0 && byte == 'X'); }
+		on_sleep64 = unexpected_sleep64;
+		/* A repeated call after close must not re-enter sleep. */
+		if (raw) { assert(console64_read_key() == 0); }
+		else { assert(console64_read_con(con, &byte, 1) == 0); }
+		on_sleep64 = NULL;
+		assert(!con->close_ready && con->render_users == 0);
+		con->close_ready = 1;
+		current64 = &tasks64[0];
+		console64_reap_closed();
+		assert(con->slot_state == CONSOLE64_FREE);
+	}
 }
 
 static void focus_close64(void)
@@ -771,18 +843,71 @@ static void focus_close64(void)
 	boot->close_ready = 1;
 	console64_reap_closed();
 	assert(boot->slot_state == CONSOLE64_FREE && gui64_focused_console() == reused);
+	struct CONSOLE64 *extra = console64_create();
+
+	assert(extra == second); /* Keep slot 0 reserved while another console survives. */
+	extra->close_ready = 1;
+	console64_reap_closed();
 	reused->close_ready = 1;
 	console64_reap_closed();
 	assert(gui_context64.win_count == 0 && gui64_focused_console() == NULL);
 	assert(gui_context64.key_win == gui_context64.back);
 	assert(gui_context64.status_mode < 0 && gui_context64.status_owner == NULL);
+	size_t baseline = live64;
+
+	fail_run64 = 1;
+	assert(console64_create() == NULL);
+	assert(boot->slot_state == CONSOLE64_FREE && gui_context64.console == NULL);
+	assert(gui_context64.win_count == 0 && live64 == baseline);
+	no_failures64();
 	reused = console64_create();
-	assert(reused == first && gui64_focused_console() == reused);
+	assert(reused == boot && gui64_focused_console() == reused);
 	assert(reused->size_generation == 1 && fifo64_status(&reused->keys) == 0);
+	assert(gui_context64.console == reused->sheet);
+	assert(gui_context64.console_buf == reused->sheet->buf);
+	assert(gui_context64.console_buf_size == WIDTH64 * HEIGHT64);
+	current64 = reused->task;
+	for (int i = 0; i < 2; i++) {
+		assert(gui_toggle_window_checked64() == 0);
+		expect_fullscreen64(reused);
+		assert(gui_request_console_close64(reused) == -22);
+		assert(gui_toggle_window_checked64() == 0);
+		assert(reused->width == 160 && reused->height == 100);
+	}
 	verify64();
 	cleanup64();
 	assert(gui64_focused_console() == console64_active()); /* compositor fallback */
 	puts("Console state: four-console routing, modifiers, close/retry and slot reuse: PASS");
+}
+
+static void command_close64(void)
+{
+	struct CONSOLE64 *boot, *other;
+
+	initialize64();
+	boot = console64_active();
+	other = console64_create();
+	assert(other != NULL);
+	assert(gui_request_console_close64(boot) == -22 && !boot->close_requested);
+	assert(gui_request_console_close64(other) == -22 && !other->close_requested);
+	assert(gui_toggle_window_checked64() == 0);
+	assert(gui_request_console_close64(NULL) == -22);
+	assert(gui_request_console_close64(other) == 0);
+	assert(other->close_requested && !other->close_ready && !boot->close_requested);
+	/* Requesting close retains the task and surface until the owner parks. */
+	console64_reap_closed();
+	assert(other->task != NULL && other->vram != NULL && gui_has_console64(other));
+	current64 = other->task;
+	sleep_checks64 = 0;
+	if (setjmp(sleep_stop64) == 0) { entries64[current64 - tasks64](); assert(0); }
+	irq64 = 0;
+	current64 = &tasks64[0];
+	console64_reap_closed();
+	assert(other->slot_state == CONSOLE64_FREE && gui64_focused_console() == boot);
+	assert(gui_request_console_close64(boot) == 0 && boot->close_requested);
+	cleanup64();
+	assert(gui_request_console_close64(boot) == -22 && irq64 == 0);
+	puts("GUI command close: CLI rejection, owner parking, focus and cleanup: PASS");
 }
 
 int main(void)
@@ -791,6 +916,7 @@ int main(void)
 	initialize64();
 	memset(hangul_font64, 0xff, sizeof(hangul_font64));
 	console64_set_hangul_font(hangul_font64);
+	mouse_visibility64();
 	mode_sequences64();
 	capture64();
 	resize_waits64();
@@ -799,7 +925,9 @@ int main(void)
 	caret_ime64();
 	input_mode64();
 	status_indicator64();
+	close_input64();
 	focus_close64();
 	small_status64();
+	command_close64();
 	return 0;
 }

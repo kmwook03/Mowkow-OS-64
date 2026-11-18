@@ -74,6 +74,10 @@
 #define SD_OCR_BUSY (1U << 31)
 #define SD_OCR_CCS (1U << 30)
 #define SD_OCR_VOLTAGE 0x00ff8000U
+#define SD_STATUS_ERRORS64 0xfff9a008U
+#define SD_STATUS_READY64 (1U << 8)
+#define SD_STATUS_STATE_MASK64 (15U << 9)
+#define SD_STATUS_TRANSFER64 (4U << 9)
 
 #define SDHCI_TIMEOUT_MS64 1000U
 #define SDHCI_OCR_TIMEOUT_MS64 1000U
@@ -743,9 +747,46 @@ static uint64_t sdhci64_sector_count(void)
 	return card_sectors;
 }
 
+static int sdhci64_flush(void)
+{
+	struct POLL_DEADLINE64 deadline;
+	uint32_t response;
+
+	/* This SD path never enables an optional card cache. CMD13 confirms that
+	 * programming has finished, beyond the host's transfer-complete interrupt.
+	 */
+	if (card_ready == 0 ||
+			deadline64(&deadline, SDHCI_TIMEOUT_MS64, 1000U, "flush-ready") != 0) {
+		return -5;
+	}
+	for (;;) {
+		if (send_command(13, card_rca << 16,
+				SDHCI_CMD_RESP_SHORT | SDHCI_CMD_CRC | SDHCI_CMD_INDEX,
+				&response) != 0) {
+			return -5;
+		}
+		if ((response & SD_STATUS_ERRORS64) != 0) {
+			aarch64_poll_fail64("sdhci", "flush-status", "RESPONSE0",
+				sdhci + SDHCI_RESPONSE0, response, -5);
+			return -5;
+		}
+		if ((response & (SD_STATUS_READY64 | SD_STATUS_STATE_MASK64)) ==
+				(SD_STATUS_READY64 | SD_STATUS_TRANSFER64)) {
+			return 0;
+		}
+		if (poll_deadline_expired64(&deadline, counter64())) {
+			aarch64_poll_fail64("sdhci", "flush-ready", "RESPONSE0",
+				sdhci + SDHCI_RESPONSE0, response, -110);
+			return -110;
+		}
+		cpu_relax();
+	}
+}
+
 const struct BLOCK64_OPS sdhci64_ops = {
 	"sdhci",
 	sdhci64_read,
 	sdhci64_write,
-	sdhci64_sector_count
+	sdhci64_sector_count,
+	sdhci64_flush
 };

@@ -97,11 +97,11 @@ struct CONSOLE64 {
 	struct TASK64 *task;
 	struct FIFO64 keys;
 	struct EVENT64 key_buf[CONSOLE64_KEY_BUF];
-	/* 창 닫기는 협조적이다. 컴포지터가 close_requested만 세우고 물러나면,
-	   콘솔 태스크가 프롬프트로 돌아온 자리에서 close_ready를 세우고 잠든다.
-	   실제로 부수는 것은 커널 메인 루프(console64_reap_closed)다. 돌고 있는
-	   py/머꼬/앱을 그 자리에서 죽이면 그것들이 쥔 전역 자물쇠를 아무도 놓지
-	   못해 재부팅 전까지 잠긴다. */
+	/* GUI requests never abandon a kernel frame. ELF user returns honor the
+	 * request; input waits unwind and storage operations finish normally.
+	 * The console parks at its command boundary. Main-task reaping waits for
+	 * process cleanup and renderer references before releasing this slot.
+	 */
 	int close_requested;
 	int close_ready;
 };

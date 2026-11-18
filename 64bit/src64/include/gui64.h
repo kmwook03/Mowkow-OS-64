@@ -14,6 +14,8 @@ struct CONSOLE64;
    콘솔 시트를 돌려주며, 실패하면 NULL (호출자는 LFB 직접 그리기로 되돌아간다). */
 struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info);
 int gui64_available(void);
+/* Main-loop task context, IRQs enabled. Bounded presentation; 1 means pending. */
+int gui64_present(void);
 
 /* 콘솔 창을 전체 화면 <-> 바탕화면 위의 창 모드로 전환한다. */
 void gui64_toggle_window(void);
@@ -30,8 +32,8 @@ void gui64_bind_console(struct SHEET64 *sht, struct CONSOLE64 *con);
 struct CONSOLE64 *gui64_focused_console(void);
 
 /* 콘솔용 창을 하나 연다. 버퍼와 시트를 만들고 창을 그린 뒤 콘솔을 붙이고
-   포커스를 준다. 실패하면 -1. 콘솔 0의 전체 화면 창과 달리 창 크기 버퍼만
-   잡는다 (화면 크기 버퍼는 콘솔 0 하나로 족하다). */
+   포커스를 준다. 실패하면 -1. 콘솔 0은 전체 화면 전환을 위해 화면 크기
+   버퍼를 유지하고, 다른 콘솔은 창 크기 버퍼만 잡는다. */
 int gui64_open_console_window(struct CONSOLE64 *con, const char *title);
 
 /* 콘솔 창을 실제로 없앤다. 콘솔이 접힌 뒤 커널이 부른다

@@ -109,6 +109,14 @@ struct GUI_CONTEXT64 {
 
 static struct GUI_CONTEXT64 gui_context64 = { .mmx = -1 };
 
+int gui64_present(void)
+{
+	/* The published controller lives for the entire runtime. Yield back to
+	 * input processing after at most 16 Ki pixels, even during a full redraw.
+	 */
+	return gui_context64.ready ? sheet64_present(gui_context64.ctl, 64) : 0;
+}
+
 static void gui_status_update64(void);
 
 static int gui_release_init64(void)
@@ -133,7 +141,7 @@ static int gui_release_init64(void)
 	if (gui_context64.ctl != NULL) {
 		if (gui_context64.ctl->map != NULL) {
 			status = memman64_free_4k(&memman64, (uintptr_t) gui_context64.ctl->map,
-				gui_context64.screen_size);
+				gui_context64.ctl->map_size);
 			if (status != 0) { return status; }
 			gui_context64.ctl->map = NULL;
 		}
@@ -251,14 +259,14 @@ static void set_title(struct GUI64_WIN *win, const char *title)
    "top-2로 올린다"만으로는 표시줄이 창 밑으로 내려간다. */
 static void raise_win(struct SHEET64 *sht)
 {
-	sheet64_updown(sht, gui_context64.ctl->top);
+	sheet64_updown(sht, gui_context64.ctl->top + 1);
 	if (gui_context64.taskbar != NULL && gui_context64.taskbar->height >= 0) {
 		sheet64_updown(gui_context64.taskbar, gui_context64.ctl->top);
 	}
 	if (gui_context64.status != NULL && gui_context64.status->height >= 0) {
 		sheet64_updown(gui_context64.status, gui_context64.ctl->top);
 	}
-	if (gui_context64.cursor != NULL) {
+	if (gui_context64.cursor != NULL && gui_context64.cursor->height >= 0) {
 		sheet64_updown(gui_context64.cursor, gui_context64.ctl->top);
 	}
 }
@@ -315,12 +323,13 @@ static void taskbar_show(int on)
 {
 	if (on != 0) {
 		if (gui_context64.taskbar != NULL) {
-			sheet64_updown(gui_context64.taskbar, gui_context64.ctl->top);
+			sheet64_updown(gui_context64.taskbar, gui_context64.ctl->top + 1);
 		}
-		sheet64_updown(gui_context64.status, gui_context64.ctl->top);
-		sheet64_updown(gui_context64.cursor, gui_context64.ctl->top);
+		sheet64_updown(gui_context64.status, gui_context64.ctl->top + 1);
+		sheet64_updown(gui_context64.cursor, gui_context64.ctl->top + 1);
 		taskbar_redraw();
 	} else {
+		sheet64_updown(gui_context64.cursor, -1);
 		sheet64_updown(gui_context64.status, -1);
 		sheet64_updown(gui_context64.taskbar, -1);
 	}
@@ -445,7 +454,6 @@ struct SHEET64 *gui64_init(const struct BOOTINFO64 *boot_info)
 	gui_context64.mode = GUI64_MODE_FULL;
 	sheet64_updown(gui_context64.back, 0);
 	sheet64_updown(gui_context64.console, 1);
-	sheet64_updown(gui_context64.cursor, 2);
 	gui_context64.ready = 1;
 	taskbar_show(0);
 	(void) gui_reclaim64();
@@ -619,7 +627,9 @@ int gui_prepare_console64(struct CONSOLE64 *con, const char *title)
 	retire_slot = gui_retire_slot64();
 	if (retire_slot < 0) { return retire_slot; }
 	allocation = &gui_context64.retired[retire_slot];
-	allocation->size = (size_t) gui_context64.win_w * gui_context64.win_h;
+	/* Reopened console 0 must retain capacity for fullscreen transitions. */
+	allocation->size = con == console64_active() ? gui_context64.screen_size :
+		(size_t) gui_context64.win_w * gui_context64.win_h;
 	allocation->address = memman64_alloc_4k(&memman64, allocation->size);
 	if (allocation->address == 0) {
 		*allocation = (struct GUI_ALLOCATION64) { 0 };
@@ -663,6 +673,11 @@ void gui_publish_console64(struct CONSOLE64 *con)
 	struct GUI64_WIN *win = find_console64(con);
 
 	if (win == NULL || win->published) { return; }
+	if (con == console64_active()) {
+		gui_context64.console = win->sht;
+		gui_context64.console_buf = win->buffer;
+		gui_context64.console_buf_size = win->buffer_size;
+	}
 	win->published = 1;
 	raise_win(win->sht);
 	keywin_off(gui_context64.key_win);
@@ -748,17 +763,18 @@ void gui_update_status64(void)
 	platform_irq_restore64(state);
 }
 
-/* 클릭 지점에서 가장 위에 있는 시트를 찾는다. 커서 시트는 항상 맨 위이므로
-   top-1부터 훑는다 (32비트 bootpack.c:337-343). 바탕화면(높이 0)까지 내려가는
-   건 거기 실행 아이콘이 있기 때문이다 -- 배경인지는 호출자가 가려낸다. */
+/* The pointer can be hidden in fullscreen, so scan from the actual top and
+ * explicitly skip it. Desktop icons still need hit testing at height zero.
+ */
 static struct SHEET64 *hit_test(int32_t mx, int32_t my, int32_t *bx, int32_t *by)
 {
 	struct SHEET64 *sht;
 	int32_t j;
 	int64_t x, y;
 
-	for (j = gui_context64.ctl->top - 1; j >= 0; j--) {
+	for (j = gui_context64.ctl->top; j >= 0; j--) {
 		sht = gui_context64.ctl->sheets[j];
+		if (sht == gui_context64.cursor) { continue; }
 		x = (int64_t) mx - sht->vx0;
 		y = (int64_t) my - sht->vy0;
 		if (0 <= x && x < sht->bxsize && 0 <= y && y < sht->bysize) {
@@ -781,7 +797,7 @@ static struct SHEET64 *focus_after_hide(const struct SHEET64 *hidden)
 	struct SHEET64 *sht;
 	int32_t j;
 
-	for (j = gui_context64.ctl->top - 1; j > 0; j--) {
+	for (j = gui_context64.ctl->top; j > 0; j--) {
 		sht = gui_context64.ctl->sheets[j];
 		if (sht != hidden && sht != gui_context64.cursor && find_win(sht) != NULL &&
 			find_win(sht)->published) {
@@ -856,10 +872,24 @@ void gui64_close_console(struct CONSOLE64 *con)
 	(void) gui_close_console_checked64(con);
 }
 
-/* 닫기 버튼. 콘솔 창은 여기서 부수지 않는다 -- py나 머꼬나 앱이 돌고 있으면
-   그 태스크가 쥔 전역 자물쇠(MicroPython 하나, 앱 자리 하나)를 놓지 못한 채
-   죽어서 재부팅 전까지 잠긴다. 표시만 남기면 콘솔이 프롬프트로 돌아온 뒤
-   스스로 접히고, 그때 커널이 gui64_close_console로 돌아온다. */
+int gui_request_console_close64(struct CONSOLE64 *con)
+{
+	uint64_t irq_state = platform_irq_save64();
+	struct GUI64_WIN *win = find_console64(con);
+	int status = -22;
+
+	if (gui_context64.ready && gui_context64.mode == GUI64_MODE_WINDOW &&
+		win != NULL && win->published && win->decorated) {
+		console64_request_close(con);
+		status = 0;
+	}
+	platform_irq_restore64(irq_state);
+	return status;
+}
+
+/* Request only: user-return cancellation and kernel unwinding belong to the
+ * console task. The main task retires the window after its owner parks.
+ */
 static void handle_close(struct SHEET64 *sht)
 {
 	struct GUI64_WIN *win = find_win(sht);

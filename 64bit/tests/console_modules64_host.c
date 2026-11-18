@@ -16,6 +16,7 @@
 #include <mtask64.h>
 #include <process64.h>
 #include <sheet64.h>
+#include <shutdown64.h>
 #include <syscall64.h>
 #include <timer64.h>
 #include <window64.h>
@@ -26,6 +27,16 @@
 #define BYTES64 (STRIDE64 * HEIGHT64)
 
 const uint8_t hankaku64[4096] = { ['A' * 16] = 0xff };
+static const struct CONSOLE64 *process_busy_console64;
+int process64_reap_console64(const struct CONSOLE64 *con)
+{
+	return con == process_busy_console64 ? -16 : 0;
+}
+int process64_console_busy64(const struct CONSOLE64 *con)
+{
+	return con == process_busy_console64;
+}
+
 struct MEMMAN64 memman64;
 struct TASKCTL64 taskctl64;
 struct TIMERCTL64 timerctl64;
@@ -35,6 +46,17 @@ static uint8_t pixels64[CONSOLE64_MAX][BYTES64 + 32];
 static const uint8_t font64[HANGUL64_FONT_SIZE];
 static int shift64, ctrl64, irq64, sleeps64, wakes64, refreshes64;
 static int opens64, closes64, toggles64, executions64, interpreters64;
+static int close_status64 = -22;
+static struct CONSOLE64 *close_owner64;
+static int shutdown_calls64;
+static struct CONSOLE64 *shutdown_owner64;
+
+void shutdown64(struct CONSOLE64 *con)
+{
+	shutdown_calls64++;
+	shutdown_owner64 = con;
+}
+
 static int nano_elf64;
 static int force_status64, program_status64;
 static size_t allocations64, frees64;
@@ -172,6 +194,12 @@ int gui_prepare_console64(struct CONSOLE64 *con, const char *title)
 	return gui64_open_console_window(con, title);
 }
 void gui_publish_console64(struct CONSOLE64 *con) { (void) con; }
+int gui_request_console_close64(struct CONSOLE64 *con)
+{
+	close_owner64 = con;
+	if (close_status64 == 0) { console64_request_close(con); }
+	return close_status64;
+}
 int gui_close_console_checked64(struct CONSOLE64 *con)
 {
 	int status = console_stop_checked64(con);
@@ -386,6 +414,21 @@ int main(void)
 	current64 = boot->task;
 	assert(console64_size() == (16U | (4U << 16) | ((uint64_t) 1 << 32)));
 	assert(console64_hangul_smoke() == 1);
+	for (int mode = 0; mode <= 1; mode++) {
+#ifndef __aarch64__
+		size_t at = serial_length64;
+#endif
+
+		boot->lang_hangul = mode;
+		command64(boot, "exit");
+		command64(boot, "종료");
+		assert(close_owner64 == boot && !boot->close_requested && executions64 == 0);
+#ifndef __aarch64__
+		message_bytes64(at, "CLI 모드에서는 창을 닫을 수 없습니다.> "
+			"CLI 모드에서는 창을 닫을 수 없습니다.> ");
+#endif
+	}
+	boot->lang_hangul = 1;
 	command64(boot, "help");
 	command64(boot, "ls");
 	command64(boot, "type readme.txt");
@@ -468,11 +511,20 @@ int main(void)
 	post64(&input, ascii, sizeof(ascii) / sizeof(ascii[0]));
 	assert(console64_drain_input(&input) == 5 && input.input_len == 0);
 	console64_destroy(&input);
-	console64_request_close(second);
+	command64(second, "shutdown");
+	assert(shutdown_calls64 == 1 && shutdown_owner64 == second);
+	command64(third, "시스템종료");
+	assert(shutdown_calls64 == 2 && shutdown_owner64 == third);
+	assert(closes64 == 0 && !second->close_requested && !third->close_requested);
+	close_status64 = 0;
+	command64(second, "exit");
+	assert(close_owner64 == second && !boot->close_requested && !third->close_requested);
 	assert(second->close_requested != 0 && fifo64_status(&second->keys) == 1);
 	second->close_ready = 1; /* model the task's safe return-to-prompt point */
 	console64_reap_closed();
 	assert(closes64 == 1 && second->task == NULL && second->vram == NULL);
+	command64(third, "종료");
+	assert(close_owner64 == third && third->close_requested && !boot->close_requested);
 	console64_destroy(third);
 	current64 = &taskctl64.tasks0[0];
 	console64_destroy(boot);

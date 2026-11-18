@@ -614,6 +614,22 @@ int fd64_init(void)
 	return status;
 }
 
+int fd64_shutdown(void)
+{
+	int status;
+
+	if (mutex64_lock(&fd64_mutex) != 0) {
+		return -16;
+	}
+	status = fd64_sync_unlocked() < 0 ? -5 : block64_flush();
+	if (status == 0) {
+		/* Publish before unlocking: queued writers must see the sealed volume. */
+		fd64_mark_read_only();
+	}
+	mutex64_unlock(&fd64_mutex);
+	return status;
+}
+
 int fd64_sync(void)
 {
 	int status;

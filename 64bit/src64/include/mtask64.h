@@ -28,6 +28,9 @@ enum TASK64_STATE {
 
 struct CONTEXT64 {
 	uintptr_t stack_pointer;
+	/* AArch64 task-local TPIDR_EL0/TPIDRRO_EL0; unused on x86. */
+	uintptr_t thread_pointer;
+	uintptr_t readonly_thread_pointer;
 };
 
 struct TASK64 {
@@ -40,6 +43,8 @@ struct TASK64 {
 	uintptr_t stack_usable_base;
 	size_t stack_usable_size;
 	size_t stack_high_water;
+	uintptr_t entry_stack_base;
+	size_t entry_stack_size;
 	void *process;
 	uint32_t is_user;
 	uintptr_t kernel_rsp;

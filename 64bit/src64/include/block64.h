@@ -12,6 +12,7 @@ struct BLOCK64_OPS {
 	int (*read)(uint64_t lba, uint32_t count, void *dst);
 	int (*write)(uint64_t lba, uint32_t count, const void *src);
 	uint64_t (*sector_count)(void);
+	int (*flush)(void); /* 0 or negative errno, unlike legacy read/write. */
 };
 
 /* 전송 계층을 고르고(AHCI가 있으면 AHCI, 없으면 ATA PIO) 파티션 표를
@@ -26,6 +27,10 @@ uint64_t block64_sector_count(void);
 /* count가 0이면 버퍼와 LBA를 검사하거나 전송하지 않는 성공 no-op이다. */
 int block64_read(uint64_t lba, uint32_t count, void *dst);
 int block64_write(uint64_t lba, uint32_t count, const void *src);
+/* Task context, serialized by the filesystem mutex, after software writeback.
+ * Returns 0 or a negative errno; an absent durability hook is an error.
+ */
+int block64_flush(void);
 
 extern const struct BLOCK64_OPS ata64_ops;
 extern const struct BLOCK64_OPS ahci64_ops;

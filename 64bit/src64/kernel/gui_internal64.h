@@ -11,6 +11,10 @@ struct CONSOLE64;
 int gui_prepare_console64(struct CONSOLE64 *con, const char *title);
 void gui_publish_console64(struct CONSOLE64 *con);
 int gui_close_console_checked64(struct CONSOLE64 *con);
+/* Task-context command: atomically reject CLI mode or request deferred close.
+ * Returns 0 on a window request, -22 in CLI mode or without an eligible window.
+ */
+int gui_request_console_close64(struct CONSOLE64 *con);
 int gui_toggle_window_checked64(void);
 int gui_has_console64(const struct CONSOLE64 *con);
 /* Post-commit buffer retirement is bounded and retains failed frees for retry. */

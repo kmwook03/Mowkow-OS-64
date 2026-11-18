@@ -1,4 +1,5 @@
 #include <block64.h>
+#include <arch/x86_boot64.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -22,6 +23,11 @@ static uint32_t output_calls;
 static uint32_t deadline_calls;
 static uint32_t expiry_checks;
 static uint32_t expire_after;
+static uint32_t flush_commands;
+static uint8_t selected_drive;
+
+void x86_boot_log64(const char *s) { (void) s; }
+void x86_boot_log_uint64(uint64_t value) { (void) value; }
 
 static void set_statuses(const uint8_t *values, uint32_t count,
 	uint32_t expiry)
@@ -57,8 +63,8 @@ uint8_t io_in8(uint16_t port)
 
 void io_out8(uint16_t port, uint8_t value)
 {
-	(void) port;
-	(void) value;
+	if (port == 0x1f6) { selected_drive = value; }
+	if (port == 0x1f7 && value == 0xe7) { flush_commands++; }
 	output_calls++;
 }
 
@@ -132,6 +138,23 @@ static int test_time_based_timeout(void)
 	return 0;
 }
 
+static int test_flush(void)
+{
+	const uint8_t ready[] = { 0 };
+	const uint8_t failed[] = { 0, ATA_STATUS_ERR };
+	const uint8_t busy[] = { ATA_STATUS_BSY };
+
+	set_statuses(ready, 1, 10);
+	CHECK64(ata64_ops.flush() == 0 && flush_commands == 1);
+	CHECK64(selected_drive == 0xe0 && output_calls == 2);
+	set_statuses(failed, 2, 10);
+	CHECK64(ata64_ops.flush() == -5 && flush_commands == 2);
+	set_statuses(busy, 1, 3);
+	CHECK64(ata64_ops.flush() == -5 && flush_commands == 2);
+	CHECK64(output_calls == 0 && expiry_checks == 3);
+	return 0;
+}
+
 int main(void)
 {
 	int status;
@@ -144,5 +167,7 @@ int main(void)
 	if (status != 0) {
 		return status;
 	}
-	return test_time_based_timeout();
+	status = test_time_based_timeout();
+	if (status != 0) { return status; }
+	return test_flush();
 }

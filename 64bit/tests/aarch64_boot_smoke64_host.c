@@ -1,4 +1,4 @@
-/* Boot probes use real HID/FIFO code; only hardware/time/files are mocked. */
+/* Boot probes use real HID/FIFO and rendering; hardware/time/files are mocked. */
 #include "poll_test64.h"
 #include <assert.h>
 #include <stdlib.h>
@@ -9,7 +9,87 @@
 #include <arch/aarch64_boot64.h>
 #include <arch/platform64.h>
 #include <fd64.h>
+#include <bootinfo64.h>
+#include <graphic64.h>
+#include <memory64.h>
 #include <mtask64.h>
+#include <sheet64.h>
+#include <window64.h>
+
+const uint8_t hankaku64[4096] = { ['M' * 16] = 0xff };
+struct MEMMAN64 memman64;
+
+uintptr_t memman64_alloc_4k(struct MEMMAN64 *man, size_t size)
+{
+	(void) man;
+	return (uintptr_t) calloc(1, size);
+}
+
+int memman64_free_4k(struct MEMMAN64 *man, uintptr_t address, size_t size)
+{
+	(void) man;
+	(void) size;
+	free((void *) address);
+	return 0;
+}
+
+void io_out8(uint16_t port, uint8_t data) { (void) port; (void) data; }
+void platform_framebuffer_flush64(uintptr_t address, size_t bytes)
+{
+	(void) address;
+	(void) bytes;
+}
+void platform_framebuffer_sync64(void) { }
+
+static void gui64(void)
+{
+	const unsigned int widths[] = { 640, 1920 };
+	const unsigned int heights[] = { 480, 1080 };
+	const uint8_t black[] = { 0, 0, 0 };
+
+	for (unsigned int i = 0; i < 2; i++) {
+		size_t pixels = (size_t) widths[i] * heights[i];
+		uint32_t *vram = calloc(pixels, sizeof(*vram));
+		uint8_t *buffer = calloc(pixels, 1);
+		struct BOOTINFO64 info = {
+			.scrnx = widths[i], .scrny = heights[i], .bpp = 32,
+			.bytes_per_scanline = widths[i] * 4, .vram = (uintptr_t) vram
+		};
+		struct SHTCTL64 *ctl;
+		struct SHEET64 *sheet;
+		unsigned int white = 0;
+
+		assert(vram != NULL && buffer != NULL);
+		init_palette64();
+		ctl = shtctl64_init(&memman64, (uint8_t *) vram, pixels * 4,
+			widths[i], heights[i], widths[i] * 4, 32);
+		assert(ctl != NULL);
+		sheet = sheet64_alloc(ctl);
+		assert(sheet != NULL);
+		assert(sheet64_setbuf(sheet, buffer, pixels, widths[i],
+			widths[i], heights[i], -1) == 0);
+		sheet64_updown(sheet, 0);
+		/* Boot starts with a full redraw pending, beyond one GUI batch. */
+		assert(ctl->dirty_count > 64);
+		assert(aarch64_boot_smoke_gui64(&info, sheet) == 0);
+		assert(ctl->dirty_count == 0);
+		for (size_t p = 0; p < pixels; p++) {
+			if (buffer[p] == COL64_FFFFFF) {
+				assert(vram[p] == 0x00ffffffU);
+				white++;
+			}
+		}
+		assert(white > 0);
+		/* A real pixel mismatch must still fail the boot check. */
+		set_palette64(COL64_FFFFFF, COL64_FFFFFF, black);
+		assert(aarch64_boot_smoke_gui64(&info, sheet) == -2);
+		sheet64_free(sheet);
+		free(ctl->map);
+		free(ctl);
+		free(buffer);
+		free(vram);
+	}
+}
 
 static uint64_t counter64;
 static uint64_t frequency64 = 1000;
@@ -179,6 +259,7 @@ static void keyboard64(void)
 
 int main(void)
 {
+	gui64();
 	assert(aarch64_boot_smoke_mouse64() == 0);
 	keyboard64();
 #if MOWKOW64_BOOT_TESTS

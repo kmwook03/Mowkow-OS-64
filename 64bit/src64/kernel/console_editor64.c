@@ -231,6 +231,10 @@ uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 	console_cursor_wait64(con, 1);
 	for (;;) {
 		key = console_wait_key64(con);
+		if (console64_close_requested(con)) {
+			console_cursor_wait64(con, 0);
+			return 0;
+		}
 		if ((key & 0x80U) == 0) { console_cursor_activity64(con); }
 		if (keyboard64_track_modifier(key) != 0) {
 			continue;
@@ -600,6 +604,10 @@ uint64_t console64_read_key(void)
 		 * so a resize cannot arrive between an empty raw read and sleep.
 		 */
 		irq_state = platform_irq_save64();
+		if (con->close_requested) {
+			platform_irq_restore64(irq_state);
+			return 0;
+		}
 		if (console_raw_pop64(con, &out) != 0) {
 			platform_irq_restore64(irq_state);
 			return out;
@@ -632,7 +640,10 @@ int64_t console64_read_line(char *dst, uint64_t max)
 	con->line_full_warned = 0;
 	console_cursor_wait64(con, 1);
 	while (con->line_done == 0) {
-		console64_process_key(con, console_wait_key64(con));
+		uint16_t key = console_wait_key64(con);
+
+		if (console64_close_requested(con)) { con->line_result = -1; break; }
+		console64_process_key(con, key);
 	}
 	console_cursor_wait64(con, 0);
 	con->line_capture = 0;
@@ -662,6 +673,10 @@ int console64_repl_getchar(void)
 
 	console_cursor_wait64(con, 1);
 	for (;;) {
+		if (console64_close_requested(con)) {
+			console_cursor_wait64(con, 0);
+			return 4; /* Let the interpreter unwind through its normal EOF path. */
+		}
 		if (console_repl_pop64(con, &c)) {
 			console_cursor_wait64(con, 0);
 			return (unsigned char) c;

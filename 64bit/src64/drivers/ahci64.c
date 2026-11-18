@@ -9,6 +9,7 @@
  * 여러 포트나 NCQ를 쓰려면 진짜 요청 큐가 있어야 하는데 아직 구현되지 않았다.
  */
 #include <block64.h>
+#include <arch/x86_boot64.h>
 #include <memory64.h>
 #include <pci64.h>
 #include <stddef.h>
@@ -43,6 +44,7 @@
 #define TFD_ERR 0x01
 #define TFD_DRQ 0x08
 #define TFD_BSY 0x80
+#define ATA_CMD_FLUSH_CACHE_EX 0xea
 #define IS_TFES 0x40000000u
 
 #define SIG_SATA 0x00000101
@@ -164,6 +166,10 @@ static int command_valid(uint8_t command, uint64_t lba, uint32_t sectors,
 	if (write != 0 && write != 1) {
 		return 0;
 	}
+	if (command == ATA_CMD_FLUSH_CACHE_EX) {
+		return ready != 0 && write == 0 && lba == 0 && sectors == 0 &&
+			bytes == 0 && buffer == NULL;
+	}
 	if (command == ATA_CMD_IDENTIFY) {
 		return ready == 0 && write == 0 && lba == 0 && sectors == 0 &&
 			bytes == BLOCK64_SECTOR_SIZE && dma_range_valid(buffer, bytes);
@@ -233,8 +239,9 @@ static int run_command(uint8_t command, uint64_t lba, uint32_t sectors,
 	/* 슬롯 0만 쓴다. (명령을 한 번에 하나씩만 보냄) */
 	header = command_list;
 	zero(header, 32);
-	/* 명령 FIS 길이(dword 단위), 쓰기 표시, PRDT 항목 한 개 */
-	write32(header, 5 | (write != 0 ? (1u << 6) : 0) | (1u << 16));
+	/* Non-data commands have no PRDT; data commands use one bounded entry. */
+	write32(header, 5 | (write != 0 ? (1u << 6) : 0) |
+		(bytes != 0 ? (1u << 16) : 0));
 	write32(header + 8, (uint32_t) (uintptr_t) command_table);
 	write32(header + 12, (uint32_t) ((uint64_t) (uintptr_t) command_table >> 32));
 
@@ -253,10 +260,12 @@ static int run_command(uint8_t command, uint64_t lba, uint32_t sectors,
 	fis[12] = (uint8_t) sectors;
 	fis[13] = (uint8_t) (sectors >> 8);
 
-	prdt = command_table + AHCI_PRDT_OFFSET;
-	write32(prdt, (uint32_t) (uintptr_t) buffer);
-	write32(prdt + 4, (uint32_t) ((uint64_t) (uintptr_t) buffer >> 32));
-	write32(prdt + 12, (bytes - 1) & AHCI_PRDT_DBC_MASK);
+	if (bytes != 0) {
+		prdt = command_table + AHCI_PRDT_OFFSET;
+		write32(prdt, (uint32_t) (uintptr_t) buffer);
+		write32(prdt + 4, (uint32_t) ((uint64_t) (uintptr_t) buffer >> 32));
+		write32(prdt + 12, (bytes - 1) & AHCI_PRDT_DBC_MASK);
+	}
 	/* DBC는 바이트 수를 0부터 세며, 위 검증이 예약 비트를 0으로 보장한다. */
 
 	port_write(PORT_CI, 1);
@@ -485,9 +494,24 @@ fail_pci:
 	return -1;
 }
 
+static int ahci64_flush(void)
+{
+	/* FLUSH CACHE EXT is non-data: PRDTL and transfer byte count must be zero. */
+	if (run_command(ATA_CMD_FLUSH_CACHE_EX, 0, 0, NULL, 0, 0) == 0) {
+		return 0;
+	}
+	x86_boot_log64("ahci: flush failed PxTFD=");
+	x86_boot_log_uint64(abar != NULL ? port_read(PORT_TFD) : 0);
+	x86_boot_log64(" PxIS=");
+	x86_boot_log_uint64(abar != NULL ? port_read(PORT_IS) : 0);
+	x86_boot_log64("\n");
+	return -5;
+}
+
 const struct BLOCK64_OPS ahci64_ops = {
 	"ahci",
 	ahci64_read,
 	ahci64_write,
-	ahci64_sector_count
+	ahci64_sector_count,
+	ahci64_flush
 };

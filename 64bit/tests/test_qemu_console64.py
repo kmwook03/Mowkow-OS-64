@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "64bit/tools"))
 import mowkow_parity as PARITY
+import process_regression64 as PROCESS
 sys.path.pop(0)
 
 
@@ -308,6 +309,27 @@ class QemuConsoleTest(unittest.TestCase):
 
 
 class MowkowOutputTest(unittest.TestCase):
+    def test_process_prompt_with_live_survivor(self) -> None:
+        console = PROCESS.ProcessConsole.__new__(PROCESS.ProcessConsole)
+        console._check_alive = Mock()
+        console.log_path = "fixture"
+        samples = (
+            ("boot\n> ", -1),
+            ("old\ncommand\n종료 코드: 0\n> isotest 2: LIVE\n", 4),
+            ("command\n> isotest 2: LIVE\nisotest 2: LIVE\n", 0),
+        )
+        for output, offset in samples:
+            console.text = Mock(return_value=output)
+            console._wait_after(offset, PARITY.PROMPT, 1, "test")
+        for output, offset in (("old\n> command\n", 6), (">>> ", 0),
+                               (">> ", 0), ("isotest 2: LIVE\n", 0),
+                               ("> isotest 2: FAIL live\n", 0)):
+            console.text = Mock(return_value=output)
+            with patch.object(PROCESS.time, "monotonic", side_effect=[0, 0, 2]), \
+                    patch.object(PROCESS.time, "sleep"):
+                with self.assertRaises(TimeoutError):
+                    console._wait_after(offset, PARITY.PROMPT, 1, "test")
+
     def test_exact_prompts_preserve_greater_and_dot_values(self) -> None:
         expected = [">", ">>", ">=", "..", "...", ">value", "..value"]
         host = ">  >\n>  >>\n>  >=\n>  ..\n>  ...\n>  >value\n>  ..value\n>  "

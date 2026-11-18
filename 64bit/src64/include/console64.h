@@ -77,14 +77,16 @@ int console64_post_input_key(struct CONSOLE64 *con, uint16_t key);
 int console64_drain_input(struct CONSOLE64 *con);
 void console64_repl_set_active(int active);
 
-/* 창 닫기 요청. 곧바로 부수지 않고 표시만 남긴다 -- 콘솔 태스크가 프롬프트로
-   돌아오면 스스로 접히고, 그다음 console64_reap_closed가 실제로 없앤다. */
+/* Mark close and wake input. ELF execution stops at its next user return;
+   kernel work unwinds before the console parks and the main task reaps it. */
 void console64_request_close(struct CONSOLE64 *con);
+/* Snapshot under irq-save; NULL has no pending close. */
+int console64_close_requested(const struct CONSOLE64 *con);
 
-/* 접힌 콘솔을 거둔다. 커널 메인 루프가 부른다. */
+/* Main task, outside GUI guards: retry process cleanup, then retire parked GUI. */
 void console64_reap_closed(void);
 int console64_repl_getchar(void);
-/* 명령줄 편집기(한글 조합 포함)로 한 줄을 읽는다. 바이트 수, Ctrl-C면 -1,
+/* 명령줄 편집기(한글 조합 포함)로 한 줄을 읽는다. 바이트 수, Ctrl-C/닫기는 -1,
    Ctrl-D면 -2. 부르기 전에 input_line을 가리키는 인자는 복사해 두어야 한다. */
 int64_t console64_read_line(char *dst, uint64_t max);
 #define CONSOLE64_LINE_MAX 1024

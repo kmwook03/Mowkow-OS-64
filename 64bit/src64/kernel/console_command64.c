@@ -1,5 +1,6 @@
 /* Built-in command dispatch and application/interpreter execution. */
 #include "console_internal64.h"
+#include "gui_internal64.h"
 #include <fd64.h>
 #include <gui64.h>
 #include <kstring64.h>
@@ -7,6 +8,7 @@
 #include <mpport64.h>
 #include <mtask64.h>
 #include <process64.h>
+#include <shutdown64.h>
 #include <timer64.h>
 
 static int str_eq64(const char *a, const char *b)
@@ -209,6 +211,12 @@ void console_dispatch_command64(struct CONSOLE64 *con, const char *line)
 	} else if (str_eq64(line, "new") || str_eq64(line, "새창")) {
 		if (console64_create() == NULL) {
 			console64_message_con(con, MESSAGE_CONSOLE_FULL64);
+		}
+	} else if (str_eq64(line, "shutdown") || str_eq64(line, "시스템종료")) {
+		shutdown64(con);
+	} else if (str_eq64(line, "exit") || str_eq64(line, "종료")) {
+		if (gui_request_console_close64(con) != 0) {
+			console64_message_con(con, MESSAGE_CONSOLE_CLOSE_DISABLED64);
 		}
 	} else if (str_eq64(line, "tasks") || str_eq64(line, "태스크")) {
 		uint32_t i;

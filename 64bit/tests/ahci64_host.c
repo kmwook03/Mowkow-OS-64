@@ -9,6 +9,9 @@
 	} \
 } while (0)
 
+void x86_boot_log64(const char *s) { (void) s; }
+void x86_boot_log_uint64(uint64_t value) { (void) value; }
+
 static uint64_t dma_words[AHCI_PRDT_MAX_BYTES / sizeof(uint64_t)];
 
 uintptr_t memman64_alloc_4k(struct MEMMAN64 *man, size_t size)
@@ -106,7 +109,14 @@ static int test_command_fields(void)
 	CHECK64(command_valid(0xff, 0, 1, dma_words,
 		BLOCK64_SECTOR_SIZE, 0) == 0);
 
+	CHECK64(command_valid(0xea, 0, 0, NULL, 0, 0) != 0);
+	CHECK64(command_valid(0xea, 1, 0, NULL, 0, 0) == 0);
+	CHECK64(command_valid(0xea, 0, 1, NULL, 0, 0) == 0);
+	CHECK64(command_valid(0xea, 0, 0, dma_words, 0, 0) == 0);
+	CHECK64(command_valid(0xea, 0, 0, NULL, 1, 0) == 0);
+	CHECK64(command_valid(0xea, 0, 0, NULL, 0, 1) == 0);
 	ready = 0;
+	CHECK64(command_valid(0xea, 0, 0, NULL, 0, 0) == 0);
 	CHECK64(command_valid(ATA_CMD_IDENTIFY, 0, 0, dma_words,
 		BLOCK64_SECTOR_SIZE, 0) != 0);
 	CHECK64(command_valid(ATA_CMD_IDENTIFY, 0, 1, dma_words,

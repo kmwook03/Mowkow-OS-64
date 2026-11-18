@@ -13,6 +13,16 @@
 #define STRIDE64 328
 #define MAX_ALLOCATIONS64 64
 
+static const struct CONSOLE64 *process_busy_console64;
+int process64_reap_console64(const struct CONSOLE64 *con)
+{
+	return con == process_busy_console64 ? -16 : 0;
+}
+int process64_console_busy64(const struct CONSOLE64 *con)
+{
+	return con == process_busy_console64;
+}
+
 struct MEMMAN64 memman64;
 const uint8_t hankaku64[4096] = { ['A' * 16] = 0xff };
 static struct TASK64 tasks64[32];
@@ -217,6 +227,7 @@ static struct BOOTINFO64 info64(void)
 
 static unsigned long screen_hash64(void)
 {
+	while (gui64_present()) { }
 	unsigned long hash = 0;
 	for (size_t i = 0; i < sizeof(vram64); i++) { hash = hash * 33 + vram64[i]; }
 	return hash;
@@ -228,10 +239,12 @@ static void verify64(void)
 	assert(gui_context64.ready);
 	assert(gui_context64.status != NULL);
 	if (gui_context64.mode == GUI64_MODE_FULL) {
+		assert(gui_context64.cursor->height == -1);
 		assert(gui_context64.status->height == -1);
 		assert(gui_context64.taskbar == NULL || gui_context64.taskbar->height == -1);
 		assert(gui_context64.console->bysize == gui_context64.scrny);
 	} else {
+		assert(gui_context64.cursor->height == gui_context64.ctl->top);
 		assert(gui_context64.status->height == gui_context64.ctl->top - 1);
 	}
 	assert(gui_context64.status->buf == gui_context64.status_buf);

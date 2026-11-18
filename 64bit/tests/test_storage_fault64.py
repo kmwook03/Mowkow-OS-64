@@ -21,7 +21,8 @@ class StorageFault64Test(unittest.TestCase):
         cls.executable = cls.directory / "storage_fault64_host"
         subprocess.run(
             [os.environ.get("HOST_CC", "cc"), "-std=c11", "-Wall", "-Wextra",
-             "-Werror", "-idirafter", str(ROOT / "64bit/src64/include"),
+             "-Werror", "-ffunction-sections", "-fdata-sections",
+             "-Wl,--gc-sections", "-idirafter", str(ROOT / "64bit/src64/include"),
              str(ROOT / "64bit/tests/storage_fault64_host.c"),
              str(ROOT / "64bit/src64/kernel/memory64.c"),
              str(ROOT / "64bit/src64/lib/utf864.c"), "-o", str(cls.executable)],
@@ -74,6 +75,10 @@ class StorageFault64Test(unittest.TestCase):
                 with self.subTest(target=target, persistent=persistent):
                     mode = "sync-persistent" if persistent else "sync-once"
                     self.run_image(mode, str(target))
+
+    def test_shutdown_drains_dirty_data_and_rejects_queued_writers(self) -> None:
+        self.run_image("shutdown")
+        self.run_image("shutdown-failure")
 
     def test_malformed_elf_releases_memory_and_owner(self) -> None:
         failures = {
