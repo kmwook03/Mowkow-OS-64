@@ -30,3 +30,5 @@ __pycache__/
 *.py[cod]
 unix_plan.md
 docs/process_*
+64bit/experiments/
+docs/unix/
