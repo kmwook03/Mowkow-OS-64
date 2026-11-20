@@ -28,10 +28,5 @@ CLAUDE.md
 py64/머꼬/upstream/__pycache__/
 __pycache__/
 *.py[cod]
-arch.md
-CONTEXT.md
-refactor_plan.md
-refactor.log
-feature_plan.md
-feature.log
+unix_plan.md
 docs/process_*
