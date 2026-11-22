@@ -1,4 +1,5 @@
 #include "address_space_fixture64.h"
+#include "address_space_clone64.h"
 
 static void initialization64(void)
 {
@@ -295,6 +296,7 @@ static void backing64(void)
 int main(void)
 {
 	initialization64(); failures64(); mappings64(); activation64(); preservation64(); backing64();
+	mapping_lifetime64(); clone_spaces64();
 	puts("address spaces: lifecycle, isolation, permissions, rollback, activation PASS");
 	return 0;
 }

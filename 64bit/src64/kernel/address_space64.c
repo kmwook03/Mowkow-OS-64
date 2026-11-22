@@ -5,9 +5,26 @@
 
 enum AS_STATE64 { AS_FREE64, AS_BUSY64, AS_READY64, AS_REAP64 };
 
+struct USER_VMA64 {
+	uintptr_t address;
+	uintptr_t physical;
+	size_t size;
+	size_t offset;
+	unsigned int permissions;
+	struct USER_BACKING64 *backing;
+};
+
 struct ADDRESS_SPACE64 {
 	struct AS_TABLES64 tables;
 	enum AS_STATE64 state;
+	unsigned int pins;
+	unsigned int vma_count;
+	struct USER_VMA64 vmas[USER_VMA_LIMIT64];
+	/* Only clones own these descriptors. Ordinary process backing remains
+	 * process-owned, retained by each VMA until all tables are destroyed.
+	 */
+	unsigned int owned_count;
+	struct USER_BACKING64 owned[USER_VMA_LIMIT64];
 };
 
 static struct ADDRESS_SPACE64 spaces64[USER_SPACE_LIMIT64];
@@ -158,7 +175,7 @@ int address_space_destroy64(struct ADDRESS_SPACE64 **result)
 	if (space == NULL) { return 0; }
 	if (!owned_space64(space)) { return -22; }
 	irq = platform_irq_save64();
-	if (active_space64 == space || space->state == AS_BUSY64) {
+	if (active_space64 == space || space->state == AS_BUSY64 || space->pins != 0) {
 		platform_irq_restore64(irq);
 		return -16;
 	}
@@ -169,16 +186,64 @@ int address_space_destroy64(struct ADDRESS_SPACE64 **result)
 	space->state = AS_BUSY64;
 	platform_irq_restore64(irq);
 	status = tables_free64(space);
+	/* A failed table free retains every mapping reference. No backing may
+	 * disappear while even a detached page table still refers to it.
+	 */
+	if (status == 0) {
+		while (space->vma_count != 0) {
+			struct USER_VMA64 *vma = &space->vmas[space->vma_count - 1];
+
+			if (vma->backing != NULL) {
+				status = user_backing_unpin64(vma->backing);
+				if (status != 0) { break; }
+			}
+			memset(vma, 0, sizeof(*vma));
+			space->vma_count--;
+		}
+	}
+	if (status == 0) {
+		while (space->owned_count != 0) {
+			status = user_backing_free64(&space->owned[space->owned_count - 1]);
+			if (status != 0) { break; }
+			space->owned_count--;
+		}
+	}
 	if (status == 0) { *result = NULL; }
 	state_set64(space, status == 0 ? AS_FREE64 : AS_REAP64);
 	return status;
 }
 
-int address_space_map64(struct ADDRESS_SPACE64 *space, uintptr_t address,
-	uintptr_t physical, size_t size, unsigned int permissions)
+int address_space_pin64(struct ADDRESS_SPACE64 *space)
+{
+	uint64_t irq = platform_irq_save64();
+	int status = 0;
+
+	if (!owned_space64(space)) { status = -22; }
+	else if (space->state != AS_READY64) { status = -16; }
+	else if (space->pins == UINT32_MAX) { status = -75; }
+	else { space->pins++; }
+	platform_irq_restore64(irq);
+	return status;
+}
+
+int address_space_unpin64(struct ADDRESS_SPACE64 *space)
+{
+	uint64_t irq = platform_irq_save64();
+	int status = 0;
+
+	if (!owned_space64(space) || space->pins == 0) { status = -22; }
+	else { space->pins--; }
+	platform_irq_restore64(irq);
+	return status;
+}
+
+static int map_region64(struct ADDRESS_SPACE64 *space, uintptr_t address,
+	uintptr_t physical, size_t size, unsigned int permissions,
+	struct USER_BACKING64 *backing, size_t backing_offset)
 {
 	uint64_t irq;
 	int status = 0;
+	struct USER_VMA64 *merge = NULL;
 
 	if (!owned_space64(space) || !page_span64(address, size) ||
 		!user_span64(address, size) || !pool_span64(physical, size) ||
@@ -186,12 +251,31 @@ int address_space_map64(struct ADDRESS_SPACE64 *space, uintptr_t address,
 		permissions != (USER_READ64 | USER_EXEC64)) ||
 		((permissions & USER_EXEC64) && address >= USER_IMAGE_END64)) { return -22; }
 	irq = platform_irq_save64();
-	if (space->state != AS_READY64 || active_space64 == space) {
+	if (space->state != AS_READY64 || active_space64 == space || space->pins != 0) {
 		platform_irq_restore64(irq);
 		return -16;
 	}
 	space->state = AS_BUSY64;
 	platform_irq_restore64(irq);
+	for (unsigned int i = 0; i < space->vma_count; i++) {
+		struct USER_VMA64 *vma = &space->vmas[i];
+
+		if (physical < vma->physical + vma->size && vma->physical < physical + size &&
+			((permissions | vma->permissions) & (USER_WRITE64 | USER_EXEC64)) ==
+			(USER_WRITE64 | USER_EXEC64)) {
+			state_set64(space, AS_READY64);
+			return -22;
+		}
+		if (vma->address + vma->size == address && vma->physical + vma->size == physical &&
+			vma->backing == backing && vma->permissions == permissions &&
+			(backing == NULL || vma->offset + vma->size == backing_offset) &&
+			vma->size <= SIZE_MAX - size &&
+			user_span64(vma->address, vma->size + size)) { merge = vma; }
+	}
+	if (merge == NULL && space->vma_count == USER_VMA_LIMIT64) {
+		state_set64(space, AS_READY64);
+		return -12;
+	}
 	for (size_t offset = 0; offset < size; offset += USER_PAGE_SIZE64) {
 		uint64_t *leaf = as_arch_leaf64(&space->tables, address + offset);
 
@@ -204,12 +288,44 @@ int address_space_map64(struct ADDRESS_SPACE64 *space, uintptr_t address,
 
 			*leaf = as_arch_encode64(physical + offset, permissions);
 		}
+		if (merge != NULL) {
+			merge->size += size;
+			/* The coalesced VMA already holds its one mapping reference. */
+			if (backing != NULL) { (void) user_backing_unpin64(backing); }
+		} else {
+			space->vmas[space->vma_count++] = (struct USER_VMA64) {
+				.address = address, .physical = physical, .size = size,
+				.offset = backing_offset, .permissions = permissions, .backing = backing
+			};
+		}
 	}
 	state_set64(space, AS_READY64);
 	return status;
 }
 
-int address_space_query64(const struct ADDRESS_SPACE64 *space, uintptr_t address,
+int address_space_map64(struct ADDRESS_SPACE64 *space, uintptr_t address,
+	uintptr_t physical, size_t size, unsigned int permissions)
+{
+	return map_region64(space, address, physical, size, permissions, NULL, 0);
+}
+
+int address_space_map_backing64(struct ADDRESS_SPACE64 *space, uintptr_t address,
+	struct USER_BACKING64 *backing, size_t offset, size_t size, unsigned int permissions)
+{
+	int status = user_backing_pin64(backing);
+
+	if (status != 0) { return status; }
+	if (offset >= backing->size || size > backing->size - offset) { status = -22; }
+	else {
+		status = map_region64(space, address, backing->physical + offset,
+			size, permissions, backing, offset);
+	}
+	if (status != 0) { (void) user_backing_unpin64(backing); }
+	return status;
+}
+
+/* Caller retains the space, so its VMA list and table links cannot change. */
+static int query_page64(const struct ADDRESS_SPACE64 *space, uintptr_t address,
 	struct USER_PAGE64 *page)
 {
 	uint64_t *leaf;
@@ -225,27 +341,52 @@ int address_space_query64(const struct ADDRESS_SPACE64 *space, uintptr_t address
 	if (status != 0 || !pool_span64(found.physical, USER_PAGE_SIZE64)) { return -14; }
 	found.physical += address & (USER_PAGE_SIZE64 - 1);
 	found.kernel_address = as_arch_alias64(found.physical);
-	*page = found;
-	return 0;
+	for (unsigned int i = 0; i < space->vma_count; i++) {
+		const struct USER_VMA64 *vma = &space->vmas[i];
+
+		if (address < vma->address || address - vma->address >= vma->size) { continue; }
+		if (found.physical != vma->physical + address - vma->address ||
+			found.permissions != vma->permissions) { return -14; }
+		*page = found;
+		return 0;
+	}
+	return -14;
+}
+
+int address_space_query64(const struct ADDRESS_SPACE64 *space, uintptr_t address,
+	struct USER_PAGE64 *page)
+{
+	struct ADDRESS_SPACE64 *owner = (struct ADDRESS_SPACE64 *) space;
+	int status = address_space_pin64(owner);
+
+	if (status != 0) { return status; }
+	status = query_page64(space, address, page);
+	(void) address_space_unpin64(owner);
+	return status;
 }
 
 int address_space_validate64(const struct ADDRESS_SPACE64 *space, uintptr_t address,
 	size_t size, unsigned int access)
 {
 	uintptr_t end;
+	struct ADDRESS_SPACE64 *owner = (struct ADDRESS_SPACE64 *) space;
+	int status;
 
 	if (size == 0 || access == 0 || (access & ~7U) != 0) { return -22; }
 	if (!user_span64(address, size)) { return -14; }
+	status = address_space_pin64(owner);
+	if (status != 0) { return status; }
 	end = address + size;
 	while (address < end) {
 		struct USER_PAGE64 page;
-		int status = address_space_query64(space, address, &page);
+		status = query_page64(space, address, &page);
 
-		if (status != 0) { return status; }
-		if ((page.permissions & access) != access) { return -14; }
+		if (status != 0) { break; }
+		if ((page.permissions & access) != access) { status = -14; break; }
 		address = (address & ~(uintptr_t) (USER_PAGE_SIZE64 - 1)) + USER_PAGE_SIZE64;
 	}
-	return 0;
+	(void) address_space_unpin64(owner);
+	return status;
 }
 
 int address_space_activate64(struct ADDRESS_SPACE64 *space)
@@ -262,39 +403,103 @@ int address_space_activate64(struct ADDRESS_SPACE64 *space)
 int user_backing_alloc64(struct USER_BACKING64 *backing, size_t size)
 {
 	uintptr_t alias;
+	uint64_t irq;
 
-	if (backing == NULL || backing->kernel_address != 0 || backing->physical != 0 ||
-		backing->size != 0 || !page_span64(0, size) ||
+	if (backing == NULL || !page_span64(0, size) ||
 		size > MEMMAN64_EARLY_END - MEMMAN64_EARLY_START) { return -22; }
+	irq = platform_irq_save64();
+	if (backing->kernel_address != 0 || backing->physical != 0 ||
+		backing->size != 0 || backing->pins != 0 || backing->busy) {
+		platform_irq_restore64(irq);
+		return -22;
+	}
+	backing->busy = 1;
+	platform_irq_restore64(irq);
 	alias = memman64_alloc_4k(&memman64, size);
-	if (alias == 0) { return -12; }
+	if (alias == 0) {
+		irq = platform_irq_save64();
+		backing->busy = 0;
+		platform_irq_restore64(irq);
+		return -12;
+	}
 	backing->kernel_address = alias;
 	backing->physical = as_arch_physical64(alias);
 	backing->size = size;
 	if (!pool_span64(backing->physical, size) ||
 		as_arch_alias64(backing->physical) != alias) {
 		/* Keep ownership even when an invalid allocator result cannot be freed. */
-		if (memman64_free_4k(&memman64, alias, size) == 0) {
-			memset(backing, 0, sizeof(*backing));
-		}
+		int status = memman64_free_4k(&memman64, alias, size);
+
+		irq = platform_irq_save64();
+		if (status == 0) { memset(backing, 0, sizeof(*backing)); }
+		backing->busy = 0;
+		platform_irq_restore64(irq);
 		return -22;
 	}
 	memset((void *) alias, 0, size);
+	irq = platform_irq_save64();
+	backing->busy = 0;
+	platform_irq_restore64(irq);
 	return 0;
+}
+
+static int backing_valid64(const struct USER_BACKING64 *backing)
+{
+	return pool_span64(backing->physical, backing->size) &&
+		backing->kernel_address == as_arch_alias64(backing->physical);
+}
+
+int user_backing_pin64(struct USER_BACKING64 *backing)
+{
+	uint64_t irq = platform_irq_save64();
+	int status = 0;
+
+	if (backing == NULL) { status = -22; }
+	else if (backing->busy) { status = -16; }
+	else if (!backing_valid64(backing)) { status = -22; }
+	else if (backing->pins == UINT32_MAX) { status = -75; }
+	else { backing->pins++; }
+	platform_irq_restore64(irq);
+	return status;
+}
+
+int user_backing_unpin64(struct USER_BACKING64 *backing)
+{
+	uint64_t irq = platform_irq_save64();
+	int status = 0;
+
+	if (backing == NULL || backing->pins == 0 || backing->busy) { status = -22; }
+	else { backing->pins--; }
+	platform_irq_restore64(irq);
+	return status;
 }
 
 int user_backing_free64(struct USER_BACKING64 *backing)
 {
 	int status;
+	uint64_t irq;
 
 	if (backing == NULL) { return -22; }
+	irq = platform_irq_save64();
+	if (backing->busy || backing->pins != 0) {
+		platform_irq_restore64(irq);
+		return -16;
+	}
 	if (backing->kernel_address == 0 && backing->physical == 0 && backing->size == 0) {
+		platform_irq_restore64(irq);
 		return 0;
 	}
-	if (!pool_span64(backing->physical, backing->size) ||
-		backing->kernel_address != as_arch_alias64(backing->physical)) { return -22; }
+	if (!backing_valid64(backing)) {
+		platform_irq_restore64(irq);
+		return -22;
+	}
+	backing->busy = 1;
+	platform_irq_restore64(irq);
 	status = memman64_free_4k(&memman64, backing->kernel_address, backing->size);
+	irq = platform_irq_save64();
 	if (status == 0) { memset(backing, 0, sizeof(*backing)); }
+	else { backing->busy = 0; }
+	platform_irq_restore64(irq);
 	return status;
 }
 
@@ -305,4 +510,67 @@ int user_backing_sync_code64(const struct USER_BACKING64 *backing,
 		backing->kernel_address != as_arch_alias64(backing->physical) || size == 0 ||
 		offset >= backing->size || size > backing->size - offset) { return -22; }
 	return as_arch_sync_code64(backing->kernel_address + offset, size);
+}
+
+int address_space_clone64(struct ADDRESS_SPACE64 *source, struct ADDRESS_SPACE64 **result)
+{
+	/* At most one allocation per distinct backing, retaining alias relations. */
+	struct USER_BACKING64 *originals[USER_VMA_LIMIT64];
+	struct ADDRESS_SPACE64 *child = NULL;
+	int status;
+
+	if (result == NULL || *result != NULL || as_arch_irq_off64()) { return -22; }
+	status = address_space_pin64(source);
+	if (status != 0) { return status; }
+	/* Reject borrowed mappings before allocating. Every real process VMA
+	 * holds a backing reference; physical addresses alone are not ownership.
+	 */
+	for (unsigned int i = 0; i < source->vma_count; i++) {
+		const struct USER_VMA64 *vma = &source->vmas[i];
+
+		if (vma->backing == NULL) { status = -95; goto out; }
+		status = address_space_validate64(source, vma->address, vma->size, vma->permissions);
+		if (status != 0) { goto out; }
+	}
+	status = address_space_create64(&child);
+	if (status != 0) { goto out; }
+	/* The destination handle stays private until the complete clone returns. */
+	for (unsigned int i = 0; i < source->vma_count; i++) {
+		const struct USER_VMA64 *vma = &source->vmas[i];
+		unsigned int index;
+
+		for (index = 0; index < child->owned_count; index++) {
+			if (originals[index] == vma->backing) { break; }
+		}
+		if (index == child->owned_count) {
+			struct USER_BACKING64 *copy = &child->owned[index];
+
+			originals[index] = vma->backing;
+			child->owned_count++;
+			status = user_backing_alloc64(copy, vma->backing->size);
+			if (status != 0) { goto failed; }
+			/* No IRQ-off guard or source mutation around the potentially
+			 * large copy. Mapping refs + the source pin keep aliases valid.
+			 */
+			memcpy((void *) copy->kernel_address,
+				(const void *) vma->backing->kernel_address, copy->size);
+		}
+		if (vma->permissions & USER_EXEC64) {
+			status = user_backing_sync_code64(&child->owned[index], vma->offset, vma->size);
+			if (status != 0) { goto failed; }
+		}
+		status = address_space_map_backing64(child, vma->address, &child->owned[index],
+			vma->offset, vma->size, vma->permissions);
+		if (status != 0) { goto failed; }
+	}
+	goto out;
+failed:
+	/* Destroy first revokes tables, then mapping pins, then owned backing.
+	 * A failed free retains an unusable handle for the caller's next retry.
+	 */
+	(void) address_space_destroy64(&child);
+out:
+	(void) address_space_unpin64(source);
+	*result = child;
+	return status;
 }

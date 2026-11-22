@@ -1,4 +1,5 @@
 #include <arch/arch64.h>
+#include <assert.h>
 #include <console64.h>
 #include <fd64.h>
 #include <interrupt64.h>
@@ -62,6 +63,24 @@ static char opened_name[FD64_NAME_MAX];
 static char created_name[FD64_NAME_MAX];
 static uintptr_t opened_name_pointer;
 static uintptr_t created_name_pointer;
+static unsigned char space_token64;
+static unsigned int pins64;
+static int pin_failure64;
+
+int address_space_pin64(struct ADDRESS_SPACE64 *space)
+{
+	assert(space == (struct ADDRESS_SPACE64 *) (void *) &space_token64);
+	if (pin_failure64) { return -16; }
+	pins64++;
+	return 0;
+}
+
+int address_space_unpin64(struct ADDRESS_SPACE64 *space)
+{
+	assert(space == (struct ADDRESS_SPACE64 *) (void *) &space_token64 && pins64 > 0);
+	pins64--;
+	return 0;
+}
 
 struct PROCESS64 *process64_current(void)
 {
@@ -91,7 +110,7 @@ int process64_user_write_valid(void *ptr, size_t size)
 int address_space_query64(const struct ADDRESS_SPACE64 *space, uintptr_t address,
 	struct USER_PAGE64 *page)
 {
-	(void) space;
+	assert(space == (struct ADDRESS_SPACE64 *) (void *) &space_token64 && pins64 > 0);
 	if (!process64_user_range_valid((void *) address, 1)) { return -14; }
 	page->kernel_address = address;
 	return 0;
@@ -154,6 +173,7 @@ int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size)
 
 size_t fd64_read(struct FDHANDLE64 *fh, void *dst, size_t size)
 {
+	assert(pins64 > 0);
 	(void) fh;
 	if ((void *) dst != snapshot64) { abi_error = 1; }
 	memset(dst, 0x6b, io_result < size ? io_result : size);
@@ -181,6 +201,7 @@ int fd64_seek(struct FDHANDLE64 *fh, int64_t offset, int whence)
 static int checked_error64, checked_calls64, sync_calls64;
 int fd64_stat_checked(struct FDHANDLE64 *fh, const char *name, struct FILE_INFO64 *info)
 {
+	assert(pins64 > 0);
 	(void) fh;
 	if (name != NULL) { capture_name64(opened_name, name); }
 	checked_calls64++;
@@ -196,6 +217,7 @@ int fd64_open_checked(struct FDHANDLE64 *fh, const char *name, unsigned int flag
 }
 int64_t fd64_read_checked(struct FDHANDLE64 *fh, void *dst, size_t size)
 {
+	assert(pins64 > 0);
 	(void) fh;
 	if ((void *) dst != snapshot64) { abi_error = 1; }
 	memset(dst, 0x7c, size);
@@ -215,6 +237,7 @@ void console64_write_con(struct CONSOLE64 *con, const char *src, uint64_t len)
 
 uint64_t console64_read_con(struct CONSOLE64 *con, char *dst, uint64_t len)
 {
+	assert(pins64 > 0);
 	if ((void *) dst != snapshot64) { abi_error = 1; }
 	if (console_read_result > 0 && (uint64_t) console_read_result <= len) {
 		memset(dst, 0x5a, (size_t) console_read_result);
@@ -304,6 +327,7 @@ static uint64_t call64(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
 	struct INTERRUPT_FRAME64 original = frame;
 
 	last_action = syscall_handler64(&frame);
+	assert(pins64 == 0);
 	original.rax = frame.rax;
 	if (memcmp(&frame, &original, sizeof frame) != 0) {
 		abi_error = 1;
@@ -314,6 +338,9 @@ static uint64_t call64(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
 static void reset64(void)
 {
 	memset(&process, 0, sizeof process);
+	assert(pins64 == 0);
+	pin_failure64 = 0;
+	process.space = (struct ADDRESS_SPACE64 *) (void *) &space_token64;
 	memset(user_buffer, 0, sizeof user_buffer);
 	memcpy(user_buffer, "app.txt", 8);
 	current = &process;
@@ -634,6 +661,13 @@ static int test_checked_files64(void)
 	CHECK64((int64_t) call64(SYS_FILE, FILE_SYNC64, 3, 1, 0, 0) == -22);
 	CHECK64((int64_t) call64(SYS_FILE, FILE_SYNC64, 2, 0, 0, 0) == -9);
 	CHECK64((int64_t) call64(SYS_FILE, 1UL << 32, 0, 0, 0, 0) == -38);
+	int calls = checked_calls64;
+
+	pin_failure64 = 1;
+	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, output, 8, 0) == -14);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_FSTAT64, 3, output, 0, 0) == -14);
+	CHECK64(checked_calls64 == calls);
+	CHECK64(call64(SYS_READ, 0, output, 8, 0, 0) == ERROR64 && console_reads == 0);
 	return 0;
 }
 

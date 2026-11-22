@@ -7,7 +7,10 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+static void *copy_with_preemption64(void *destination, const void *source, size_t size);
+#define memcpy copy_with_preemption64
 #include "../src64/kernel/address_space64.c"
+#undef memcpy
 #ifdef TEST_AS_AARCH64
 #include "../src64/arch/aarch64/address_space64.c"
 #else
@@ -27,7 +30,21 @@ static uintptr_t installed64;
 static unsigned int events64[1024], event_count64;
 static uintptr_t cleaned64[1024];
 static unsigned int clean_count64;
+static void (*copy_hook64)(void);
 struct MEMMAN64 memman64;
+
+/* Interrupt a real eager copy halfway through, with the source still pinned.
+ * The hook switches roots and attempts teardown through production APIs.
+ */
+static void *copy_with_preemption64(void *destination, const void *source, size_t size)
+{
+	assert(!irq_off64);
+	memcpy(destination, source, size / 2);
+	if (copy_hook64 != NULL) { copy_hook64(); }
+	memcpy((unsigned char *) destination + size / 2,
+		(const unsigned char *) source + size / 2, size - size / 2);
+	return destination;
+}
 
 static void event64(unsigned int event)
 {
@@ -141,6 +158,7 @@ static void reset64(void)
 	free_persistent64 = 0;
 	irq_off64 = 0; installed64 = 0; event_count64 = clean_count64 = 0;
 	nx64 = 1;
+	copy_hook64 = NULL;
 }
 
 

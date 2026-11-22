@@ -108,6 +108,7 @@ static int64_t syscall_read64(struct PROCESS64 *process, uint64_t fd,
 	void *buffer, uint64_t size, int checked)
 {
 	struct FDHANDLE64 *fh = syscall_file64(process, fd);
+	struct USER_ACCESS64 access = {0};
 	void *snapshot;
 	int64_t result;
 
@@ -117,13 +118,33 @@ static int64_t syscall_read64(struct PROCESS64 *process, uint64_t fd,
 	if (fh == NULL && !(fd == 0 && process->console != NULL)) { return -1; }
 	snapshot = process64_io_buffer((size_t) size);
 	if (snapshot == NULL) { return checked ? -12 : -1; }
+	if (user_access_begin64(&access, buffer, (size_t) size, USER_WRITE64) != 0) {
+		return checked ? -14 : -1;
+	}
 	if (checked) { result = fd64_read_checked(fh, snapshot, (size_t) size); }
 	else if (fd == 0) { result = (int64_t) console64_read_con(process->console, snapshot, size); }
 	else { result = (int64_t) fd64_read(fh, snapshot, (size_t) size); }
-	if (result < 0) { return result; }
-	if ((uint64_t) result > size) { return -5; }
-	if (copy_to_user64(buffer, snapshot, (size_t) result) != 0) { return checked ? -14 : -1; }
+	if (result >= 0) {
+		if ((uint64_t) result > size) { result = -5; }
+		else if (copy_to_user_access64(&access, snapshot, (size_t) result) != 0) {
+			result = checked ? -14 : -1;
+		}
+	}
+	user_access_end64(&access);
 	return result;
+}
+
+static int syscall_stat64(struct FDHANDLE64 *file, const char *name, void *buffer)
+{
+	struct FILE_INFO64 info;
+	struct USER_ACCESS64 access = {0};
+	int status = user_access_begin64(&access, buffer, sizeof(info), USER_WRITE64);
+
+	if (status != 0) { return status; }
+	status = fd64_stat_checked(file, name, &info);
+	if (status == 0) { status = copy_to_user_access64(&access, &info, sizeof(info)); }
+	user_access_end64(&access);
+	return status;
 }
 
 static int syscall_seek64(struct PROCESS64 *process, uint64_t fd,
@@ -166,9 +187,7 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 			return -22;
 		}
 		if (operation == FILE_STAT64) {
-			status = fd64_stat_checked(NULL, name, &info);
-			if (status == 0) { status = copy_to_user64((void *) arg1, &info, sizeof(info)); }
-			return status;
+			return syscall_stat64(NULL, name, (void *) arg1);
 		}
 		for (size_t i = 3; i < PROCESS64_MAX_FILES; i++) {
 			if (!process->files[i].used) {
@@ -194,9 +213,7 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 		return fd64_sync() < 0 ? -5 : 0;
 	}
 	if (!process64_user_write_valid((void *) arg1, sizeof(info))) { return -14; }
-	status = fd64_stat_checked(fh, NULL, &info);
-	if (status == 0) { status = copy_to_user64((void *) arg1, &info, sizeof(info)); }
-	return status;
+	return syscall_stat64(fh, NULL, (void *) arg1);
 }
 
 static uintptr_t syscall_alloc64(struct PROCESS64 *process, uint64_t request)

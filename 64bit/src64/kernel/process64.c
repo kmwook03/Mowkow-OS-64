@@ -742,11 +742,11 @@ int process64_prepare_file(const char *path, const char *cmdline,
 	status = setup_args64(process, &args, &process->thread.initial_rsp, &process->thread.initial_argv);
 	if (status != 0) { goto failed; }
 	process->thread.initial_argc = args.argc;
-	status = address_space_map64(process->space, process->stack.base,
-		process->stack_storage.physical, process->stack.size, USER_READ64 | USER_WRITE64);
+	status = address_space_map_backing64(process->space, process->stack.base,
+		&process->stack_storage, 0, process->stack.size, USER_READ64 | USER_WRITE64);
 	if (status == 0) {
-		status = address_space_map64(process->space, process->heap.base,
-			process->heap_storage.physical, process->heap.size, USER_READ64 | USER_WRITE64);
+		status = address_space_map_backing64(process->space, process->heap.base,
+			&process->heap_storage, 0, process->heap.size, USER_READ64 | USER_WRITE64);
 	}
 	if (status != 0) { goto failed; }
 	status = user_backing_alloc64(&process->thread.entry_storage, PROCESS64_ENTRY_STACK_SIZE);

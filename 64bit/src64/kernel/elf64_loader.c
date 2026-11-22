@@ -318,8 +318,8 @@ int elf64_prepare_image(const char *path, struct PROCESS64 *process)
 		unsigned int permissions = image_page_permissions64(header, segments, address);
 
 		if (permissions == 0) { continue; }
-		status = address_space_map64(process->space, address,
-			process->image_storage.physical + address - base, USER_PAGE_SIZE64,
+		status = address_space_map_backing64(process->space, address,
+			&process->image_storage, address - base, USER_PAGE_SIZE64,
 			permissions);
 		if (status != 0) { return status; }
 	}

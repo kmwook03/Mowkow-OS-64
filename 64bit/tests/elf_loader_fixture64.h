@@ -9,7 +9,9 @@ int user_backing_alloc64(struct USER_BACKING64 *backing, size_t size)
 	uintptr_t address = memman64_alloc_4k(&memman64, size);
 
 	if (address == 0) { return -12; }
-	*backing = (struct USER_BACKING64) { address, address, size };
+	*backing = (struct USER_BACKING64) {
+		.kernel_address = address, .physical = address, .size = size
+	};
 	memset((void *) address, 0, size);
 	return 0;
 }
@@ -30,10 +32,10 @@ int user_backing_sync_code64(const struct USER_BACKING64 *backing,
 	return 0;
 }
 
-int address_space_map64(struct ADDRESS_SPACE64 *space, uintptr_t va,
-	uintptr_t pa, size_t size, unsigned int permissions)
+int address_space_map_backing64(struct ADDRESS_SPACE64 *space, uintptr_t va,
+	struct USER_BACKING64 *backing, size_t offset, size_t size, unsigned int permissions)
 {
-	(void) space; (void) va; (void) pa; (void) size; (void) permissions;
+	(void) space; (void) va; (void) backing; (void) offset; (void) size; (void) permissions;
 	return 0;
 }
 

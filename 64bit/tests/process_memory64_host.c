@@ -474,6 +474,28 @@ static void user_copy64(void)
 	assert(process64_io_buffer(4096) == buffer);
 	assert(process64_io_buffer(4097) != NULL && owner->io_storage.size == 8192);
 	assert(process64_io_buffer(SIZE_MAX) == NULL);
+	/* A suspended copyout retains the original mm, even while another task
+	 * runs at the same VA. Teardown must retry without releasing any backing.
+	 */
+	struct USER_ACCESS64 access = {0};
+	unsigned int frees = free_calls64;
+
+	assert(user_access_begin64(&access, (void *) 0x403ff8, 32, USER_WRITE64) == 0);
+	assert(user_access_begin64(&access, (void *) 0x403ff8, 32, USER_WRITE64) == -22);
+	task.process = peer;
+	assert(address_space_destroy64(&owner->space) == -16);
+	assert(user_backing_free64(&owner->image_storage) == -16 && free_calls64 == frees);
+	memset(data, 0x93, sizeof(data));
+	assert(copy_to_user_access64(&access, data, 33) == -22);
+	assert(copy_to_user_access64(&access, data, 32) == 0);
+	assert(memcmp((void *) (owner->image_storage.kernel_address + 0x3ff8), data, 32) == 0);
+	assert(*(unsigned char *) (peer->image_storage.kernel_address + 0x3ff8) == 0);
+	user_access_end64(&access);
+	user_access_end64(&access);
+	assert(copy_to_user_access64(&access, data, 1) == -22 && owner->space->pins == 0);
+	task.process = owner;
+	assert(user_access_begin64(&access, (void *) 0x400ff8, 32, USER_READ64) == -14);
+	assert(access.space == NULL && owner->space->pins == 0);
 	current_task64 = NULL;
 	assert(copy_from_user64(output, (void *) 0x400000, 1) == -14);
 	/* Fail the I/O snapshot free after all private page tables retire. */
