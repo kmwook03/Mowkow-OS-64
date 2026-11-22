@@ -175,7 +175,7 @@ static int image_abi64(const uint8_t *file, size_t file_size, uint32_t *abi)
 
 /* Requires valid_header(); validate ranges before touching the image window. */
 static int image_range64(const uint8_t *file, size_t file_size,
-	uintptr_t *low, uintptr_t *high)
+	uintptr_t *low, uintptr_t *high, uint32_t abi)
 {
 	const struct ELF64_EHDR *ehdr = (const struct ELF64_EHDR *) file;
 	const struct ELF64_PHDR *phdr;
@@ -188,9 +188,10 @@ static int image_range64(const uint8_t *file, size_t file_size,
 	*high = 0;
 	phdr = (const struct ELF64_PHDR *) (file + ehdr->e_phoff);
 	for (i = 0; i < ehdr->e_phnum; i++) {
-		/* The static app runtime has no interpreter, relocator, or TLS setup. */
+		/* No interpreter/relocator; only the UNIX entry path initializes TLS. */
 		if (phdr[i].p_type == PT_DYNAMIC64 ||
-			phdr[i].p_type == PT_INTERP64 || phdr[i].p_type == PT_TLS64) {
+			phdr[i].p_type == PT_INTERP64 ||
+			(phdr[i].p_type == PT_TLS64 && abi == UNIX64_ABI_LEGACY)) {
 			return -5;
 		}
 		if (phdr[i].p_type != PT_LOAD) {
@@ -270,7 +271,69 @@ static unsigned int image_page_permissions64(const struct ELF64_EHDR *header,
 	return permissions;
 }
 
-int elf64_prepare_image(const char *path, struct PROCESS64 *process)
+/* PHDR and the initialized TLS template must describe readable LOAD bytes.
+ * TLS BSS need not occupy LOAD memory: libc allocates and zeroes each TLS block.
+ */
+static int unix_metadata64(const uint8_t *bytes, size_t file_size, struct PROCESS_IMAGE64 *image)
+{
+	const struct ELF64_EHDR *header = (const void *) bytes;
+	const struct ELF64_PHDR *segments = (const void *) (bytes + header->e_phoff);
+	const struct ELF64_PHDR *tls = NULL, *phdr = NULL;
+	size_t phbytes = header->e_phnum * sizeof(*segments);
+	uintptr_t phva = 0;
+
+	for (uint16_t i = 0; i < header->e_phnum; i++) {
+		const struct ELF64_PHDR *load = &segments[i];
+
+		if (load->p_type == PT_TLS64) {
+			if (tls != NULL) { return -8; }
+			tls = load;
+		}
+		if (load->p_type == 6) {
+			if (phdr != NULL) { return -8; }
+			phdr = load;
+		}
+		if (load->p_type != PT_LOAD || load->p_memsz == 0 ||
+			load->p_offset > header->e_phoff) { continue; }
+		uint64_t offset = header->e_phoff - load->p_offset;
+
+		if (offset > load->p_filesz || phbytes > load->p_filesz - offset) { continue; }
+		if (phva != 0 && phva != load->p_vaddr + offset) { return -8; }
+		phva = load->p_vaddr + offset;
+	}
+	if (phva == 0 || (phdr != NULL && (phdr->p_vaddr != phva ||
+		phdr->p_offset != header->e_phoff || phdr->p_filesz != phbytes ||
+		phdr->p_memsz != phbytes || phdr->p_flags != PF_R64))) { return -8; }
+	image->phdr = phva;
+	image->phnum = header->e_phnum;
+	if (tls == NULL) { return 0; }
+	if (tls->p_filesz > tls->p_memsz || tls->p_memsz > 0x100000 ||
+		tls->p_offset > file_size || tls->p_filesz > file_size - tls->p_offset ||
+		tls->p_align == 0 || tls->p_align > USER_PAGE_SIZE64 ||
+		(tls->p_align & (tls->p_align - 1)) != 0 || tls->p_flags != PF_R64 ||
+		(tls->p_offset & (tls->p_align - 1)) != (tls->p_vaddr & (tls->p_align - 1))) {
+		return -8;
+	}
+	if (tls->p_memsz == 0) { return 0; }
+	for (uint16_t i = 0; i < header->e_phnum; i++) {
+		const struct ELF64_PHDR *load = &segments[i];
+
+		if (load->p_type != PT_LOAD || load->p_memsz == 0 ||
+			tls->p_vaddr < load->p_vaddr || tls->p_offset < load->p_offset) { continue; }
+		uint64_t offset = tls->p_vaddr - load->p_vaddr;
+
+		if (offset != tls->p_offset - load->p_offset || offset > load->p_filesz ||
+			tls->p_filesz > load->p_filesz - offset) { continue; }
+		image->tls_address = tls->p_vaddr;
+		image->tls_filesz = tls->p_filesz;
+		image->tls_memsz = tls->p_memsz;
+		image->tls_align = tls->p_align;
+		return 0;
+	}
+	return -8;
+}
+
+int elf64_prepare_image_abi(const char *path, struct PROCESS_IMAGE64 *image, uint32_t expected_abi)
 {
 	struct FDHANDLE64 file;
 	const struct ELF64_EHDR *header;
@@ -281,55 +344,71 @@ int elf64_prepare_image(const char *path, struct PROCESS64 *process)
 	uint32_t abi;
 	int status;
 
-	if (path == NULL || process == NULL || process->space == NULL ||
-		process->image_storage.size != 0 || process->elf_snapshot.size != 0 ||
-		process->image.size != 0) { return -22; }
+	if (path == NULL || image == NULL || expected_abi > UNIX64_ABI_VERSION ||
+		image->space == NULL ||
+		image->image_storage.size != 0 || image->elf_snapshot.size != 0 ||
+		image->image.size != 0) { return -22; }
 	status = fd64_open_checked(&file, path, 0);
 	if (status != 0) { return status; }
 	size = file.info.size;
-	if (size < sizeof(*header)) { return -4; }
-	if (align_up_checked64(size, USER_PAGE_SIZE64, &snapshot_size) != 0) { return -4; }
-	status = user_backing_alloc64(&process->elf_snapshot, snapshot_size);
+	if (size < sizeof(*header)) { return expected_abi == UNIX64_ABI_VERSION ? -8 : -4; }
+	if (align_up_checked64(size, USER_PAGE_SIZE64, &snapshot_size) != 0) {
+		return expected_abi == UNIX64_ABI_VERSION ? -8 : -4;
+	}
+	status = user_backing_alloc64(&image->elf_snapshot, snapshot_size);
 	if (status != 0) { return status; }
-	bytes = (const uint8_t *) process->elf_snapshot.kernel_address;
-	if (fd64_read_checked(&file, (void *) bytes, size) != (int64_t) size) { return -3; }
+	bytes = (const uint8_t *) image->elf_snapshot.kernel_address;
+	if (fd64_read_checked(&file, (void *) bytes, size) != (int64_t) size) {
+		return expected_abi == UNIX64_ABI_VERSION ? -5 : -3;
+	}
 	header = (const struct ELF64_EHDR *) bytes;
-	if (!valid_header(header, size)) { return -4; }
+	if (!valid_header(header, size)) { return expected_abi == UNIX64_ABI_VERSION ? -8 : -4; }
 	status = image_abi64(bytes, size, &abi);
 	if (status != 0) { return status; }
-	/* A1.4 installs the UNIX stack/auxv/TLS path. Never run v1 via v0 CRT. */
-	if (abi != UNIX64_ABI_LEGACY) { return -UNIX64_ENOEXEC; }
-	status = image_range64(bytes, size, &low, &high);
-	if (status != 0) { return status; }
+	/* Legacy console launch must never interpret a UNIX image as register argv. */
+	if (abi != expected_abi) { return -UNIX64_ENOEXEC; }
+	status = image_range64(bytes, size, &low, &high, abi);
+	if (status != 0) { return abi == UNIX64_ABI_VERSION ? -8 : status; }
+	if (abi == UNIX64_ABI_VERSION) {
+		status = unix_metadata64(bytes, size, image);
+		if (status != 0) { return status; }
+	}
 	if (align_down_checked64(low, USER_PAGE_SIZE64, &base) != 0 ||
 		align_up_checked64(high, USER_PAGE_SIZE64, &end) != 0) { return -5; }
-	status = user_backing_alloc64(&process->image_storage, end - base);
+	status = user_backing_alloc64(&image->image_storage, end - base);
 	if (status != 0) { return status; }
 	segments = (const struct ELF64_PHDR *) (bytes + header->e_phoff);
 	for (uint16_t i = 0; i < header->e_phnum; i++) {
 		if (segments[i].p_type != PT_LOAD || segments[i].p_memsz == 0) { continue; }
-		copy_bytes((void *) (process->image_storage.kernel_address +
+		copy_bytes((void *) (image->image_storage.kernel_address +
 			segments[i].p_vaddr - base), bytes + segments[i].p_offset,
 			(size_t) segments[i].p_filesz);
 	}
-	status = user_backing_sync_code64(&process->image_storage, 0, end - base);
+	status = user_backing_sync_code64(&image->image_storage, 0, end - base);
 	if (status != 0) { return status; }
 	for (uintptr_t address = base; address < end; address += USER_PAGE_SIZE64) {
 		unsigned int permissions = image_page_permissions64(header, segments, address);
 
 		if (permissions == 0) { continue; }
-		status = address_space_map_backing64(process->space, address,
-			&process->image_storage, address - base, USER_PAGE_SIZE64,
+		status = address_space_map_backing64(image->space, address,
+			&image->image_storage, address - base, USER_PAGE_SIZE64,
 			permissions);
 		if (status != 0) { return status; }
 	}
 	/* Publish the image only after the snapshot is released successfully. */
 	uintptr_t entry = (uintptr_t) header->e_entry;
 
-	status = user_backing_free64(&process->elf_snapshot);
+	status = user_backing_free64(&image->elf_snapshot);
 	if (status != 0) { return status; }
-	process->entry = entry;
-	process->image.base = base;
-	process->image.size = end - base;
+	image->abi = abi;
+	image->entry = entry;
+	image->image.base = base;
+	image->image.size = end - base;
 	return 0;
+}
+
+int elf64_prepare_image(const char *path, struct PROCESS64 *process)
+{
+	if (process == NULL || process->memory == NULL) { return -22; }
+	return elf64_prepare_image_abi(path, process->memory, UNIX64_ABI_LEGACY);
 }

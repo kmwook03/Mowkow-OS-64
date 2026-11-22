@@ -130,12 +130,12 @@ static void reset_fixture64(void)
 
 static int reject_fixture64(int expected)
 {
-	struct PROCESS64 process = {0};
+	struct PROCESS64 process = {.memory = &process.images[0]};
 	size_t available = memman64_total(&memman64);
 
 	CHECK64(load_fixture64("fixture", &process) == expected);
 	CHECK64(memman64_total(&memman64) == available);
-	CHECK64(process.entry == 0 && process.image.size == 0);
+	CHECK64(process.memory->entry == 0 && process.memory->image.size == 0);
 	CHECK64(irq_depth == 0 && irq_errors == 0);
 	return 0;
 }
@@ -192,21 +192,21 @@ static int test_segment_ranges64(void)
 	uintptr_t high;
 
 	reset_fixture64();
-	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+	CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == 0);
 	CHECK64(low == USER_IMAGE_MIN && high == USER_IMAGE_MIN + 0x2000);
 	segments64()[1].p_filesz = 0;
-	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+	CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == 0);
 	/* Empty segments must not extend the image or overlap a live segment. */
 	segments64()[1] = segments64()[0];
 	segments64()[1].p_filesz = 0;
 	segments64()[1].p_memsz = 0;
-	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+	CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == 0);
 	CHECK64(high == USER_IMAGE_MIN + 0x1000);
 	/* GNU ld can emit an unused explicit data PHDR for tiny AArch64 apps. */
 	segments64()[1].p_vaddr = 0;
 	segments64()[1].p_offset = 0xe8;
 	segments64()[1].p_align = 0x10000;
-	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+	CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == 0);
 	reset_fixture64();
 	segments64()[0].p_offset = UINT64_MAX - 0xfff;
 	segments64()[0].p_filesz = 0x2000;
@@ -234,7 +234,7 @@ static int test_segment_ranges64(void)
 	reset_fixture64();
 	header64()->e_phnum = 1;
 	segments64()[0].p_memsz = USER_IMAGE_MAX - USER_IMAGE_MIN;
-	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+	CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == 0);
 	CHECK64(high == USER_IMAGE_MAX);
 	return 0;
 }
@@ -258,7 +258,7 @@ static int test_alignment_and_overlap64(void)
 	segments64()[0].p_align = 0x10000;
 	CHECK64(reject_fixture64(-5) == 0);
 	segments64()[0].p_offset = 0x10000;
-	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+	CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == 0);
 	reset_fixture64();
 	segments64()[1].p_vaddr = segments64()[0].p_vaddr;
 	CHECK64(reject_fixture64(-5) == 0);
@@ -274,7 +274,7 @@ static int test_alignment_and_overlap64(void)
 	segments64()[0].p_vaddr += 0x1000;
 	segments64()[1].p_vaddr -= 0x1000;
 	header64()->e_entry = segments64()[0].p_vaddr;
-	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+	CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == 0);
 	segments64()[1].p_memsz++;
 	CHECK64(reject_fixture64(-5) == 0);
 	/* Adjacent byte ranges may share a page; page padding is not a segment. */
@@ -284,7 +284,7 @@ static int test_alignment_and_overlap64(void)
 	segments64()[1].p_offset += 16;
 	CHECK64(reject_fixture64(-5) == 0);
 	segments64()[1].p_flags = PF_R64;
-	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+	CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == 0);
 	return 0;
 }
 
@@ -373,9 +373,9 @@ static int test_entry_and_load64(void)
 	segments64()[0].p_flags = PF_R64;
 	segments64()[1].p_flags = PF_R64 | PF_X64;
 	header64()->e_entry = segments64()[1].p_vaddr;
-	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+	CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == 0);
 	header64()->e_entry += segments64()[1].p_memsz - 4;
-	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+	CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == 0);
 	return 0;
 }
 
@@ -403,7 +403,7 @@ static int test_segment_flags64(void)
 		int expected = flags == PF_R64 || flags == (PF_R64 | PF_W64) ||
 			flags == (PF_R64 | PF_X64) ? 0 : -5;
 
-		CHECK64(image_range64(fixture, fixture_size, &low, &high) == expected);
+		CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == expected);
 	}
 	for (i = 0; i < sizeof unsupported_types / sizeof unsupported_types[0]; i++) {
 		reset_fixture64();
@@ -413,7 +413,7 @@ static int test_segment_flags64(void)
 	/* Linker metadata such as GNU_STACK is not loaded into the image. */
 	reset_fixture64();
 	segments64()[1].p_type = 0x6474e551U;
-	CHECK64(image_range64(fixture, fixture_size, &low, &high) == 0);
+	CHECK64(image_range64(fixture, fixture_size, &low, &high, UNIX64_ABI_LEGACY) == 0);
 	return 0;
 }
 
@@ -436,12 +436,12 @@ static void note_fixture64(void)
 static int test_abi_notes64(void)
 {
 	uint32_t abi;
-	struct PROCESS64 process = {0};
+	struct PROCESS64 process = {.memory = &process.images[0]};
 
 	reset_fixture64();
 	CHECK64(image_abi64(fixture, fixture_size, &abi) == 0 && abi == 0);
 	CHECK64(load_fixture64("legacy", &process) == 0);
-	CHECK64(process.entry == USER_IMAGE_MIN && process.image.size == 0x2000);
+	CHECK64(process.memory->entry == USER_IMAGE_MIN && process.memory->image.size == 0x2000);
 	note_fixture64();
 	CHECK64(image_abi64(fixture, fixture_size, &abi) == 0 && abi == 1);
 	/* Recognition is not permission to run via the register-argv legacy path. */

@@ -14,15 +14,15 @@ int user_access_begin64(struct USER_ACCESS64 *access, const void *user,
 	/* Acquire lifetime first, then inspect ranges and leaves. The calling
 	 * execution flow owns the process record until its syscall unwinds.
 	 */
-	status = address_space_pin64(process->space);
+	status = address_space_pin64(process->memory->space);
 	if (status != 0) { return -14; }
 	if (!(permissions == USER_WRITE64 ? process64_user_write_valid((void *) user, size) :
 		process64_user_range_valid(user, size))) {
-		(void) address_space_unpin64(process->space);
+		(void) address_space_unpin64(process->memory->space);
 		return -14;
 	}
 	*access = (struct USER_ACCESS64) {
-		.space = process->space, .address = (uintptr_t) user,
+		.space = process->memory->space, .address = (uintptr_t) user,
 		.size = size, .permissions = permissions
 	};
 	return 0;
@@ -99,7 +99,7 @@ int64_t copy_string_from_user64(char *destination, size_t capacity, const char *
 	if (destination == NULL || capacity == 0 || capacity > INT64_MAX ||
 		capacity > UINTPTR_MAX - (uintptr_t) destination) { return -22; }
 	destination[0] = '\0';
-	if (process == NULL || address_space_pin64(process->space) != 0) { return -14; }
+	if (process == NULL || address_space_pin64(process->memory->space) != 0) { return -14; }
 	for (size_t i = 0; i < capacity; i++) {
 		/* Keep a string within one declared range, even at adjacent boundaries. */
 		if (i >= UINTPTR_MAX - base || !process64_user_range_valid(source, i + 1) ||
@@ -109,7 +109,7 @@ int64_t copy_string_from_user64(char *destination, size_t capacity, const char *
 		}
 		if (destination[i] == '\0') { result = (int64_t) i; break; }
 	}
-	(void) address_space_unpin64(process->space);
+	(void) address_space_unpin64(process->memory->space);
 	if (result < 0) { destination[0] = '\0'; }
 	return result;
 }

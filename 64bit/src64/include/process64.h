@@ -27,6 +27,7 @@ struct PROCESS64_RANGE {
 
 struct PROCESS64_FILE {
 	int used;
+	int cloexec;
 	struct FDHANDLE64 fh;
 };
 
@@ -51,16 +52,39 @@ struct PROCESS_THREAD64 {
 	uintptr_t saved_kernel_rsp;
 };
 
-struct PROCESS64 {
-	enum PROCESS_STATE64 state;
-	struct PROCESS_THREAD64 thread;
+/* Stable descriptor banks: exec switches pointers, never mapped backing owners. */
+struct PROCESS_IMAGE64 {
 	struct ADDRESS_SPACE64 *space;
 	struct USER_BACKING64 image_storage;
 	struct USER_BACKING64 stack_storage;
 	struct USER_BACKING64 heap_storage;
 	struct USER_BACKING64 elf_snapshot;
+	uintptr_t entry;
+	struct PROCESS64_RANGE image;
+	struct PROCESS64_RANGE stack;
+	struct PROCESS64_RANGE heap;
+	uintptr_t stack_backing;
+	uintptr_t heap_backing;
+	uintptr_t heap_next;
+	uint32_t abi;
+	uintptr_t phdr;
+	uint16_t phnum;
+	uintptr_t tls_address;
+	size_t tls_filesz;
+	size_t tls_memsz;
+	size_t tls_align;
+	uintptr_t initial_rsp;
+};
+
+struct PROCESS64 {
+	enum PROCESS_STATE64 state;
+	struct PROCESS_THREAD64 thread;
+	struct PROCESS_IMAGE64 *memory;
+	struct PROCESS_IMAGE64 images[2];
 	/* Supervisor-only syscall snapshot, retained for reuse until teardown. */
 	struct USER_BACKING64 io_storage;
+	/* Exec argument snapshot; retained when a free fails, never user-mapped. */
+	struct USER_BACKING64 exec_storage;
 	int io_ready;
 	uint8_t io_empty;
 	int reap_pending;
@@ -72,13 +96,6 @@ struct PROCESS64 {
 	int auto_reap;
 	int legacy_owner;
 	int wait_status;
-	uintptr_t entry;
-	struct PROCESS64_RANGE image;
-	struct PROCESS64_RANGE stack;
-	struct PROCESS64_RANGE heap;
-	uintptr_t stack_backing;
-	uintptr_t heap_backing;
-	uintptr_t heap_next;
 	int exited;
 	int exit_status;
 	struct PROCESS64_FILE files[PROCESS64_MAX_FILES];
@@ -86,6 +103,14 @@ struct PROCESS64 {
 	   아니다 -- 콘솔 2에서 띄운 앱이 콘솔 1에 찍으면 안 된다. */
 	struct CONSOLE64 *console;
 };
+
+/* Inactive image only. Failed cleanup retains every unreleased descriptor. */
+int process64_release_image(struct PROCESS_IMAGE64 *image);
+/* Current process only. Snapshot user vectors, prepare an inactive bank, then
+ * atomically commit. Success requires the caller to replace its user frame.
+ */
+int process64_execve_user64(const char *path, const void *argv, const void *envp);
+int process64_set_tls64(uintptr_t pointer);
 
 /* Kernel-owned NUL-terminated input; NULL cmdline uses path as the command line.
    Oversized names/lines or excess arguments return PROCESS64_ERR_ARGS. */

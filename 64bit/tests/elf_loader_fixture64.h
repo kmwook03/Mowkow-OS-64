@@ -44,10 +44,10 @@ static int load_fixture64(const char *path, struct PROCESS64 *process)
 	static unsigned char space_token;
 	int status;
 
-	process->space = (struct ADDRESS_SPACE64 *) (void *) &space_token;
+	process->memory->space = (struct ADDRESS_SPACE64 *) (void *) &space_token;
 	status = elf64_prepare_image(path, process);
-	(void) user_backing_free64(&process->image_storage);
-	(void) user_backing_free64(&process->elf_snapshot);
+	(void) user_backing_free64(&process->memory->image_storage);
+	(void) user_backing_free64(&process->memory->elf_snapshot);
 	return status;
 }
 

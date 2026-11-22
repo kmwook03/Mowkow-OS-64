@@ -12,6 +12,10 @@
 #undef copy_bytes
 #include "../src64/kernel/process64.c"
 #include "../src64/kernel/user_access64.c"
+#include "../src64/kernel/process_exec64.c"
+
+static uintptr_t tls_pointer64;
+void platform_user_tls64(uintptr_t pointer) { assert(irq_off64); tls_pointer64 = pointer; }
 
 static uint8_t elf_bytes64[0x4000];
 static int read_error64, open_error64;
@@ -100,7 +104,7 @@ int enter_user_mode64(uintptr_t entry, uintptr_t stack, uint64_t argc, uintptr_t
 
 	assert(irq_off64 && process && process->state == PROCESS_RUNNING64);
 	assert(process->thread.task == task);
-	assert(active_space64 == process->space && task->is_user);
+	assert(active_space64 == process->memory->space && task->is_user);
 	assert(entry == 0x400000 && stack == argv && argc == 3);
 	assert(code_selector == GDT64_USER_CODE && data_selector == GDT64_USER_DATA);
 	assert(entry_top64 == process->thread.entry_storage.kernel_address + 65536);
@@ -120,7 +124,7 @@ int enter_user_mode64(uintptr_t entry, uintptr_t stack, uint64_t argc, uintptr_t
 
 	assert(snapshot != NULL && process->io_ready);
 	snapshot[0] = (unsigned char) (depth + 9);
-	*(unsigned char *) process->heap_storage.kernel_address = (unsigned char) (depth + 1);
+	*(unsigned char *) process->memory->heap_storage.kernel_address = (unsigned char) (depth + 1);
 	entry_calls64++;
 	if (depth + 1 < execution_limit64) {
 		current_task64 = &execution_tasks64[++execution_depth64];
@@ -134,9 +138,9 @@ int enter_user_mode64(uintptr_t entry, uintptr_t stack, uint64_t argc, uintptr_t
 		current_task64 = task;
 		(void) platform_irq_save64();
 		process64_switch_task64(task);
-		assert(installed64 == root && active_space64 == process->space);
+		assert(installed64 == root && active_space64 == process->memory->space);
 		assert(process64_entry_stack_top() == entry_top64);
-		assert(*(unsigned char *) process->heap_storage.kernel_address == depth + 1);
+		assert(*(unsigned char *) process->memory->heap_storage.kernel_address == depth + 1);
 		assert(snapshot[0] == depth + 9 && process64_io_buffer(17) == snapshot);
 	}
 	frees = free_calls64;
@@ -157,7 +161,7 @@ int enter_user_mode64(uintptr_t entry, uintptr_t stack, uint64_t argc, uintptr_t
 	assert(process64_current_exit_rsp() == 0x123000 + depth * 0x1000);
 	assert(process64_current_exit_status() == exit_status64);
 	assert(process64_current() == process && process->files[3].used);
-	assert(free_calls64 == frees && active_space64 == process->space);
+	assert(free_calls64 == frees && active_space64 == process->memory->space);
 	if (fail_exit_free64 >= 0) {
 		free_fail64 = (int) free_calls64 + fail_exit_free64;
 		free_persistent64 = 1;
@@ -227,25 +231,25 @@ static void check_page64(struct PROCESS64 *process, uintptr_t va, uintptr_t expe
 	uintptr_t pa;
 	unsigned int flags;
 
-	assert(walk64(process->space, va, &pa, &flags) == 0);
+	assert(walk64(process->memory->space, va, &pa, &flags) == 0);
 	assert(pa == expected_pa && flags == expected_flags);
 }
 
 static void check_contents64(struct PROCESS64 *process)
 {
-	const uint8_t *image = (const void *) process->image_storage.kernel_address;
-	const uint8_t *heap = (const void *) process->heap_storage.kernel_address;
-	const uint8_t *stack = (const void *) process->stack_storage.kernel_address;
+	const uint8_t *image = (const void *) process->memory->image_storage.kernel_address;
+	const uint8_t *heap = (const void *) process->memory->heap_storage.kernel_address;
+	const uint8_t *stack = (const void *) process->memory->stack_storage.kernel_address;
 	uintptr_t argv_offset = process->thread.initial_argv - 0x100200000ULL;
 	const uintptr_t *argv = (const void *) (stack + argv_offset);
 	uintptr_t pa;
 	unsigned int flags;
 
-	assert(process->state == PROCESS_READY64 && process->entry == 0x400000);
-	assert(process->image.base == 0x400000 && process->image.size == 0x5000);
-	assert(process->stack.base == 0x100200000ULL && process->stack.size == 0x10000);
-	assert(process->heap.base == 0x100000000ULL && process->heap.size == 0x100000);
-	assert(process->heap_next == 0x100000000ULL && process->thread.initial_argc == 3);
+	assert(process->state == PROCESS_READY64 && process->memory->entry == 0x400000);
+	assert(process->memory->image.base == 0x400000 && process->memory->image.size == 0x5000);
+	assert(process->memory->stack.base == 0x100200000ULL && process->memory->stack.size == 0x10000);
+	assert(process->memory->heap.base == 0x100000000ULL && process->memory->heap.size == 0x100000);
+	assert(process->memory->heap_next == 0x100000000ULL && process->thread.initial_argc == 3);
 	assert(process->thread.initial_rsp == process->thread.initial_argv);
 	assert(!(process->thread.initial_rsp & 15));
 	assert(argv[3] == 0 && strcmp((const char *) stack + argv[0] - 0x100200000ULL,
@@ -261,17 +265,17 @@ static void check_contents64(struct PROCESS64 *process)
 
 		assert(image[i] == expected);
 	}
-	check_page64(process, 0x400000, process->image_storage.physical, 5);
-	check_page64(process, 0x402000, process->image_storage.physical + 0x2000, 1);
-	check_page64(process, 0x403000, process->image_storage.physical + 0x3000, 3);
-	check_page64(process, 0x404fff, process->image_storage.physical + 0x4fff, 3);
-	check_page64(process, 0x100000000ULL, process->heap_storage.physical, 3);
-	check_page64(process, 0x100200000ULL, process->stack_storage.physical, 3);
-	assert(walk64(process->space, 0x401000, &pa, &flags) != 0);
-	assert(walk64(process->space, 0x405000, &pa, &flags) != 0);
-	assert(walk64(process->space, 0x1001ff000ULL, &pa, &flags) != 0);
-	assert(walk64(process->space, 0x100210000ULL, &pa, &flags) != 0);
-	assert(process->elf_snapshot.size == 0);
+	check_page64(process, 0x400000, process->memory->image_storage.physical, 5);
+	check_page64(process, 0x402000, process->memory->image_storage.physical + 0x2000, 1);
+	check_page64(process, 0x403000, process->memory->image_storage.physical + 0x3000, 3);
+	check_page64(process, 0x404fff, process->memory->image_storage.physical + 0x4fff, 3);
+	check_page64(process, 0x100000000ULL, process->memory->heap_storage.physical, 3);
+	check_page64(process, 0x100200000ULL, process->memory->stack_storage.physical, 3);
+	assert(walk64(process->memory->space, 0x401000, &pa, &flags) != 0);
+	assert(walk64(process->memory->space, 0x405000, &pa, &flags) != 0);
+	assert(walk64(process->memory->space, 0x1001ff000ULL, &pa, &flags) != 0);
+	assert(walk64(process->memory->space, 0x100210000ULL, &pa, &flags) != 0);
+	assert(process->memory->elf_snapshot.size == 0);
 }
 
 static int prepare64(struct PROCESS64 **process)
@@ -293,15 +297,16 @@ static void isolation64(void)
 		check_contents64(processes[i]);
 		for (unsigned int j = 0; j < i; j++) {
 			assert(processes[i]->pid != processes[j]->pid);
-			assert(processes[i]->image_storage.physical != processes[j]->image_storage.physical);
+			assert(processes[i]->memory->image_storage.physical !=
+				processes[j]->memory->image_storage.physical);
 		}
-		*(uint8_t *) processes[i]->heap_storage.kernel_address = (uint8_t) (i + 1);
+		*(uint8_t *) processes[i]->memory->heap_storage.kernel_address = (uint8_t) (i + 1);
 	}
 	unsigned int calls = alloc_calls64;
 
 	assert(prepare64(&extra) == -12 && extra == NULL && alloc_calls64 == calls);
 	for (unsigned int i = 0; i < 4; i++) {
-		assert(*(uint8_t *) processes[i]->heap_storage.kernel_address == i + 1);
+		assert(*(uint8_t *) processes[i]->memory->heap_storage.kernel_address == i + 1);
 		assert(process64_discard_prepared(&processes[i]) == 0 && !processes[i]);
 	}
 	assert(live_pages64 == base);
@@ -322,9 +327,9 @@ static void failures_process64(void)
 	size_t base;
 
 	fixture64(); assert(prepare64(&owner) == 0);
-	snapshot64(owner->space, before);
+	snapshot64(owner->memory->space, before);
 	base = live_pages64;
-	irq_off64 = 1; assert(address_space_activate64(owner->space) == 0); irq_off64 = 0;
+	irq_off64 = 1; assert(address_space_activate64(owner->memory->space) == 0); irq_off64 = 0;
 	uintptr_t owner_root = installed64;
 
 	/* Tables, snapshot, image, stack, heap and entry stack: every allocation failure. */
@@ -333,7 +338,7 @@ static void failures_process64(void)
 		assert(prepare64(&other) == -12 && other == NULL);
 		alloc_fail64 = -1;
 		assert(live_pages64 == base && !irq_off64 && installed64 == owner_root);
-		unchanged64(owner->space, before); check_contents64(owner);
+		unchanged64(owner->memory->space, before); check_contents64(owner);
 	}
 	/* Every cleanup free retains the slot and handle until a later retry. */
 	for (unsigned int i = 0; i < count + 4; i++) {
@@ -344,7 +349,7 @@ static void failures_process64(void)
 		free_fail64 = -1;
 		assert(process64_discard_prepared(&other) == 0 && other == NULL);
 		assert(live_pages64 == base);
-		unchanged64(owner->space, before); check_contents64(owner);
+		unchanged64(owner->memory->space, before); check_contents64(owner);
 	}
 	/* Snapshot free failure after mapping cannot publish a READY process. */
 	free_fail64 = (int) free_calls64;
@@ -365,11 +370,11 @@ static void failures_process64(void)
 		assert(process64_discard_prepared(&reservation) == 0);
 		free_persistent64 = 0; alloc_fail64 = free_fail64 = -1;
 		assert(process64_discard_prepared(&other) == 0 && live_pages64 == base);
-		unchanged64(owner->space, before); check_contents64(owner);
+		unchanged64(owner->memory->space, before); check_contents64(owner);
 	}
 	/* Persistent snapshot-release failure keeps its pages until all tables retire. */
 	free_persistent64 = 1;
-	assert(prepare64(&other) == -12 && other != NULL && other->elf_snapshot.size != 0);
+	assert(prepare64(&other) == -12 && other != NULL && other->memory->elf_snapshot.size != 0);
 	free_persistent64 = 0;
 	assert(process64_discard_prepared(&other) == 0 && live_pages64 == base);
 	read_error64 = 1;
@@ -377,7 +382,7 @@ static void failures_process64(void)
 	read_error64 = 0; open_error64 = 1;
 	assert(prepare64(&other) == -2 && other == NULL && live_pages64 == base);
 	open_error64 = 0;
-	unchanged64(owner->space, before); check_contents64(owner);
+	unchanged64(owner->memory->space, before); check_contents64(owner);
 	assert(installed64 == owner_root);
 	irq_off64 = 1; assert(address_space_activate64(NULL) == 0); irq_off64 = 0;
 	assert(process64_discard_prepared(&owner) == 0);
@@ -399,12 +404,12 @@ static void permissions_process64(void)
 	assert(prepare64(&process) == -5 && !process && live_pages64 == base);
 	segments[1].p_flags = 4;
 	assert(prepare64(&process) == 0);
-	check_page64(process, 0x400800, process->image_storage.physical + 0x800, 5);
-	assert(walk64(process->space, 0x402000, &pa, &flags) != 0);
+	check_page64(process, 0x400800, process->memory->image_storage.physical + 0x800, 5);
+	assert(walk64(process->memory->space, 0x402000, &pa, &flags) != 0);
 	assert(process64_discard_prepared(&process) == 0 && live_pages64 == base);
 	/* An active process cannot be discarded or lose backing ownership. */
 	fixture64(); assert(prepare64(&process) == 0);
-	irq_off64 = 1; assert(address_space_activate64(process->space) == 0); irq_off64 = 0;
+	irq_off64 = 1; assert(address_space_activate64(process->memory->space) == 0); irq_off64 = 0;
 	unsigned int frees = free_calls64;
 
 	assert(process64_discard_prepared(&process) == -16 && process->state == PROCESS_READY64);
@@ -430,8 +435,8 @@ static void user_copy64(void)
 	assert(copy_to_user64((void *) 0x400000, data, 1) == -14);
 	assert(copy_to_user64((void *) 0x402000, data, 1) == -14);
 	assert(copy_to_user64((void *) 0x403ff8, data, sizeof(data)) == 0);
-	assert(memcmp((void *) (owner->image_storage.kernel_address + 0x3ff8), data, 32) == 0);
-	assert(*(unsigned char *) (peer->image_storage.kernel_address + 0x3ff8) == 0);
+	assert(memcmp((void *) (owner->memory->image_storage.kernel_address + 0x3ff8), data, 32) == 0);
+	assert(*(unsigned char *) (peer->memory->image_storage.kernel_address + 0x3ff8) == 0);
 	assert(copy_from_user64(output, (void *) 0x403ff8, sizeof(output)) == 0);
 	assert(memcmp(output, data, sizeof(data)) == 0);
 	memset(output, 0xa5, sizeof(output));
@@ -441,8 +446,8 @@ static void user_copy64(void)
 		assert(copy_from_user64(output, (void *) bad[i], 16) == -14);
 		assert(copy_to_user64((void *) bad[i], data, 16) == -14);
 	}
-	assert(copy_from_user64(output, (void *) peer->heap_storage.kernel_address, 1) == -14);
-	assert(copy_to_user64((void *) peer->heap_storage.physical, data, 1) == -14);
+	assert(copy_from_user64(output, (void *) peer->memory->heap_storage.kernel_address, 1) == -14);
+	assert(copy_to_user64((void *) peer->memory->heap_storage.physical, data, 1) == -14);
 	assert(copy_from_user64(output, (void *) 0x403000, SIZE_MAX) == -14);
 	assert(copy_from_user64(output, (void *) 0x100100000ULL, 0) == 0);
 	assert(copy_to_user64((void *) 0x100100000ULL, data, 0) == 0);
@@ -450,7 +455,7 @@ static void user_copy64(void)
 	assert(copy_from_user64(NULL, (void *) 0x400000, 1) == -22);
 	assert(copy_from_user64((void *) UINTPTR_MAX, (void *) 0x400000, 1) == -22);
 	assert(copy_to_user64((void *) 0x1000ffff8ULL, data, 16) == -14);
-	assert(*(unsigned char *) (owner->heap_storage.kernel_address + 0xffff8) == 0);
+	assert(*(unsigned char *) (owner->memory->heap_storage.kernel_address + 0xffff8) == 0);
 	assert(copy_to_user64((void *) 0x403ffc, "abcdEF", 7) == 0);
 	assert(copy_string_from_user64((char *) output, sizeof(output), (void *) 0x403ffc) == 6);
 	assert(memcmp(output, "abcdEF", 7) == 0);
@@ -483,19 +488,19 @@ static void user_copy64(void)
 	assert(user_access_begin64(&access, (void *) 0x403ff8, 32, USER_WRITE64) == 0);
 	assert(user_access_begin64(&access, (void *) 0x403ff8, 32, USER_WRITE64) == -22);
 	task.process = peer;
-	assert(address_space_destroy64(&owner->space) == -16);
-	assert(user_backing_free64(&owner->image_storage) == -16 && free_calls64 == frees);
+	assert(address_space_destroy64(&owner->memory->space) == -16);
+	assert(user_backing_free64(&owner->memory->image_storage) == -16 && free_calls64 == frees);
 	memset(data, 0x93, sizeof(data));
 	assert(copy_to_user_access64(&access, data, 33) == -22);
 	assert(copy_to_user_access64(&access, data, 32) == 0);
-	assert(memcmp((void *) (owner->image_storage.kernel_address + 0x3ff8), data, 32) == 0);
-	assert(*(unsigned char *) (peer->image_storage.kernel_address + 0x3ff8) == 0);
+	assert(memcmp((void *) (owner->memory->image_storage.kernel_address + 0x3ff8), data, 32) == 0);
+	assert(*(unsigned char *) (peer->memory->image_storage.kernel_address + 0x3ff8) == 0);
 	user_access_end64(&access);
 	user_access_end64(&access);
-	assert(copy_to_user_access64(&access, data, 1) == -22 && owner->space->pins == 0);
+	assert(copy_to_user_access64(&access, data, 1) == -22 && owner->memory->space->pins == 0);
 	task.process = owner;
 	assert(user_access_begin64(&access, (void *) 0x400ff8, 32, USER_READ64) == -14);
-	assert(access.space == NULL && owner->space->pins == 0);
+	assert(access.space == NULL && owner->memory->space->pins == 0);
 	current_task64 = NULL;
 	assert(copy_from_user64(output, (void *) 0x400000, 1) == -14);
 	/* Fail the I/O snapshot free after all private page tables retire. */
@@ -628,10 +633,10 @@ static void command_limits64(void)
 	line[sizeof(line) - 2] = '\0'; name[sizeof(name) - 2] = '\0';
 	assert(process64_prepare_file(name, line, NULL, &process) == 0);
 	assert(strcmp(opened_name64, name) == 0 && process->thread.initial_argc == 1);
-	const uintptr_t *argv = (const void *) (process->stack_storage.kernel_address +
-		process->thread.initial_argv - process->stack.base);
-	const char *arg = (const void *) (process->stack_storage.kernel_address +
-		argv[0] - process->stack.base);
+	const uintptr_t *argv = (const void *) (process->memory->stack_storage.kernel_address +
+		process->thread.initial_argv - process->memory->stack.base);
+	const char *arg = (const void *) (process->memory->stack_storage.kernel_address +
+		argv[0] - process->memory->stack.base);
 
 	assert(argv[1] == 0 && strcmp(arg, line) == 0);
 	assert(process64_discard_prepared(&process) == 0 && live_pages64 == base);
@@ -706,7 +711,7 @@ static void lifecycle64(void)
 				parent->console = NULL;
 			}
 		} else {
-			assert(child->state == PROCESS_ZOMBIE64 && child->space == NULL);
+			assert(child->state == PROCESS_ZOMBIE64 && child->memory->space == NULL);
 			assert(child->console == NULL && child->thread.entry_storage.size == 0);
 		}
 		assert(process64_wait_child(parent, (int32_t) child_pid, 0, &pid, &status) == 0);
@@ -766,6 +771,8 @@ static void lifecycle64(void)
 	current_task64 = NULL;
 }
 
+#include "process_exec_fixture64.h"
+
 int main(void)
 {
 	(void) cleaned64;
@@ -773,7 +780,7 @@ int main(void)
 	isolation64();
 	user_copy64(); failures_process64(); permissions_process64();
 	execution64(); close_lifetime64(); command_limits64();
-	lifecycle64();
+	lifecycle64(); exec_transaction64();
 	puts("process memory: private ELF, argv, W^X, slots, execution, exit/reap and rollback PASS");
 	return 0;
 }

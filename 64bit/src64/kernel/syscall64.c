@@ -73,6 +73,7 @@ static int syscall_open64(struct PROCESS64 *process, const char *path, uint64_t 
 				return -2;
 			}
 			process->files[i].used = 1;
+			process->files[i].cloexec = 0;
 			return (int) i;
 		}
 	}
@@ -195,6 +196,7 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 					(unsigned int) arg1);
 				if (status != 0) { return status; }
 				process->files[i].used = 1;
+				process->files[i].cloexec = 0;
 				return (int64_t) i;
 			}
 		}
@@ -218,28 +220,28 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 
 static uintptr_t syscall_alloc64(struct PROCESS64 *process, uint64_t request)
 {
-	uintptr_t p = process->heap_next;
+	uintptr_t p = process->memory->heap_next;
 	size_t size;
 
 	if (request > UINT64_MAX - 15) {
 		return 0;
 	}
 	size = (size_t) ((request + 15) & ~(uint64_t) 15);
-	if (size == 0 || process->heap.size > UINTPTR_MAX - process->heap.base ||
-		p < process->heap.base || p - process->heap.base > process->heap.size ||
-		size > process->heap.size - (p - process->heap.base)) {
+	if (size == 0 || process->memory->heap.size > UINTPTR_MAX - process->memory->heap.base ||
+		p < process->memory->heap.base || p - process->memory->heap.base > process->memory->heap.size ||
+		size > process->memory->heap.size - (p - process->memory->heap.base)) {
 		return 0;
 	}
-	process->heap_next = p + size;
+	process->memory->heap_next = p + size;
 	return p;
 }
 
 static int syscall_free64(struct PROCESS64 *process, uintptr_t p, size_t size)
 {
 	if (process64_user_range_valid((void *) p, size) == 0 ||
-		process->heap.size > UINTPTR_MAX - process->heap.base ||
-		p < process->heap.base || p - process->heap.base > process->heap.size ||
-		size > process->heap.size - (p - process->heap.base)) {
+		process->memory->heap.size > UINTPTR_MAX - process->memory->heap.base ||
+		p < process->memory->heap.base || p - process->memory->heap.base > process->memory->heap.size ||
+		size > process->memory->heap.size - (p - process->memory->heap.base)) {
 		return -1;
 	}
 	/* The bump allocator retains storage until process exit, as before. */
@@ -333,8 +335,30 @@ uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame)
 	if (frame == NULL) {
 		return 0;
 	}
-	/* Reserved UNIX calls must never reach the legacy dispatcher. */
+	/* UNIX calls have an explicit dispatcher and never alias legacy numbers. */
 	if (frame->rax >= UNIX64_SYS_FIRST && frame->rax <= UNIX64_SYS_LAST) {
+		process = process64_current();
+		if (process != NULL && process->state == PROCESS_RUNNING64) {
+			if (frame->rax == UNIX64_SYS_EXIT && process->memory->abi == UNIX64_ABI_VERSION) {
+				process64_exit_current((int) frame->rdi);
+				return 1;
+			}
+			if (frame->rax == UNIX64_SYS_TCB_SET) {
+				frame->rax = (uint64_t) process64_set_tls64(frame->rdi);
+				return 0;
+			}
+			if (frame->rax == UNIX64_SYS_EXECVE) {
+				int status = process64_execve_user64((const char *) frame->rdi,
+					(const void *) frame->rsi, (const void *) frame->rdx);
+
+				if (status != 0) { frame->rax = (uint64_t) status; return 0; }
+				memset(frame, 0, sizeof(*frame));
+				frame->rip = process->memory->entry;
+				frame->rsp = process->memory->initial_rsp;
+				frame->cs = 0x33; frame->ss = 0x2b; frame->rflags = 0x202;
+				return 2;
+			}
+		}
 		frame->rax = (uint64_t) -UNIX64_ENOSYS;
 		return 0;
 	}

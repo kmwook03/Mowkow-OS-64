@@ -88,8 +88,19 @@ int platform_task_sleep_current64(struct TASK64 *task)
 void platform_task_switch64(struct CONTEXT64 *old_context,
 	struct CONTEXT64 *new_context)
 {
+	uint32_t low, high;
+
+	__asm__ volatile ("rdmsr" : "=a" (low), "=d" (high) : "c" (0xc0000100U));
+	old_context->thread_pointer = (uintptr_t) low | (uintptr_t) high << 32;
 	process64_switch_task64(task_now64());
+	platform_user_tls64(new_context->thread_pointer);
 	context_switch64(old_context, new_context);
+}
+
+void platform_user_tls64(uintptr_t pointer)
+{
+	__asm__ volatile ("wrmsr" :: "c" (0xc0000100U), "a" ((uint32_t) pointer),
+		"d" ((uint32_t) (pointer >> 32)) : "memory");
 }
 
 void platform_process_stack64(uintptr_t top)

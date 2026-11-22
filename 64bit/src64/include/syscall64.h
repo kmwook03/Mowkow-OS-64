@@ -81,6 +81,7 @@
 #define TTY_MOD_ALT   0x04
 
 struct INTERRUPT_FRAME64;
+/* Native entry action: 0 resume, 1 terminate, 2 new exec frame + reset user FP. */
 uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame);
 
 #endif

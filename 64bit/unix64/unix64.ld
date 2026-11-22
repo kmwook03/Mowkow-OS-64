@@ -19,7 +19,9 @@ SECTIONS
 	.rodata : { *(.rodata .rodata.*) } :rodata
 	.eh_frame : { KEEP(*(.eh_frame)) } :rodata
 	.text : ALIGN(0x1000) { *(.text.start) *(.text .text.*) } :text
-	.data : ALIGN(0x1000) { *(.data .data.*) *(.sdata .sdata.*) } :data
+	/* Keep RW/TLS page-separated even when .data itself is empty. */
+	. = ALIGN(0x1000);
+	.data : { *(.data .data.*) *(.sdata .sdata.*) } :data
 	.preinit_array : ALIGN(8) {
 		PROVIDE_HIDDEN(__preinit_array_start = .);
 		KEEP(*(.preinit_array))

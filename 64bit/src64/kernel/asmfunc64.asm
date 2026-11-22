@@ -360,6 +360,14 @@ syscall_common:
 	cli
 	cmp rax, 1
 	je syscall_exit_to_kernel
+	cmp rax, 2
+	jne .resume
+	; Exec discards the prior user FP environment as well as integer registers.
+	mov rdi, rsp
+	lea rsi, [rel clean_fp64]
+	mov ecx, 64
+	rep movsq
+.resume:
 	RESTORE_REGS64
 
 syscall_exit_to_kernel:

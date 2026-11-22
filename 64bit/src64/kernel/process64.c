@@ -5,7 +5,8 @@
  * 열린 파일 표도 프로세스마다 하나씩 갖고 있다.
  *
  * Each process owns private user backing, page tables and an entry stack.
- * Exec resumes on its console stack before detaching or reclaiming resources.
+ * Legacy launch resumes on its runner stack before detaching/reclaiming.
+ * UNIX exec keeps that continuation and replaces only the user image bank.
  */
 #include <asmfunc64.h>
 #include <arch/platform64.h>
@@ -117,6 +118,7 @@ int process64_reserve_child(struct PROCESS64 *parent, struct PROCESS64 **result)
 			next_pid = pid == PROCESS64_PID_MAX ? 2 : pid + 1;
 			if (process_by_pid64(pid) != NULL) { continue; }
 			memzero(process, sizeof(*process));
+			process->memory = &process->images[0];
 			process->pid = pid;
 			process->parent_pid = parent->pid;
 			process->state = PROCESS_LOADING64;
@@ -172,10 +174,10 @@ static int process_user_access64(const void *ptr, size_t size, unsigned int acce
 	if (size > UINTPTR_MAX - p) {
 		return 0;
 	}
-	if (!range_contains64(&process->image, p, size) &&
-		!range_contains64(&process->stack, p, size) &&
-		!range_contains64(&process->heap, p, size)) { return 0; }
-	return size == 0 || address_space_validate64(process->space, p, size, access) == 0;
+	if (!range_contains64(&process->memory->image, p, size) &&
+		!range_contains64(&process->memory->stack, p, size) &&
+		!range_contains64(&process->memory->heap, p, size)) { return 0; }
+	return size == 0 || address_space_validate64(process->memory->space, p, size, access) == 0;
 }
 
 int process64_user_range_valid(const void *ptr, size_t size)
@@ -329,9 +331,9 @@ static int setup_args64(struct PROCESS64 *process, const struct PROCESS64_ARGS *
 		args->argc > PROCESS64_MAX_ARGS) {
 		return PROCESS64_ERR_INVALID;
 	}
-	base = process->stack.base;
-	size = process->stack.size;
-	backing = process->stack_backing != 0 ? process->stack_backing : base;
+	base = process->memory->stack.base;
+	size = process->memory->stack.size;
+	backing = process->memory->stack_backing != 0 ? process->memory->stack_backing : base;
 	if (base == 0 || backing == 0 || size == 0 ||
 		size > UINTPTR_MAX - base || size > UINTPTR_MAX - backing ||
 		(base & (USER_STACK_ALIGNMENT64 - 1)) != 0 ||
@@ -385,7 +387,7 @@ void process64_switch_task64(const struct TASK64 *task)
 
 	/* Before the first prepared execution, boot still owns its legacy root. */
 	if (!runtime_ready64) { return; }
-	if (address_space_activate64(process != NULL ? process->space : NULL) != 0) {
+	if (address_space_activate64(process != NULL ? process->memory->space : NULL) != 0) {
 		/* A bad scheduler/root invariant must not resume under another root. */
 		__builtin_trap();
 	}
@@ -405,17 +407,30 @@ uintptr_t process64_entry_stack_top(void)
 /* No resource work under the registry guard. A failed free retains the owner
  * in REAP; only fully released processes may publish a waitable zombie.
  */
-static int process_release64(struct PROCESS64 *process)
+int process64_release_image(struct PROCESS_IMAGE64 *image)
 {
-	int status = address_space_destroy64(&process->space);
+	int status = address_space_destroy64(&image->space);
 
 	if (status != 0) { return status; }
+	status = user_backing_free64(&image->heap_storage);
+	if (status == 0) { status = user_backing_free64(&image->stack_storage); }
+	if (status == 0) { status = user_backing_free64(&image->image_storage); }
+	if (status == 0) { status = user_backing_free64(&image->elf_snapshot); }
+	if (status == 0) { memzero(image, sizeof(*image)); }
+	return status;
+}
+
+static int process_release64(struct PROCESS64 *process)
+{
+	int status = address_space_destroy64(&process->images[0].space);
+
+	if (status == 0) { status = address_space_destroy64(&process->images[1].space); }
+	if (status != 0) { return status; }
 	status = user_backing_free64(&process->io_storage);
+	if (status == 0) { status = user_backing_free64(&process->exec_storage); }
 	if (status == 0) { status = user_backing_free64(&process->thread.entry_storage); }
-	if (status == 0) { status = user_backing_free64(&process->heap_storage); }
-	if (status == 0) { status = user_backing_free64(&process->stack_storage); }
-	if (status == 0) { status = user_backing_free64(&process->image_storage); }
-	if (status == 0) { status = user_backing_free64(&process->elf_snapshot); }
+	if (status == 0) { status = process64_release_image(&process->images[0]); }
+	if (status == 0) { status = process64_release_image(&process->images[1]); }
 	return status;
 }
 
@@ -611,7 +626,7 @@ int process64_run_prepared(struct PROCESS64 *process)
 	process->state = PROCESS_RUNNING64;
 	process->started = 1;
 	process64_switch_task64(task);
-	status = enter_user_mode64(process->entry, process->thread.initial_rsp,
+	status = enter_user_mode64(process->memory->entry, process->thread.initial_rsp,
 		process->thread.initial_argc, process->thread.initial_argv, GDT64_USER_CODE,
 		GDT64_USER_DATA, &process->thread.saved_kernel_rsp);
 	/* Assembly returns to the runner's kernel stack with IRQs disabled. */
@@ -622,6 +637,9 @@ int process64_run_prepared(struct PROCESS64 *process)
 	task->entry_stack_base = 0;
 	task->entry_stack_size = 0;
 	task->context.stack_pointer = 0;
+	task->context.thread_pointer = 0;
+	task->context.readonly_thread_pointer = 0;
+	platform_user_tls64(0);
 	process->thread.task = NULL;
 	process64_switch_task64(task);
 	process->state = PROCESS_REAP64;
@@ -688,7 +706,7 @@ int process64_discard_prepared(struct PROCESS64 **result)
 		(process->state != PROCESS_LOADING64 && process->state != PROCESS_READY64 &&
 		process->state != PROCESS_REAP64)) { return -22; }
 	if (process->waiter != NULL) { return -16; }
-	status = address_space_destroy64(&process->space);
+	status = address_space_destroy64(&process->memory->space);
 	if (status == -16) { return status; }
 	irq = platform_irq_save64();
 	process->state = PROCESS_REAP64;
@@ -723,30 +741,30 @@ int process64_prepare_file(const char *path, const char *cmdline,
 	if (process == NULL) { return -11; }
 	*result = process;
 	process->console = console;
-	status = address_space_create64(&process->space);
+	status = address_space_create64(&process->memory->space);
 	if (status == 0) { status = elf64_prepare_image(name, process); }
 	if (status != 0) { goto failed; }
-	status = user_backing_alloc64(&process->stack_storage,
-		USER_STACK_END64 - USER_STACK_BASE64);
+	status = user_backing_alloc64(&process->memory->stack_storage,
+		0x10000);
 	if (status != 0) { goto failed; }
-	process->stack.base = USER_STACK_BASE64;
-	process->stack.size = process->stack_storage.size;
-	process->stack_backing = process->stack_storage.kernel_address;
-	status = user_backing_alloc64(&process->heap_storage,
+	process->memory->stack.base = USER_STACK_BASE64;
+	process->memory->stack.size = process->memory->stack_storage.size;
+	process->memory->stack_backing = process->memory->stack_storage.kernel_address;
+	status = user_backing_alloc64(&process->memory->heap_storage,
 		USER_HEAP_END64 - USER_HEAP_BASE64);
 	if (status != 0) { goto failed; }
-	process->heap.base = USER_HEAP_BASE64;
-	process->heap.size = process->heap_storage.size;
-	process->heap_backing = process->heap_storage.kernel_address;
-	process->heap_next = USER_HEAP_BASE64;
+	process->memory->heap.base = USER_HEAP_BASE64;
+	process->memory->heap.size = process->memory->heap_storage.size;
+	process->memory->heap_backing = process->memory->heap_storage.kernel_address;
+	process->memory->heap_next = USER_HEAP_BASE64;
 	status = setup_args64(process, &args, &process->thread.initial_rsp, &process->thread.initial_argv);
 	if (status != 0) { goto failed; }
 	process->thread.initial_argc = args.argc;
-	status = address_space_map_backing64(process->space, process->stack.base,
-		&process->stack_storage, 0, process->stack.size, USER_READ64 | USER_WRITE64);
+	status = address_space_map_backing64(process->memory->space, process->memory->stack.base,
+		&process->memory->stack_storage, 0, process->memory->stack.size, USER_READ64 | USER_WRITE64);
 	if (status == 0) {
-		status = address_space_map_backing64(process->space, process->heap.base,
-			&process->heap_storage, 0, process->heap.size, USER_READ64 | USER_WRITE64);
+		status = address_space_map_backing64(process->memory->space, process->memory->heap.base,
+			&process->memory->heap_storage, 0, process->memory->heap.size, USER_READ64 | USER_WRITE64);
 	}
 	if (status != 0) { goto failed; }
 	status = user_backing_alloc64(&process->thread.entry_storage, PROCESS64_ENTRY_STACK_SIZE);

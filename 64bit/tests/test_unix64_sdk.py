@@ -97,6 +97,13 @@ class Unix64SdkTest(unittest.TestCase):
                     result = subprocess.run(command, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.check_elf(elf.read_bytes(), 62 if arch == "x86_64" else 183)
+                    # Empty .data must not let TLS share the preceding RX page.
+                    source.write_text(FIXTURE.replace("volatile int data = 1;",
+                                                     "volatile int data;"), encoding="utf-8")
+                    result = subprocess.run(command, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.check_elf(elf.read_bytes(), 62 if arch == "x86_64" else 183)
+                    source.write_text(FIXTURE, encoding="utf-8")
                     # Losing/duplicating the identifying CRT note must fail linking.
                     for mode in ("missing", "duplicate"):
                         altered = command.copy()

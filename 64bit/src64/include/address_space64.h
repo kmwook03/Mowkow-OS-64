@@ -77,6 +77,8 @@ int address_space_validate64(const struct ADDRESS_SPACE64 *space, uintptr_t addr
  * No allocation, sleeping, freeing, or legacy-root fallback on this path.
  */
 int address_space_activate64(struct ADDRESS_SPACE64 *space);
+/* IRQ-off exec commit: reject any outstanding old/new lease before switching. */
+int address_space_replace64(struct ADDRESS_SPACE64 *old, struct ADDRESS_SPACE64 *next);
 /* Page-multiple size, zero-filled before return; output must start all zero.
  * Failed frees preserve the whole descriptor for a bounded caller retry.
  */

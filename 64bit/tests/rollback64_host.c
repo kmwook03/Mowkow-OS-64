@@ -82,24 +82,24 @@ static int test_argument_stack64(void)
 	_Alignas(16) uint8_t storage[64];
 	uint8_t original[sizeof storage];
 	char long_arg[80];
-	struct PROCESS64 process = {0};
+	struct PROCESS64 process = {.memory = &process.images[0]};
 	struct PROCESS64_ARGS args;
 	uintptr_t rsp;
 	uintptr_t argv;
 	uintptr_t *vector;
 
 	/* Distinct backing/user bases exercise the AArch64 address contract. */
-	process.stack.base = 0x10000;
-	process.stack.size = sizeof storage;
-	process.stack_backing = (uintptr_t) storage;
+	process.memory->stack.base = 0x10000;
+	process.memory->stack.size = sizeof storage;
+	process.memory->stack_backing = (uintptr_t) storage;
 	CHECK64(parse_args64("x yz", &args) == 0);
 	memset(storage, 0xa5, sizeof storage);
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == 0);
 	CHECK64(rsp == argv && (rsp & 15U) == 0);
-	CHECK64(rsp >= process.stack.base + 16);
-	vector = (uintptr_t *) (storage + (argv - process.stack.base));
-	CHECK64(vector[0] == process.stack.base + 62);
-	CHECK64(vector[1] == process.stack.base + 59 && vector[2] == 0);
+	CHECK64(rsp >= process.memory->stack.base + 16);
+	vector = (uintptr_t *) (storage + (argv - process.memory->stack.base));
+	CHECK64(vector[0] == process.memory->stack.base + 62);
+	CHECK64(vector[1] == process.memory->stack.base + 59 && vector[2] == 0);
 	CHECK64(strcmp((const char *) storage + 62, "x") == 0);
 	CHECK64(strcmp((const char *) storage + 59, "yz") == 0);
 	CHECK64(storage[0] == 0xa5 && storage[58] == 0xa5);
@@ -107,50 +107,50 @@ static int test_argument_stack64(void)
 	memcpy(original, storage, sizeof storage);
 	rsp = 123;
 	argv = 456;
-	process.stack.size = 32;
+	process.memory->stack.size = 32;
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == PROCESS64_ERR_STACK);
 	CHECK64(memcmp(storage, original, sizeof storage) == 0);
 	CHECK64(rsp == 123 && argv == 456);
-	process.stack.size = sizeof storage;
+	process.memory->stack.size = sizeof storage;
 	memset(long_arg, 'x', sizeof long_arg);
 	long_arg[sizeof long_arg - 1] = '\0';
 	CHECK64(parse_args64(long_arg, &args) == 0);
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == PROCESS64_ERR_STACK);
 	CHECK64(memcmp(storage, original, sizeof storage) == 0);
 	CHECK64(parse_args64("x yz", &args) == 0);
-	process.stack.base = UINTPTR_MAX - 15;
+	process.memory->stack.base = UINTPTR_MAX - 15;
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == PROCESS64_ERR_STACK);
-	process.stack.base = 0x10001;
+	process.memory->stack.base = 0x10001;
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == PROCESS64_ERR_STACK);
-	process.stack.base = 0x10000;
-	process.stack_backing = UINTPTR_MAX - 15;
+	process.memory->stack.base = 0x10000;
+	process.memory->stack_backing = UINTPTR_MAX - 15;
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == PROCESS64_ERR_STACK);
-	process.stack_backing = (uintptr_t) storage + 1;
+	process.memory->stack_backing = (uintptr_t) storage + 1;
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == PROCESS64_ERR_STACK);
-	process.stack_backing = (uintptr_t) storage;
-	process.stack.size--;
+	process.memory->stack_backing = (uintptr_t) storage;
+	process.memory->stack.size--;
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == PROCESS64_ERR_STACK);
-	process.stack.size = sizeof storage;
+	process.memory->stack.size = sizeof storage;
 	args.argc = PROCESS64_MAX_ARGS + 1;
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == PROCESS64_ERR_INVALID);
 	CHECK64(parse_args64("x", &args) == 0);
 	args.lengths[0] = SIZE_MAX;
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == PROCESS64_ERR_INVALID);
 	CHECK64(parse_args64("", &args) == 0);
-	process.stack.size = 16;
+	process.memory->stack.size = 16;
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == PROCESS64_ERR_STACK);
 	CHECK64(memcmp(storage, original, sizeof storage) == 0);
 	/* Exact fit includes the NULL vector entry and first call's aligned slot. */
-	process.stack.size = 32;
+	process.memory->stack.size = 32;
 	CHECK64(setup_args64(&process, &args, &rsp, &argv) == 0);
-	CHECK64(rsp == process.stack.base + 16);
+	CHECK64(rsp == process.memory->stack.base + 16);
 	CHECK64(*(uintptr_t *) (storage + 16) == 0);
 	return 0;
 }
 
 static int test_user_ranges64(void)
 {
-	struct PROCESS64 process = {0};
+	struct PROCESS64 process = {.memory = &process.images[0]};
 	static const struct {
 		uintptr_t ptr;
 		size_t size;
@@ -169,34 +169,34 @@ static int test_user_ranges64(void)
 	size_t i;
 
 	reset_alloc_state64(ALLOC_MODE_PROCESS_OK);
-	process.image.base = 0x1000;
-	process.image.size = 0x100;
-	process.stack.base = 0x2000;
-	process.stack.size = 0x80;
+	process.memory->image.base = 0x1000;
+	process.memory->image.size = 0x100;
+	process.memory->stack.base = 0x2000;
+	process.memory->stack.size = 0x80;
 	/* Adjacent stack and heap must still contain a request independently. */
-	process.heap.base = 0x2080;
-	process.heap.size = 0x80;
+	process.memory->heap.base = 0x2080;
+	process.memory->heap.size = 0x80;
 	current_task = &test_task;
 	test_task.process = &process;
 	for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
 		CHECK64(process64_user_range_valid((const void *) cases[i].ptr,
 			cases[i].size) == cases[i].valid);
 	}
-	process.image.base = UINTPTR_MAX - 15;
-	process.image.size = 32;
-	CHECK64(process64_user_range_valid((const void *) process.image.base, 1) == 0);
-	CHECK64(process64_user_range_valid((const void *) process.image.base, 0) == 0);
+	process.memory->image.base = UINTPTR_MAX - 15;
+	process.memory->image.size = 32;
+	CHECK64(process64_user_range_valid((const void *) process.memory->image.base, 1) == 0);
+	CHECK64(process64_user_range_valid((const void *) process.memory->image.base, 0) == 0);
 	CHECK64(process64_user_range_valid((const void *) 0x2000, 1) == 1);
-	process.image.base = UINTPTR_MAX - 31;
-	process.image.size = 31;
-	CHECK64(process64_user_range_valid((const void *) process.image.base, 31) == 1);
+	process.memory->image.base = UINTPTR_MAX - 31;
+	process.memory->image.size = 31;
+	CHECK64(process64_user_range_valid((const void *) process.memory->image.base, 31) == 1);
 	CHECK64(process64_user_range_valid((const void *) (UINTPTR_MAX - 1), 1) == 1);
 	CHECK64(process64_user_range_valid((const void *) UINTPTR_MAX, 0) == 1);
 	CHECK64(process64_user_range_valid((const void *) UINTPTR_MAX, 1) == 0);
-	process.image.size = 0;
-	CHECK64(process64_user_range_valid((const void *) process.image.base, 0) == 0);
-	process.image.base = 0;
-	process.image.size = 128;
+	process.memory->image.size = 0;
+	CHECK64(process64_user_range_valid((const void *) process.memory->image.base, 0) == 0);
+	process.memory->image.base = 0;
+	process.memory->image.size = 128;
 	CHECK64(process64_user_range_valid((const void *) 1, 1) == 0);
 	CHECK64(process64_user_range_valid((const void *) 0x2000, 1) == 1);
 	test_task.process = NULL;

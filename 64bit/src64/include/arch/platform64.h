@@ -36,6 +36,8 @@ int platform_task_context_init64(struct CONTEXT64 *context,
 int platform_task_sleep_current64(struct TASK64 *task);
 /* Select the privilege-entry stack; zero restores the kernel fallback. */
 void platform_process_stack64(uintptr_t top);
+/* IRQ-off native user thread pointer update; kernel code uses no user TLS. */
+void platform_user_tls64(uintptr_t pointer);
 void platform_task_switch64(struct CONTEXT64 *old_context,
 	struct CONTEXT64 *new_context);
 

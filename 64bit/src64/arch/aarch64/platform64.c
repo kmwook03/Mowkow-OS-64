@@ -97,6 +97,12 @@ void platform_framebuffer_flush64(uintptr_t address, size_t bytes)
 	(void) a64_cache_walk64(address, bytes, A64_CACHE_CLEAN64);
 }
 
+void platform_user_tls64(uintptr_t pointer)
+{
+	__asm__ volatile ("msr tpidr_el0, %0\n\tmsr tpidrro_el0, xzr\n\tisb"
+		:: "r" (pointer) : "memory");
+}
+
 void platform_framebuffer_sync64(void)
 {
 	__asm__ volatile ("dsb sy" ::: "memory");

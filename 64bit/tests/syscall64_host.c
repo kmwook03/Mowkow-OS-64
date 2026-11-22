@@ -67,6 +67,13 @@ static unsigned char space_token64;
 static unsigned int pins64;
 static int pin_failure64;
 
+int process64_execve_user64(const char *path, const void *argv, const void *envp)
+{
+	(void) path; (void) argv; (void) envp;
+	return -38;
+}
+int process64_set_tls64(uintptr_t pointer) { (void) pointer; return -38; }
+
 int address_space_pin64(struct ADDRESS_SPACE64 *space)
 {
 	assert(space == (struct ADDRESS_SPACE64 *) (void *) &space_token64);
@@ -338,9 +345,10 @@ static uint64_t call64(uint64_t nr, uint64_t a0, uint64_t a1, uint64_t a2,
 static void reset64(void)
 {
 	memset(&process, 0, sizeof process);
+	process.memory = &process.images[0];
 	assert(pins64 == 0);
 	pin_failure64 = 0;
-	process.space = (struct ADDRESS_SPACE64 *) (void *) &space_token64;
+	process.memory->space = (struct ADDRESS_SPACE64 *) (void *) &space_token64;
 	memset(user_buffer, 0, sizeof user_buffer);
 	memcpy(user_buffer, "app.txt", 8);
 	current = &process;
@@ -353,9 +361,9 @@ static void reset64(void)
 	opened_name[0] = created_name[0] = '\0';
 	opened_name_pointer = created_name_pointer = 0;
 	process.console = (struct CONSOLE64 *) (void *) &console_token;
-	process.heap.base = (uintptr_t) user_buffer;
-	process.heap.size = sizeof user_buffer;
-	process.heap_next = process.heap.base;
+	process.memory->heap.base = (uintptr_t) user_buffer;
+	process.memory->heap.size = sizeof user_buffer;
+	process.memory->heap_next = process.memory->heap.base;
 	open_result = 1;
 	create_result = 1;
 	truncate_result = 0;
@@ -607,20 +615,20 @@ static int test_dispatch_and_heap64(void)
 	CHECK64(call64(SYS_TICKS, 0, 0, 0, 0, 0) == timerctl64.count);
 	CHECK64(call64(SYS_EXIT, 37, 0, 0, 0, 0) == SYS_EXIT && last_action == 1);
 	CHECK64(process.exited == 1 && process.exit_status == 37);
-	process.heap.size = 32;
+	process.memory->heap.size = 32;
 	CHECK64(call64(SYS_ALLOC, 1, 0, 0, 0, 0) == base);
-	CHECK64(process.heap_next == base + 16);
+	CHECK64(process.memory->heap_next == base + 16);
 	CHECK64(call64(SYS_ALLOC, 0, 0, 0, 0, 0) == 0);
 	CHECK64(call64(SYS_ALLOC, UINT64_MAX, 0, 0, 0, 0) == 0);
 	CHECK64(call64(SYS_ALLOC, 17, 0, 0, 0, 0) == 0);
-	CHECK64(process.heap_next == base + 16);
+	CHECK64(process.memory->heap_next == base + 16);
 	CHECK64(call64(SYS_ALLOC, 16, 0, 0, 0, 0) == base + 16);
 	CHECK64(call64(SYS_FREE, base + 16, 16, 0, 0, 0) == 0);
-	CHECK64(process.heap_next == base + 32);
+	CHECK64(process.memory->heap_next == base + 32);
 	CHECK64(call64(SYS_FREE, base + 16, 17, 0, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_FREE, base, UINT64_MAX, 0, 0, 0) == ERROR64);
-	process.heap.base = UINTPTR_MAX - 15;
-	process.heap_next = process.heap.base;
+	process.memory->heap.base = UINTPTR_MAX - 15;
+	process.memory->heap_next = process.memory->heap.base;
 	CHECK64(call64(SYS_ALLOC, 1, 0, 0, 0, 0) == 0);
 	current = NULL;
 	CHECK64(call64(SYS_EXIT, 0, 0, 0, 0, 0) == ERROR64 && last_action == 0);

@@ -43,3 +43,12 @@ $(eval $(call UNIX64_SDK_RULES,aarch64,A64_CC,-mgeneral-regs-only))
 
 .PHONY : unix64-sdk
 unix64-sdk : unix64-sdk-x86_64 unix64-sdk-aarch64
+
+.PHONY : test64-unix-exec test64-unix-exec-ahci
+test64-unix-exec : $(IMG64_FILE) unix64-sdk
+	$(PYTHON) 64bit/tools/unix_exec_regression64.py \
+		$(if $(UNIX_EXEC_LOG64),--log $(UNIX_EXEC_LOG64))
+
+test64-unix-exec-ahci : $(IMG64_FILE) unix64-sdk
+	$(PYTHON) 64bit/tools/unix_exec_regression64.py --ahci \
+		$(if $(UNIX_EXEC_LOG64),--log $(UNIX_EXEC_LOG64))

@@ -142,6 +142,13 @@ uint64_t arch64_sync_dispatch(struct ARCH64_EXCEPTION_FRAME *frame,
 	syscall_frame.r8 = frame->x[4];
 	syscall_frame.r9 = frame->x[5];
 	action = syscall_handler64(&syscall_frame);
+	if (action == 2) {
+		/* Exec returns through a fresh EL0 frame, including SIMD/FP state. */
+		*frame = (struct ARCH64_EXCEPTION_FRAME) {0};
+		frame->elr = syscall_frame.rip;
+		frame->sp_el0 = syscall_frame.rsp;
+		return 0;
+	}
 	frame->x[0] = syscall_frame.rax;
 	return action;
 }

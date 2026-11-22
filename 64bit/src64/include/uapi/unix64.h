@@ -11,7 +11,7 @@
 #define UNIX64_SYS_FIRST 0x100
 #define UNIX64_SYS_LAST 0x1ff
 
-/* Reserved process calls, not implemented by the A1.1 dispatcher. */
+/* Process syscall numbers; unimplemented operations return -ENOSYS. */
 #define UNIX64_SYS_EXIT 0x100       /* status */
 #define UNIX64_SYS_READ 0x101       /* fd, buffer, count -> signed byte count */
 #define UNIX64_SYS_WRITE 0x102      /* fd, buffer, count -> signed byte count */
@@ -20,6 +20,7 @@
 #define UNIX64_SYS_WAITPID 0x105    /* pid, int32_t *status, options -> PID */
 #define UNIX64_SYS_GETPID 0x106
 #define UNIX64_SYS_GETPPID 0x107
+#define UNIX64_SYS_TCB_SET 0x108     /* aligned writable user thread pointer */
 
 #define UNIX64_ENOEXEC 8
 #define UNIX64_ENOSYS 38

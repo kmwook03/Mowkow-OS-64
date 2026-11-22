@@ -223,12 +223,12 @@ static int sync_failure64(uint32_t target, int persistent)
 
 static int elf_failure64(int expected)
 {
-	struct PROCESS64 process = {0};
+	struct PROCESS64 process = {.memory = &process.images[0]};
 	size_t available = memman64_total(&memman64);
 
 	CHECK64(load_fixture64(FIXTURE_NAME64, &process) == expected);
 	CHECK64(memman64_total(&memman64) == available);
-	CHECK64(process.entry == 0 && process.image.size == 0);
+	CHECK64(process.memory->entry == 0 && process.memory->image.size == 0);
 	/* A second attempt observes released ownership and intact filesystem state. */
 	CHECK64(load_fixture64(FIXTURE_NAME64, &process) == expected);
 	CHECK64(memman64_total(&memman64) == available);
@@ -318,7 +318,7 @@ static int run_case64(const char *mode, const char *argument)
 		CHECK64(fd64_open(&file, FIXTURE_NAME64) == 1);
 		CHECK64(fd64_read(&file, data, sizeof(data)) == sizeof(data));
 		CHECK64(valid_header((const struct ELF64_EHDR *) data, sizeof(data)) != 0);
-		CHECK64(image_range64(data, sizeof(data), &low, &high) == 0);
+		CHECK64(image_range64(data, sizeof(data), &low, &high, UNIX64_ABI_LEGACY) == 0);
 		CHECK64(low == 0x400000 && high == 0x402000);
 		return 0;
 	}

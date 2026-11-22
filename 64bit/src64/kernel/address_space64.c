@@ -400,6 +400,15 @@ int address_space_activate64(struct ADDRESS_SPACE64 *space)
 	return 0;
 }
 
+int address_space_replace64(struct ADDRESS_SPACE64 *old, struct ADDRESS_SPACE64 *next)
+{
+	if (!as_arch_irq_off64() || !owned_space64(old) || !owned_space64(next) ||
+		old == next || active_space64 != old) { return -22; }
+	if (old->state != AS_READY64 || next->state != AS_READY64 ||
+		old->pins != 0 || next->pins != 0) { return -16; }
+	return address_space_activate64(next);
+}
+
 int user_backing_alloc64(struct USER_BACKING64 *backing, size_t size)
 {
 	uintptr_t alias;
