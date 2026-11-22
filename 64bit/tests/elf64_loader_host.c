@@ -417,6 +417,89 @@ static int test_segment_flags64(void)
 	return 0;
 }
 
+static void note_fixture64(void)
+{
+	/* Independently encoded LE note: namesz=7, descsz=4, type=1, version=1. */
+	static const uint8_t note[] = {
+		7, 0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0,
+		'M', 'O', 'W', 'K', 'O', 'W', 0, 0, 1, 0, 0, 0
+	};
+
+	reset_fixture64();
+	header64()->e_phnum = 3;
+	segments64()[2].p_type = 4;
+	segments64()[2].p_offset = 0x3000;
+	segments64()[2].p_filesz = sizeof(note);
+	memcpy(fixture + 0x3000, note, sizeof(note));
+}
+
+static int test_abi_notes64(void)
+{
+	uint32_t abi;
+	struct PROCESS64 process = {0};
+
+	reset_fixture64();
+	CHECK64(image_abi64(fixture, fixture_size, &abi) == 0 && abi == 0);
+	CHECK64(load_fixture64("legacy", &process) == 0);
+	CHECK64(process.entry == USER_IMAGE_MIN && process.image.size == 0x2000);
+	note_fixture64();
+	CHECK64(image_abi64(fixture, fixture_size, &abi) == 0 && abi == 1);
+	/* Recognition is not permission to run via the register-argv legacy path. */
+	CHECK64(reject_fixture64(-8) == 0);
+	for (size_t size = 1; size < 24; size++) {
+		note_fixture64();
+		segments64()[2].p_filesz = size;
+		CHECK64(reject_fixture64(-8) == 0);
+	}
+	for (unsigned int field = 0; field < 3; field++) {
+		note_fixture64();
+		memset(fixture + 0x3000 + field * 4, 0xff, 4);
+		CHECK64(reject_fixture64(-8) == 0);
+	}
+	for (unsigned int version = 0; version <= 2; version += 2) {
+		note_fixture64(); fixture[0x3014] = (uint8_t) version;
+		CHECK64(reject_fixture64(-8) == 0);
+	}
+	note_fixture64(); fixture[0x3017] = 1;
+	CHECK64(reject_fixture64(-8) == 0);
+	note_fixture64(); fixture[0x3000] = 6;
+	CHECK64(reject_fixture64(-8) == 0);
+	note_fixture64(); fixture[0x3012] = 'X';
+	CHECK64(reject_fixture64(-8) == 0);
+	note_fixture64(); fixture[0x3004] = 8; segments64()[2].p_filesz = 28;
+	CHECK64(reject_fixture64(-8) == 0);
+	note_fixture64(); segments64()[2].p_offset = UINT64_MAX;
+	CHECK64(reject_fixture64(-8) == 0);
+	note_fixture64(); segments64()[2].p_filesz = UINT64_MAX;
+	CHECK64(reject_fixture64(-8) == 0);
+	/* Duplicate records within one segment and across aliasing segments. */
+	note_fixture64();
+	memcpy(fixture + 0x3018, fixture + 0x3000, 24);
+	segments64()[2].p_filesz = 48;
+	CHECK64(reject_fixture64(-8) == 0);
+	note_fixture64(); header64()->e_phnum = 4;
+	segments64()[3] = segments64()[2];
+	CHECK64(reject_fixture64(-8) == 0);
+	/* Unknown, bounded notes do not opt into UNIX. Unaligned input is safe. */
+	note_fixture64(); fixture[0x300c] = 'G';
+	CHECK64(image_abi64(fixture, fixture_size, &abi) == 0 && abi == 0);
+	note_fixture64();
+	memmove(fixture + 0x3001, fixture + 0x3000, 24);
+	segments64()[2].p_offset++;
+	CHECK64(image_abi64(fixture, fixture_size, &abi) == 0 && abi == 1);
+	note_fixture64(); segments64()[2].p_filesz = 0;
+	CHECK64(image_abi64(fixture, fixture_size, &abi) == 0 && abi == 0);
+	/* Valid owner after an unrelated note, with an exact EOF endpoint. */
+	note_fixture64();
+	memcpy(fixture + 0x3018, fixture + 0x3000, 24);
+	fixture[0x300c] = 'G'; segments64()[2].p_filesz = 48;
+	fixture_size = 0x3030;
+	CHECK64(image_abi64(fixture, fixture_size, &abi) == 0 && abi == 1);
+	fixture_size--;
+	CHECK64(reject_fixture64(-8) == 0);
+	return 0;
+}
+
 int main(void)
 {
 	memman64_init(&memman64);
@@ -429,5 +512,6 @@ int main(void)
 	CHECK64(test_header_identity64() == 0);
 	CHECK64(test_entry_and_load64() == 0);
 	CHECK64(test_segment_flags64() == 0);
+	CHECK64(test_abi_notes64() == 0);
 	return 0;
 }

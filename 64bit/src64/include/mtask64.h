@@ -33,6 +33,8 @@ struct CONTEXT64 {
 	uintptr_t readonly_thread_pointer;
 };
 
+struct PROCESS64;
+
 struct TASK64 {
 	enum TASK64_STATE flags;
 	uint32_t level;
@@ -45,7 +47,7 @@ struct TASK64 {
 	size_t stack_high_water;
 	uintptr_t entry_stack_base;
 	size_t entry_stack_size;
-	void *process;
+	struct PROCESS64 *process;
 	uint32_t is_user;
 	uintptr_t kernel_rsp;
 	struct CONTEXT64 context;

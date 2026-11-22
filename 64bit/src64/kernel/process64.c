@@ -37,8 +37,12 @@ struct PROCESS64_ARGS {
 	size_t argc;
 };
 
-static struct PROCESS64 process_table[USER_SPACE_LIMIT64];
-static uint32_t next_pid = 1;
+/* PID 1 is a permanent kernel reaper, not a user init image. */
+static struct PROCESS64 init_process64 = {
+	.state = PROCESS_RUNNING64, .pid = 1
+};
+static struct PROCESS64 process_table[PROCESS64_MAX - 1];
+static uint32_t next_pid = 2;
 
 static void memzero(void *ptr, size_t size)
 {
@@ -62,31 +66,74 @@ static void copy_bytes(void *dst, const void *src, size_t size)
 	}
 }
 
-static struct PROCESS64 *process_alloc(void)
+/* Registry fields are protected by short IRQ-save transactions. Allocation,
+ * address-space teardown, I/O and sleeping always happen outside this guard.
+ */
+static int process_owned64(const struct PROCESS64 *process)
 {
-	uint64_t irq = platform_irq_save64();
+	for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
+		if (process == &process_table[i]) { return 1; }
+	}
+	return 0;
+}
+
+static struct PROCESS64 *process_by_pid64(uint32_t pid)
+{
+	if (pid == 1) { return &init_process64; }
+	for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
+		if (process_table[i].state != PROCESS_FREE64 && process_table[i].pid == pid) {
+			return &process_table[i];
+		}
+	}
+	return NULL;
+}
+
+int process64_reserve_child(struct PROCESS64 *parent, struct PROCESS64 **result)
+{
+	uint64_t irq;
 	struct PROCESS64 *process = NULL;
 
-	for (size_t i = 0; i < USER_SPACE_LIMIT64; i++) {
-		if (process_table[i].state != PROCESS_FREE64) { continue; }
-		process = &process_table[i];
-		memzero(process, sizeof(*process));
-		process->state = PROCESS_LOADING64;
-		/* PID zero denotes no process; avoid collisions even across wrap. */
-		for (;;) {
-			int duplicate = 0;
-
-			process->pid = next_pid++;
-			if (process->pid == 0) { continue; }
-			for (size_t j = 0; j < USER_SPACE_LIMIT64; j++) {
-				if (&process_table[j] != process &&
-					process_table[j].pid == process->pid) { duplicate = 1; }
-			}
-			if (!duplicate) { break; }
+	if (result == NULL || *result != NULL) { return -22; }
+	if (parent == NULL) { parent = &init_process64; }
+	irq = platform_irq_save64();
+	if ((parent != &init_process64 && !process_owned64(parent)) ||
+		(parent->state != PROCESS_RUNNING64 && parent->state != PROCESS_READY64) ||
+		parent->exited) {
+		platform_irq_restore64(irq);
+		return -3;
+	}
+	for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
+		if (process_table[i].state == PROCESS_FREE64) {
+			process = &process_table[i];
+			break;
 		}
-		break;
+	}
+	if (process != NULL) {
+		/* At most MAX-1 IDs are occupied; MAX probes must find a free PID. */
+		for (size_t attempt = 0; attempt < PROCESS64_MAX; attempt++) {
+			uint32_t pid = next_pid;
+
+			if (pid < 2 || pid > PROCESS64_PID_MAX) { pid = 2; }
+			next_pid = pid == PROCESS64_PID_MAX ? 2 : pid + 1;
+			if (process_by_pid64(pid) != NULL) { continue; }
+			memzero(process, sizeof(*process));
+			process->pid = pid;
+			process->parent_pid = parent->pid;
+			process->state = PROCESS_LOADING64;
+			*result = process;
+			platform_irq_restore64(irq);
+			return 0;
+		}
 	}
 	platform_irq_restore64(irq);
+	return -11;
+}
+
+static struct PROCESS64 *process_alloc(void)
+{
+	struct PROCESS64 *process = NULL;
+
+	(void) process64_reserve_child(process64_current(), &process);
 	return process;
 }
 
@@ -110,7 +157,7 @@ struct PROCESS64 *process64_current(void)
 {
 	struct TASK64 *task = task_now64();
 
-	return task != NULL ? (struct PROCESS64 *) task->process : NULL;
+	return task != NULL ? task->process : NULL;
 }
 
 static int process_user_access64(const void *ptr, size_t size, unsigned int access)
@@ -167,6 +214,16 @@ void process64_exit_current(int status)
 	}
 	process->exited = 1;
 	process->exit_status = status;
+	process->wait_status = ((unsigned int) status & 0xffU) << 8;
+}
+
+void process64_terminate_current(int status, unsigned int signal)
+{
+	struct PROCESS64 *process = process64_current();
+
+	if (process == NULL || signal == 0 || signal > 127) { return; }
+	process64_exit_current(status);
+	process->wait_status = (int) signal;
 }
 
 int process64_return_to_user64(int user_mode)
@@ -175,7 +232,7 @@ int process64_return_to_user64(int user_mode)
 
 	if (!user_mode || process == NULL) { return 0; }
 	if (!process->exited && console64_close_requested(process->console)) {
-		process64_exit_current(PROCESS64_EXIT_CLOSED);
+		process64_terminate_current(PROCESS64_EXIT_CLOSED, 15);
 	}
 	return process->exited;
 }
@@ -184,7 +241,7 @@ uintptr_t process64_current_exit_rsp(void)
 {
 	struct PROCESS64 *process = process64_current();
 
-	return process != NULL ? process->saved_kernel_rsp : 0;
+	return process != NULL ? process->thread.saved_kernel_rsp : 0;
 }
 
 int process64_current_exit_status(void)
@@ -332,8 +389,8 @@ void process64_switch_task64(const struct TASK64 *task)
 		/* A bad scheduler/root invariant must not resume under another root. */
 		__builtin_trap();
 	}
-	platform_process_stack64(process != NULL ? process->entry_storage.kernel_address +
-		process->entry_storage.size : 0);
+	platform_process_stack64(process != NULL ? process->thread.entry_storage.kernel_address +
+		process->thread.entry_storage.size : 0);
 }
 
 uintptr_t process64_entry_stack_top(void)
@@ -341,28 +398,103 @@ uintptr_t process64_entry_stack_top(void)
 	struct PROCESS64 *process = process64_current();
 
 	if (process == NULL || process->state != PROCESS_RUNNING64 ||
-		process->entry_storage.size != PROCESS64_ENTRY_STACK_SIZE) { __builtin_trap(); }
-	return process->entry_storage.kernel_address + process->entry_storage.size;
+		process->thread.entry_storage.size != PROCESS64_ENTRY_STACK_SIZE) { __builtin_trap(); }
+	return process->thread.entry_storage.kernel_address + process->thread.entry_storage.size;
 }
 
-/* Only exec's detached failures are collected here; explicit prepare callers
- * keep ownership of their own failed handles. Each visit attempts one unwind.
+/* No resource work under the registry guard. A failed free retains the owner
+ * in REAP; only fully released processes may publish a waitable zombie.
  */
-static void process_reap_pending64(void)
+static int process_release64(struct PROCESS64 *process)
 {
-	for (size_t i = 0; i < USER_SPACE_LIMIT64; i++) {
+	int status = address_space_destroy64(&process->space);
+
+	if (status != 0) { return status; }
+	status = user_backing_free64(&process->io_storage);
+	if (status == 0) { status = user_backing_free64(&process->thread.entry_storage); }
+	if (status == 0) { status = user_backing_free64(&process->heap_storage); }
+	if (status == 0) { status = user_backing_free64(&process->stack_storage); }
+	if (status == 0) { status = user_backing_free64(&process->image_storage); }
+	if (status == 0) { status = user_backing_free64(&process->elf_snapshot); }
+	return status;
+}
+
+static void process_reparent64(const struct PROCESS64 *parent)
+{
+	for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
+		struct PROCESS64 *child = &process_table[i];
+
+		if (child->state != PROCESS_FREE64 && child->parent_pid == parent->pid) {
+			child->parent_pid = 1;
+			child->orphan = 1;
+		}
+	}
+}
+
+static void process_wake_parent64(uint32_t pid)
+{
+	uint64_t irq = platform_irq_save64();
+	struct PROCESS64 *parent = process_by_pid64(pid);
+	struct TASK64 *waiter = parent != NULL ? parent->waiter : NULL;
+
+	/* No queue lock is held. Keep preemption disabled through admission: a
+	 * close wake could otherwise let the waiter return and recycle its task
+	 * between taking this pointer and task_run. The scheduler never sleeps
+	 * here; failed admission is retried by collect.
+	 */
+	if (waiter != NULL) { (void) task_run64(waiter, -1, 0); }
+	platform_irq_restore64(irq);
+}
+
+static int process_finish64(struct PROCESS64 *process)
+{
+	int status = process_release64(process);
+	uint64_t irq;
+	uint32_t parent_pid;
+
+	if (status != 0) { return status; }
+	irq = platform_irq_save64();
+	process->console = NULL;
+	process->state = PROCESS_ZOMBIE64;
+	parent_pid = process->parent_pid;
+	platform_irq_restore64(irq);
+	process_wake_parent64(parent_pid);
+	return 0;
+}
+
+void process64_collect(void)
+{
+	for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
 		struct PROCESS64 *process = &process_table[i];
 		uint64_t irq = platform_irq_save64();
 		int claimed = process->reap_pending;
 
 		process->reap_pending = 0;
 		platform_irq_restore64(irq);
-		if (!claimed) { continue; }
-		if (process64_discard_prepared(&process) != 0) {
-			irq = platform_irq_save64();
-			process->reap_pending = 1;
-			platform_irq_restore64(irq);
+		if (claimed) {
+			int status = process->started ? process_finish64(process) :
+				process64_discard_prepared(&process);
+
+			if (status != 0) {
+				irq = platform_irq_save64();
+				process->reap_pending = 1;
+				platform_irq_restore64(irq);
+			}
 		}
+		/* Do not retain a raw pointer across wake/scheduling after a record
+		 * becomes waitable: wait may already have consumed and reused it.
+		 */
+		irq = platform_irq_save64();
+		process = &process_table[i];
+		uint32_t parent_pid = process->state == PROCESS_ZOMBIE64 ?
+			process->parent_pid : 0;
+
+		if (parent_pid == 1 && (process->orphan || process->auto_reap)) {
+			memzero(process, sizeof(*process));
+			parent_pid = 0;
+		}
+		platform_irq_restore64(irq);
+		if (parent_pid != 0) { process_wake_parent64(parent_pid); }
 	}
 }
 
@@ -371,8 +503,9 @@ int process64_console_busy64(const struct CONSOLE64 *console)
 	uint64_t irq = platform_irq_save64();
 	int busy = 0;
 
-	for (size_t i = 0; i < USER_SPACE_LIMIT64; i++) {
+	for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
 		if (process_table[i].state != PROCESS_FREE64 &&
+			process_table[i].state != PROCESS_ZOMBIE64 &&
 			process_table[i].console == console) { busy = 1; break; }
 	}
 	platform_irq_restore64(irq);
@@ -381,27 +514,128 @@ int process64_console_busy64(const struct CONSOLE64 *console)
 
 int process64_reap_console64(const struct CONSOLE64 *console)
 {
-	int busy = 0;
-
 	if (console == NULL) { return -22; }
-	for (size_t i = 0; i < USER_SPACE_LIMIT64; i++) {
-		struct PROCESS64 *process = &process_table[i];
-		uint64_t irq = platform_irq_save64();
-		int matches = process->state != PROCESS_FREE64 && process->console == console;
-		int claimed = matches && process->reap_pending;
+	process64_collect();
+	return process64_console_busy64(console) ? -16 : 0;
+}
 
-		if (claimed) { process->reap_pending = 0; }
-		platform_irq_restore64(irq);
-		if (!matches) { continue; }
-		if (!claimed) { busy = -16; continue; }
-		if (process64_discard_prepared(&process) != 0) {
-			irq = platform_irq_save64();
-			process->reap_pending = 1;
-			platform_irq_restore64(irq);
-			busy = -16;
-		}
+int process64_wait_child(struct PROCESS64 *parent, int32_t pid,
+	unsigned int options, int32_t *reaped_pid, int32_t *wait_status)
+{
+	struct TASK64 *task = task_now64();
+
+	if (reaped_pid == NULL || wait_status == NULL ||
+		(pid != -1 && pid <= 0) || (options & ~PROCESS64_WAIT_NOHANG) != 0) {
+		return -22;
 	}
-	return busy;
+	if (parent == NULL) { parent = &init_process64; }
+	for (;;) {
+		uint64_t irq = platform_irq_save64();
+		int children = 0;
+		int status;
+
+		if ((parent != &init_process64 && !process_owned64(parent)) ||
+			(parent->state != PROCESS_READY64 && parent->state != PROCESS_RUNNING64) ||
+			parent->exited || (parent != &init_process64 &&
+			parent->state == PROCESS_RUNNING64 && parent != process64_current())) {
+			platform_irq_restore64(irq);
+			return -3;
+		}
+		if (parent->waiter != NULL && parent->waiter != task) {
+			platform_irq_restore64(irq);
+			return -16;
+		}
+		for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
+			struct PROCESS64 *child = &process_table[i];
+
+			if (child->state == PROCESS_FREE64 || !child->started || child->legacy_owner ||
+				child->parent_pid != parent->pid ||
+				(pid != -1 && child->pid != (uint32_t) pid)) { continue; }
+			children = 1;
+			if (child->state != PROCESS_ZOMBIE64) { continue; }
+			*reaped_pid = (int32_t) child->pid;
+			*wait_status = child->wait_status;
+			memzero(child, sizeof(*child));
+			platform_irq_restore64(irq);
+			return 0;
+		}
+		if (!children || (options & PROCESS64_WAIT_NOHANG)) {
+			if (children) { *reaped_pid = 0; }
+			platform_irq_restore64(irq);
+			return children ? 0 : -10;
+		}
+		if (parent != &init_process64 && console64_close_requested(parent->console)) {
+			platform_irq_restore64(irq);
+			return -4;
+		}
+		if (task == NULL) {
+			platform_irq_restore64(irq);
+			return -22;
+		}
+		/* Register and prepare sleep with the condition still protected. */
+		parent->waiter = task;
+		status = task_sleep_prepare64(task);
+		if (status != 0) { parent->waiter = NULL; }
+		platform_irq_restore64(irq);
+		if (status != 0) { return status; }
+		status = task_sleep_commit64(task);
+		irq = platform_irq_save64();
+		parent->waiter = NULL;
+		platform_irq_restore64(irq);
+		if (status != 0) { return status; }
+	}
+}
+
+int process64_run_prepared(struct PROCESS64 *process)
+{
+	struct TASK64 *task = task_now64();
+	uint64_t irq = platform_irq_save64();
+	int status;
+
+	if (!process_owned64(process) || process->state != PROCESS_READY64 ||
+		task == NULL || task->process != NULL || process->thread.task != NULL ||
+		process->waiter != NULL) {
+		platform_irq_restore64(irq);
+		return -22;
+	}
+	if (console64_close_requested(process->console)) {
+		platform_irq_restore64(irq);
+		return -125;
+	}
+	runtime_ready64 = 1;
+	task->process = process;
+	task->is_user = 1;
+	task->entry_stack_base = process->thread.entry_storage.kernel_address;
+	task->entry_stack_size = process->thread.entry_storage.size;
+	process->thread.task = task;
+	process->state = PROCESS_RUNNING64;
+	process->started = 1;
+	process64_switch_task64(task);
+	status = enter_user_mode64(process->entry, process->thread.initial_rsp,
+		process->thread.initial_argc, process->thread.initial_argv, GDT64_USER_CODE,
+		GDT64_USER_DATA, &process->thread.saved_kernel_rsp);
+	/* Assembly returns to the runner's kernel stack with IRQs disabled. */
+	if (!process->exited) { process64_exit_current(status); }
+	task->process = NULL;
+	task->is_user = 0;
+	task->kernel_rsp = 0;
+	task->entry_stack_base = 0;
+	task->entry_stack_size = 0;
+	task->context.stack_pointer = 0;
+	process->thread.task = NULL;
+	process64_switch_task64(task);
+	process->state = PROCESS_REAP64;
+	process_reparent64(process);
+	platform_irq_restore64(irq);
+	process_wake_parent64(1);
+	console64_set_raw_con(process->console, 0);
+	memzero(process->files, sizeof(process->files));
+	if (process_finish64(process) != 0) {
+		irq = platform_irq_save64();
+		process->reap_pending = 1;
+		platform_irq_restore64(irq);
+	}
+	return 0;
 }
 
 int process64_exec_file(const char *path, const char *cmdline,
@@ -414,39 +648,24 @@ int process64_exec_file(const char *path, const char *cmdline,
 
 	if (task == NULL || task->process != NULL) { return -4; }
 	if (console64_close_requested(console)) { return PROCESS64_EXIT_CLOSED; }
-	process_reap_pending64();
+	process64_collect();
 	status = process64_prepare_file(path, cmdline, console, &process);
 	if (status != 0) { goto cleanup; }
-	irq = platform_irq_save64();
-	/* Loading may sleep. Close wins before publishing the task/root pair. */
-	if (console64_close_requested(console)) {
-		platform_irq_restore64(irq);
-		status = PROCESS64_EXIT_CLOSED;
+	process->legacy_owner = 1;
+	status = process64_run_prepared(process);
+	if (status != 0) {
+		if (status == -125) { status = PROCESS64_EXIT_CLOSED; }
 		goto cleanup;
 	}
-	runtime_ready64 = 1;
-	task->process = process;
-	task->is_user = 1;
-	task->entry_stack_base = process->entry_storage.kernel_address;
-	task->entry_stack_size = process->entry_storage.size;
-	process->state = PROCESS_RUNNING64;
-	process64_switch_task64(task);
-	status = enter_user_mode64(process->entry, process->initial_rsp,
-		process->initial_argc, process->initial_argv, GDT64_USER_CODE,
-		GDT64_USER_DATA, &process->saved_kernel_rsp);
-	/* Assembly returns on the console stack, with IRQs still disabled. */
-	if (process->exited) { status = process->exit_status; }
-	task->process = NULL;
-	task->is_user = 0;
-	task->kernel_rsp = 0;
-	task->entry_stack_base = 0;
-	task->entry_stack_size = 0;
-	task->context.stack_pointer = 0;
-	process64_switch_task64(task);
-	process->state = PROCESS_REAP64;
+	/* The legacy console owns this synchronous result. It has no user parent
+	 * waiting for a zombie, so consume it here or after a retained free retry.
+	 */
+	irq = platform_irq_save64();
+	status = process->exit_status;
+	if (process->state == PROCESS_ZOMBIE64) { memzero(process, sizeof(*process)); }
+	else { process->auto_reap = 1; }
 	platform_irq_restore64(irq);
-	console64_set_raw_con(process->console, 0);
-	memzero(process->files, sizeof(process->files));
+	return status;
 cleanup:
 	if (process != NULL && process64_discard_prepared(&process) != 0) {
 		irq = platform_irq_save64();
@@ -459,38 +678,30 @@ cleanup:
 int process64_discard_prepared(struct PROCESS64 **result)
 {
 	struct PROCESS64 *process;
-	int owned = 0;
 	int status;
 	uint64_t irq;
 
 	if (result == NULL) { return -22; }
 	process = *result;
 	if (process == NULL) { return 0; }
-	for (size_t i = 0; i < USER_SPACE_LIMIT64; i++) {
-		if (process == &process_table[i]) { owned = 1; break; }
-	}
-	if (!owned || (process->state != PROCESS_LOADING64 &&
-		process->state != PROCESS_READY64 && process->state != PROCESS_REAP64)) {
-		return -22;
-	}
-	/* Destroy refuses active roots. Keep backing until every table is gone. */
+	if (!process_owned64(process) || process->started ||
+		(process->state != PROCESS_LOADING64 && process->state != PROCESS_READY64 &&
+		process->state != PROCESS_REAP64)) { return -22; }
+	if (process->waiter != NULL) { return -16; }
 	status = address_space_destroy64(&process->space);
 	if (status == -16) { return status; }
 	irq = platform_irq_save64();
 	process->state = PROCESS_REAP64;
 	platform_irq_restore64(irq);
 	if (status != 0) { return status; }
-	status = user_backing_free64(&process->io_storage);
-	if (status == 0) { status = user_backing_free64(&process->entry_storage); }
-	if (status == 0) { status = user_backing_free64(&process->heap_storage); }
-	if (status == 0) { status = user_backing_free64(&process->stack_storage); }
-	if (status == 0) { status = user_backing_free64(&process->image_storage); }
-	if (status == 0) { status = user_backing_free64(&process->elf_snapshot); }
+	status = process_release64(process);
 	if (status != 0) { return status; }
 	irq = platform_irq_save64();
+	process_reparent64(process);
 	memzero(process, sizeof(*process));
 	*result = NULL;
 	platform_irq_restore64(irq);
+	process_wake_parent64(1);
 	return 0;
 }
 
@@ -509,7 +720,7 @@ int process64_prepare_file(const char *path, const char *cmdline,
 	status = parse_args64(cmdline != NULL ? cmdline : path, &args);
 	if (status != 0) { return status; }
 	process = process_alloc();
-	if (process == NULL) { return -12; }
+	if (process == NULL) { return -11; }
 	*result = process;
 	process->console = console;
 	status = address_space_create64(&process->space);
@@ -528,9 +739,9 @@ int process64_prepare_file(const char *path, const char *cmdline,
 	process->heap.size = process->heap_storage.size;
 	process->heap_backing = process->heap_storage.kernel_address;
 	process->heap_next = USER_HEAP_BASE64;
-	status = setup_args64(process, &args, &process->initial_rsp, &process->initial_argv);
+	status = setup_args64(process, &args, &process->thread.initial_rsp, &process->thread.initial_argv);
 	if (status != 0) { goto failed; }
-	process->initial_argc = args.argc;
+	process->thread.initial_argc = args.argc;
 	status = address_space_map64(process->space, process->stack.base,
 		process->stack_storage.physical, process->stack.size, USER_READ64 | USER_WRITE64);
 	if (status == 0) {
@@ -538,7 +749,7 @@ int process64_prepare_file(const char *path, const char *cmdline,
 			process->heap_storage.physical, process->heap.size, USER_READ64 | USER_WRITE64);
 	}
 	if (status != 0) { goto failed; }
-	status = user_backing_alloc64(&process->entry_storage, PROCESS64_ENTRY_STACK_SIZE);
+	status = user_backing_alloc64(&process->thread.entry_storage, PROCESS64_ENTRY_STACK_SIZE);
 	if (status != 0) { goto failed; }
 	irq = platform_irq_save64();
 	process->state = PROCESS_READY64;

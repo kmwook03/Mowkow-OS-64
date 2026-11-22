@@ -21,6 +21,7 @@
 #include <timer64.h>
 #include <utf864.h>
 #include <user_access64.h>
+#include <uapi/unix64.h>
 
 /* Filenames reject malformed UTF; display callers may use the replacement. */
 static int validate_filename_utf864(const char *name, size_t length)
@@ -313,6 +314,11 @@ uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame)
 	uint64_t a2;
 
 	if (frame == NULL) {
+		return 0;
+	}
+	/* Reserved UNIX calls must never reach the legacy dispatcher. */
+	if (frame->rax >= UNIX64_SYS_FIRST && frame->rax <= UNIX64_SYS_LAST) {
+		frame->rax = (uint64_t) -UNIX64_ENOSYS;
 		return 0;
 	}
 	process = process64_current();

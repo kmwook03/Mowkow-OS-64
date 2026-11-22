@@ -120,8 +120,15 @@ uint64_t arch64_sync_dispatch(struct ARCH64_EXCEPTION_FRAME *frame,
 		stack_pointer = frame->sp_el0;
 		print_exception_frame("EL0 FAULT", frame, esr, far,
 			stack_pointer);
-		process64_exit_current(PROCESS64_EXIT_FAULT_BASE +
-			(int) exception_class);
+		/* Abort/alignment exceptions are memory faults; other unsupported
+		 * instruction classes terminate as SIGILL. FP traps use SIGFPE.
+		 */
+		unsigned int signal = exception_class == 0x2c ? 8 :
+			(exception_class == 0x20 || exception_class == 0x24 ||
+			 exception_class == 0x22 || exception_class == 0x26 ? 11 : 4);
+
+		process64_terminate_current(PROCESS64_EXIT_FAULT_BASE +
+			(int) exception_class, signal);
 		return 1;
 	}
 	if ((frame->spsr & SPSR64_MODE_MASK) != SPSR64_MODE_EL0T) {

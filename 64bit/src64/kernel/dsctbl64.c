@@ -175,8 +175,11 @@ uint64_t exception_handler64(const struct INTERRUPT_FRAME64 *frame)
 	serial_print_exception(frame, fault_address, from_user);
 	process = process64_current();
 	if (from_user != 0 && process != NULL) {
-		process64_exit_current(PROCESS64_EXIT_FAULT_BASE +
-			(int) frame->vector);
+		unsigned int signal = frame->vector == 6 ? 4 :
+			(frame->vector == 0 || frame->vector == 16 || frame->vector == 19 ? 8 : 11);
+
+		process64_terminate_current(PROCESS64_EXIT_FAULT_BASE +
+			(int) frame->vector, signal);
 		return 1;
 	}
 	serial_print("kernel exception halted\r\n");

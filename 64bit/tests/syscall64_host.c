@@ -674,8 +674,23 @@ static int test_copy_boundary64(void)
 	return 0;
 }
 
+static int test_unix_reservation64(void)
+{
+	reset64();
+	for (uint64_t number = 0x100; number <= 0x1ff; number++) {
+		CHECK64((int64_t) call64(number, 37, UINT64_MAX, UINT64_MAX, 0, 0) == -38);
+	}
+	CHECK64(process.exited == 0 && open_calls == 0 && read_calls == 0);
+	CHECK64(write_calls == 0 && console_writes == 0 && console_reads == 0);
+	CHECK64(call64(0xff, 0, 0, 0, 0, 0) == ERROR64);
+	CHECK64(call64(0x200, 0, 0, 0, 0, 0) == ERROR64);
+	CHECK64(call64(0x100000100UL, 0, 0, 0, 0, 0) == ERROR64);
+	return 0;
+}
+
 int main(void)
 {
+	CHECK64(test_unix_reservation64() == 0);
 	CHECK64(test_copy_boundary64() == 0);
 	CHECK64(test_checked_files64() == 0);
 	CHECK64(test_open64() == 0);

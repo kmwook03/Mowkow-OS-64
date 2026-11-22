@@ -357,16 +357,20 @@ def main() -> None:
     parser.add_argument("--ahci", action="store_true")
     parser.add_argument("--close-only", action="store_true")
     parser.add_argument("--mixed-only", action="store_true")
+    parser.add_argument("--core-only", action="store_true",
+                        help="run isolation/fault/slot-reuse checks in one boot")
     parser.add_argument("--log", default=f"/tmp/mowkow-process-{time.time_ns()}.log")
     args = parser.parse_args()
-    if args.close_only and args.mixed_only:
-        parser.error("--close-only and --mixed-only are mutually exclusive")
+    if sum((args.close_only, args.mixed_only, args.core_only)) > 1:
+        parser.error("--close-only, --mixed-only and --core-only are mutually exclusive")
     with tempfile.TemporaryDirectory(prefix="process-regression64-") as temporary:
         image = Path(temporary) / "disk.img"
         shutil.copyfile(args.image, image)
         if not args.close_only and not args.mixed_only:
             with ProcessConsole(str(image), args.ahci, args.log) as console:
                 console.exercise()
+        if args.core_only:
+            return
         if not args.mixed_only:
             with ProcessConsole(str(image), args.ahci, args.log + "-close") as console:
                 console.closings()

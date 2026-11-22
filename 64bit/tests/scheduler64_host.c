@@ -230,7 +230,8 @@ static int test_entry_and_kill64(void)
 	CHECK64(task->flags == TASK64_FLAGS_RUNNING);
 	CHECK64(task_sleep64(task) == 0);
 	CHECK64(task->flags == TASK64_FLAGS_ALLOCATED);
-	task->process = task; /* An attached process owns resources beyond the task stack. */
+	/* An attached process owns resources beyond the task stack. */
+	task->process = (struct PROCESS64 *) (void *) task;
 	CHECK64(task_kill64(task) == TASK64_ERR_INVALID);
 	task->process = NULL;
 	CHECK64(task_kill64(task) == 0);

@@ -27,8 +27,42 @@ static unsigned char console_tokens64[4];
 static int close_on_read64, close_on_return64;
 static const struct CONSOLE64 *closing_console64;
 static char opened_name64[FD64_NAME_MAX];
+static int collect_on_sleep64, waiter_wakes64, termination_signal64;
+static int wake_fail64, close_on_sleep64;
 
 struct TASK64 *task_now64(void) { return current_task64; }
+int task_run64(struct TASK64 *task, int level, int priority)
+{
+	assert(irq_off64 && task != NULL && level == -1 && priority == 0);
+	waiter_wakes64++;
+	return wake_fail64 ? -12 : 0;
+}
+int task_sleep_prepare64(struct TASK64 *task)
+{
+	assert(irq_off64 && task == current_task64);
+	return collect_on_sleep64 ? 0 : -22;
+}
+int task_sleep_commit64(struct TASK64 *task)
+{
+	assert(!irq_off64 && task == current_task64 && collect_on_sleep64);
+	if (close_on_sleep64) {
+		closing_console64 = (struct CONSOLE64 *) &console_tokens64[0];
+		return 0;
+	}
+	/* Model the collector running while the waiter yields. Real teardown
+	 * publishes the zombie and must wake only after the registry guard ends.
+	 */
+	process64_collect();
+	assert(waiter_wakes64 > 0);
+	if (wake_fail64) {
+		int wakes = waiter_wakes64;
+
+		wake_fail64 = 0;
+		process64_collect();
+		assert(waiter_wakes64 > wakes);
+	}
+	return 0;
+}
 
 int console64_close_requested(const struct CONSOLE64 *console)
 {
@@ -46,7 +80,7 @@ void console64_set_raw_con(struct CONSOLE64 *console, int on)
 	assert(!irq_off64 && !on && current_task64->process == NULL);
 	assert(active_space64 == &kernel_space64 && entry_top64 == 0);
 	assert(returned_process64->state == PROCESS_REAP64);
-	assert(returned_process64->files[3].used && returned_process64->entry_storage.size);
+	assert(returned_process64->files[3].used && returned_process64->thread.entry_storage.size);
 	if (console == NULL) { return; }
 	assert(console == (struct CONSOLE64 *) &console_tokens64[execution_depth64]);
 	raw_calls64++;
@@ -65,19 +99,20 @@ int enter_user_mode64(uintptr_t entry, uintptr_t stack, uint64_t argc, uintptr_t
 	unsigned int frees = free_calls64;
 
 	assert(irq_off64 && process && process->state == PROCESS_RUNNING64);
+	assert(process->thread.task == task);
 	assert(active_space64 == process->space && task->is_user);
 	assert(entry == 0x400000 && stack == argv && argc == 3);
 	assert(code_selector == GDT64_USER_CODE && data_selector == GDT64_USER_DATA);
-	assert(entry_top64 == process->entry_storage.kernel_address + 65536);
+	assert(entry_top64 == process->thread.entry_storage.kernel_address + 65536);
 	assert(process64_entry_stack_top() == entry_top64);
-	assert(task->entry_stack_base == process->entry_storage.kernel_address);
+	assert(task->entry_stack_base == process->thread.entry_storage.kernel_address);
 	assert(task->entry_stack_size == 65536);
 	assert(process64_discard_prepared(&process) == -22 && free_calls64 == frees);
 	assert(process64_user_range_valid((void *) 0x400000, 31));
 	assert(!process64_user_write_valid((void *) 0x400000, 1));
 	assert(!process64_user_range_valid((void *) 0x400fff, 2));
 	assert(process64_user_write_valid((void *) 0x403000, 0x1017));
-	assert(!process64_user_range_valid((void *) process->entry_storage.kernel_address, 1));
+	assert(!process64_user_range_valid((void *) process->thread.entry_storage.kernel_address, 1));
 	assert(!process64_user_write_valid((void *) UINTPTR_MAX, 2));
 	*saved_kernel_rsp = 0x123000 + depth * 0x1000;
 	process->files[3].used = 1;
@@ -115,6 +150,9 @@ int enter_user_mode64(uintptr_t entry, uintptr_t stack, uint64_t argc, uintptr_t
 		assert(process->exit_status == PROCESS64_EXIT_CLOSED);
 	} else {
 		process64_exit_current(exit_status64);
+		if (termination_signal64) {
+			process64_terminate_current(exit_status64, (unsigned int) termination_signal64);
+		}
 	}
 	assert(process64_current_exit_rsp() == 0x123000 + depth * 0x1000);
 	assert(process64_current_exit_status() == exit_status64);
@@ -198,7 +236,7 @@ static void check_contents64(struct PROCESS64 *process)
 	const uint8_t *image = (const void *) process->image_storage.kernel_address;
 	const uint8_t *heap = (const void *) process->heap_storage.kernel_address;
 	const uint8_t *stack = (const void *) process->stack_storage.kernel_address;
-	uintptr_t argv_offset = process->initial_argv - 0x100200000ULL;
+	uintptr_t argv_offset = process->thread.initial_argv - 0x100200000ULL;
 	const uintptr_t *argv = (const void *) (stack + argv_offset);
 	uintptr_t pa;
 	unsigned int flags;
@@ -207,8 +245,9 @@ static void check_contents64(struct PROCESS64 *process)
 	assert(process->image.base == 0x400000 && process->image.size == 0x5000);
 	assert(process->stack.base == 0x100200000ULL && process->stack.size == 0x10000);
 	assert(process->heap.base == 0x100000000ULL && process->heap.size == 0x100000);
-	assert(process->heap_next == 0x100000000ULL && process->initial_argc == 3);
-	assert(process->initial_rsp == process->initial_argv && !(process->initial_rsp & 15));
+	assert(process->heap_next == 0x100000000ULL && process->thread.initial_argc == 3);
+	assert(process->thread.initial_rsp == process->thread.initial_argv);
+	assert(!(process->thread.initial_rsp & 15));
 	assert(argv[3] == 0 && strcmp((const char *) stack + argv[0] - 0x100200000ULL,
 		"fixture") == 0);
 	assert(strcmp((const char *) stack + argv[1] - 0x100200000ULL, "한글") == 0);
@@ -246,11 +285,11 @@ static void isolation64(void)
 	struct PROCESS64 *processes[4] = {0}, *extra = NULL;
 	size_t base = live_pages64;
 
-	fixture64(); next_pid = UINT32_MAX;
+	fixture64(); next_pid = PROCESS64_PID_MAX;
 	for (unsigned int i = 0; i < 4; i++) {
-		if (i == 2) { next_pid = UINT32_MAX; }
+		if (i == 2) { next_pid = PROCESS64_PID_MAX; }
 		assert(prepare64(&processes[i]) == 0);
-		assert(processes[i]->pid == (i == 0 ? UINT32_MAX : i));
+		assert(processes[i]->pid == (i == 0 ? PROCESS64_PID_MAX : i + 1));
 		check_contents64(processes[i]);
 		for (unsigned int j = 0; j < i; j++) {
 			assert(processes[i]->pid != processes[j]->pid);
@@ -566,14 +605,143 @@ static void command_limits64(void)
 	assert(parse_args64("   ", &args) == 0 && args.argc == 0);
 	line[sizeof(line) - 2] = '\0'; name[sizeof(name) - 2] = '\0';
 	assert(process64_prepare_file(name, line, NULL, &process) == 0);
-	assert(strcmp(opened_name64, name) == 0 && process->initial_argc == 1);
+	assert(strcmp(opened_name64, name) == 0 && process->thread.initial_argc == 1);
 	const uintptr_t *argv = (const void *) (process->stack_storage.kernel_address +
-		process->initial_argv - process->stack.base);
+		process->thread.initial_argv - process->stack.base);
 	const char *arg = (const void *) (process->stack_storage.kernel_address +
 		argv[0] - process->stack.base);
 
 	assert(argv[1] == 0 && strcmp(arg, line) == 0);
 	assert(process64_discard_prepared(&process) == 0 && live_pages64 == base);
+}
+
+static void lifecycle64(void)
+{
+	struct PROCESS64 *slots[PROCESS64_MAX - 1] = {0}, *extra = NULL;
+	struct PROCESS64 *parent = NULL, *child = NULL;
+	int32_t pid = -99, status = -99;
+	size_t base = live_pages64;
+
+	/* Registry capacity is independent of the four active MMU roots. */
+	for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
+		assert(process64_reserve_child(NULL, &slots[i]) == 0);
+		assert(slots[i]->parent_pid == 1 && slots[i]->pid > 1);
+	}
+	assert(process64_reserve_child(NULL, &extra) == -11 && extra == NULL);
+	for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
+		assert(process64_discard_prepared(&slots[i]) == 0);
+	}
+	extra = &init_process64;
+	assert(process64_discard_prepared(&extra) == -22 && extra->pid == 1);
+	fixture64();
+	assert(prepare64(&parent) == 0);
+	current_task64 = &execution_tasks64[0];
+	execution_limit64 = 1;
+	exit_status64 = 37;
+	parent->waiter = &execution_tasks64[1];
+	assert(process64_wait_child(parent, -1, 0, &pid, &status) == -16);
+	assert(pid == -99 && status == -99);
+	parent->waiter = NULL;
+	assert(process64_wait_child(parent, -2, 0, &pid, &status) == -22);
+	assert(process64_wait_child(parent, -1, 2, &pid, &status) == -22);
+	assert(process64_wait_child(parent, -1, 0, NULL, &status) == -22);
+	for (int mode = 0; mode < 5; mode++) {
+		/* wait encodes only the low byte, independently of the console result. */
+		exit_status64 = mode == 0 ? 0x125 : (mode == 1 ? -219 : 37);
+		current_task64->process = parent;
+		assert(prepare64(&child) == 0 && child->parent_pid == parent->pid);
+		current_task64->process = NULL;
+		uint32_t child_pid = child->pid;
+
+		assert(process64_wait_child(parent, -1, 1, &pid, &status) == -10);
+		assert(process64_wait_child(parent, 0, 0, &pid, &status) == -22);
+		if (mode == 1) { termination_signal64 = 11; }
+		if (mode >= 2) { fail_exit_free64 = 0; }
+		assert(process64_run_prepared(child) == 0);
+		assert(child->thread.task == NULL && child->started);
+		termination_signal64 = 0;
+		if (mode >= 2) {
+			assert(child->state == PROCESS_REAP64 && child->reap_pending);
+			status = -99;
+			assert(process64_wait_child(parent, (int32_t) child_pid, 1, &pid, &status) == 0);
+			assert(pid == 0 && status == -99);
+			assert(process64_wait_child(parent, -1, 0, &pid, &status) == -22);
+			assert(parent->waiter == NULL);
+			fail_exit_free64 = free_fail64 = -1;
+			free_persistent64 = 0;
+			collect_on_sleep64 = 1;
+			waiter_wakes64 = 0;
+			wake_fail64 = mode == 3;
+			if (mode == 4) {
+				parent->console = (struct CONSOLE64 *) &console_tokens64[0];
+				close_on_sleep64 = 1;
+				pid = status = -99;
+				assert(process64_wait_child(parent, -1, 0, &pid, &status) == -4);
+				assert(parent->waiter == NULL && pid == -99 && status == -99);
+				assert(child->state == PROCESS_REAP64);
+				close_on_sleep64 = 0;
+				closing_console64 = NULL;
+				parent->console = NULL;
+			}
+		} else {
+			assert(child->state == PROCESS_ZOMBIE64 && child->space == NULL);
+			assert(child->console == NULL && child->thread.entry_storage.size == 0);
+		}
+		assert(process64_wait_child(parent, (int32_t) child_pid, 0, &pid, &status) == 0);
+		assert(pid == (int32_t) child_pid && status == (mode == 1 ? 11 : 37 << 8));
+		assert(parent->waiter == NULL);
+		collect_on_sleep64 = 0;
+		assert(process64_wait_child(parent, -1, 1, &pid, &status) == -10);
+		child = NULL;
+	}
+	/* A zombie keeps its PID across wrap until wait or init consumes it. */
+	current_task64->process = parent;
+	assert(prepare64(&child) == 0);
+	current_task64->process = NULL;
+	assert(process64_run_prepared(child) == 0);
+	next_pid = child->pid;
+	extra = NULL;
+	assert(process64_reserve_child(NULL, &extra) == 0 && extra->pid != child->pid);
+	assert(process64_discard_prepared(&extra) == 0);
+	assert(process64_run_prepared(parent) == 0);
+	assert(child->parent_pid == 1 && child->orphan);
+	process64_collect();
+	assert(child->state == PROCESS_FREE64);
+	assert(process64_wait_child(NULL, (int32_t) parent->pid, 0, &pid, &status) == 0);
+	assert(status == 37 << 8 && live_pages64 == base);
+	/* Reparent before the child runs too; init collects it after execution. */
+	parent = child = NULL;
+	assert(prepare64(&parent) == 0);
+	current_task64->process = parent;
+	assert(prepare64(&child) == 0);
+	current_task64->process = NULL;
+	assert(process64_run_prepared(parent) == 0);
+	assert(child->parent_pid == 1 && child->orphan);
+	assert(process64_wait_child(NULL, (int32_t) parent->pid, 0, &pid, &status) == 0);
+	assert(process64_run_prepared(child) == 0);
+	process64_collect();
+	assert(child->state == PROCESS_FREE64 && live_pages64 == base);
+	/* Zombies retain registry slots, but release all four MMU roots. Fill
+	 * beyond the old console limit, then reap and repeat to expose leaks.
+	 */
+	for (unsigned int round = 0; round < 2; round++) {
+		for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
+			slots[i] = NULL;
+			assert(prepare64(&slots[i]) == 0);
+			assert(process64_run_prepared(slots[i]) == 0);
+			assert(slots[i]->state == PROCESS_ZOMBIE64 && live_pages64 == base);
+		}
+		extra = NULL;
+		assert(prepare64(&extra) == -11 && extra == NULL);
+		for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
+			uint32_t expected_pid = slots[i]->pid;
+
+			assert(process64_wait_child(NULL, -1, 0, &pid, &status) == 0);
+			assert(pid == (int32_t) expected_pid && status == 37 << 8);
+		}
+		assert(process64_wait_child(NULL, -1, 0, &pid, &status) == -10);
+	}
+	current_task64 = NULL;
 }
 
 int main(void)
@@ -583,6 +751,7 @@ int main(void)
 	isolation64();
 	user_copy64(); failures_process64(); permissions_process64();
 	execution64(); close_lifetime64(); command_limits64();
+	lifecycle64();
 	puts("process memory: private ELF, argv, W^X, slots, execution, exit/reap and rollback PASS");
 	return 0;
 }

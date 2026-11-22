@@ -3,6 +3,7 @@
 #include <memory64.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <uapi/unix64.h>
 
 #define EI_NIDENT 16
 #define ET_EXEC 2
@@ -11,6 +12,7 @@
 #define PT_LOAD 1
 #define PT_DYNAMIC64 2
 #define PT_INTERP64 3
+#define PT_NOTE64 4
 #define PT_TLS64 7
 #define PF_X64 0x1U
 #define PF_W64 0x2U
@@ -99,6 +101,76 @@ static int valid_header(const struct ELF64_EHDR *ehdr, size_t file_size)
 		ehdr->e_phoff <= file_size &&
 		ehdr->e_phnum <=
 			(file_size - ehdr->e_phoff) / sizeof(struct ELF64_PHDR);
+}
+
+/* Notes are only four-byte aligned and may be unaligned in a hostile file. */
+static uint32_t note_word64(const uint8_t *bytes)
+{
+	return (uint32_t) bytes[0] | (uint32_t) bytes[1] << 8 |
+		(uint32_t) bytes[2] << 16 | (uint32_t) bytes[3] << 24;
+}
+
+/* Requires valid_header(). Unknown owners are opaque, but all note records
+ * must be bounded. A recognized owner cannot silently fall back to legacy.
+ * Scan every PT_NOTE, including duplicates that alias the same file bytes.
+ */
+static int image_abi64(const uint8_t *file, size_t file_size, uint32_t *abi)
+{
+	const struct ELF64_EHDR *header = (const struct ELF64_EHDR *) file;
+	const struct ELF64_PHDR *segments =
+		(const struct ELF64_PHDR *) (file + header->e_phoff);
+	const uint8_t owner[] = UNIX64_NOTE_NAME;
+	int found = 0;
+
+	*abi = UNIX64_ABI_LEGACY;
+	for (uint16_t i = 0; i < header->e_phnum; i++) {
+		const struct ELF64_PHDR *segment = &segments[i];
+		uint64_t offset, remaining;
+
+		if (segment->p_type != PT_NOTE64) { continue; }
+		if (segment->p_offset > file_size ||
+			segment->p_filesz > file_size - segment->p_offset) {
+			return -UNIX64_ENOEXEC;
+		}
+		offset = segment->p_offset;
+		remaining = segment->p_filesz;
+		while (remaining != 0) {
+			uint32_t namesz, descsz, type;
+			uint64_t name_span, desc_span;
+			int matches = 1;
+
+			if (remaining < 12) { return -UNIX64_ENOEXEC; }
+			namesz = note_word64(file + offset);
+			descsz = note_word64(file + offset + 4);
+			type = note_word64(file + offset + 8);
+			offset += 12;
+			remaining -= 12;
+			/* Widen before rounding UINT32_MAX to the next four-byte slot. */
+			name_span = ((uint64_t) namesz + 3) & ~(uint64_t) 3;
+			desc_span = ((uint64_t) descsz + 3) & ~(uint64_t) 3;
+			if (name_span > remaining || desc_span > remaining - name_span) {
+				return -UNIX64_ENOEXEC;
+			}
+			/* Reserve the MOWKOW namespace even with a missing/extra NUL. */
+			if (namesz < sizeof(owner) - 1) { matches = 0; }
+			for (size_t j = 0; matches && j < sizeof(owner) - 1; j++) {
+				if (file[offset + j] != owner[j]) { matches = 0; }
+			}
+			if (matches) {
+				if (found || namesz != UNIX64_NOTE_NAMESZ ||
+					file[offset + sizeof(owner) - 1] != 0 ||
+					type != UNIX64_NOTE_TYPE || descsz != UNIX64_NOTE_DESCSZ ||
+					note_word64(file + offset + name_span) != UNIX64_ABI_VERSION) {
+					return -UNIX64_ENOEXEC;
+				}
+				found = 1;
+			}
+			offset += name_span + desc_span;
+			remaining -= name_span + desc_span;
+		}
+	}
+	if (found) { *abi = UNIX64_ABI_VERSION; }
+	return 0;
 }
 
 /* Requires valid_header(); validate ranges before touching the image window. */
@@ -206,6 +278,7 @@ int elf64_prepare_image(const char *path, struct PROCESS64 *process)
 	const uint8_t *bytes;
 	uintptr_t low, high, base, end, snapshot_size;
 	size_t size;
+	uint32_t abi;
 	int status;
 
 	if (path == NULL || process == NULL || process->space == NULL ||
@@ -222,6 +295,10 @@ int elf64_prepare_image(const char *path, struct PROCESS64 *process)
 	if (fd64_read_checked(&file, (void *) bytes, size) != (int64_t) size) { return -3; }
 	header = (const struct ELF64_EHDR *) bytes;
 	if (!valid_header(header, size)) { return -4; }
+	status = image_abi64(bytes, size, &abi);
+	if (status != 0) { return status; }
+	/* A1.4 installs the UNIX stack/auxv/TLS path. Never run v1 via v0 CRT. */
+	if (abi != UNIX64_ABI_LEGACY) { return -UNIX64_ENOEXEC; }
 	status = image_range64(bytes, size, &low, &high);
 	if (status != 0) { return status; }
 	if (align_down_checked64(low, USER_PAGE_SIZE64, &base) != 0 ||

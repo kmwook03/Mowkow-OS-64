@@ -16,6 +16,9 @@
 #define PROCESS64_EXIT_FAULT_BASE 128
 #define PROCESS64_EXIT_CLOSED 143
 #define PROCESS64_ENTRY_STACK_SIZE 65536U
+#define PROCESS64_MAX 32U
+#define PROCESS64_PID_MAX 0x7fffffffU
+#define PROCESS64_WAIT_NOHANG 1U
 
 struct PROCESS64_RANGE {
 	uintptr_t base;
@@ -32,26 +35,43 @@ struct TASK64;
 
 enum PROCESS_STATE64 {
 	PROCESS_FREE64, PROCESS_LOADING64, PROCESS_READY64,
-	PROCESS_RUNNING64, PROCESS_REAP64
+	PROCESS_RUNNING64, PROCESS_REAP64, PROCESS_ZOMBIE64
+};
+
+/* One execution flow per process for now. TASK64 owns CPU/FP context and the
+ * scheduler stack; this object owns user-entry state and the privilege stack.
+ * A detached zombie has no task or live execution storage.
+ */
+struct PROCESS_THREAD64 {
+	struct TASK64 *task;
+	struct USER_BACKING64 entry_storage;
+	uintptr_t initial_rsp;
+	uintptr_t initial_argv;
+	size_t initial_argc;
+	uintptr_t saved_kernel_rsp;
 };
 
 struct PROCESS64 {
 	enum PROCESS_STATE64 state;
+	struct PROCESS_THREAD64 thread;
 	struct ADDRESS_SPACE64 *space;
 	struct USER_BACKING64 image_storage;
 	struct USER_BACKING64 stack_storage;
 	struct USER_BACKING64 heap_storage;
 	struct USER_BACKING64 elf_snapshot;
-	struct USER_BACKING64 entry_storage;
 	/* Supervisor-only syscall snapshot, retained for reuse until teardown. */
 	struct USER_BACKING64 io_storage;
 	int io_ready;
 	uint8_t io_empty;
 	int reap_pending;
-	uintptr_t initial_rsp;
-	uintptr_t initial_argv;
-	size_t initial_argc;
 	uint32_t pid;
+	uint32_t parent_pid;
+	struct TASK64 *waiter;
+	int started;
+	int orphan;
+	int auto_reap;
+	int legacy_owner;
+	int wait_status;
 	uintptr_t entry;
 	struct PROCESS64_RANGE image;
 	struct PROCESS64_RANGE stack;
@@ -59,7 +79,6 @@ struct PROCESS64 {
 	uintptr_t stack_backing;
 	uintptr_t heap_backing;
 	uintptr_t heap_next;
-	uintptr_t saved_kernel_rsp;
 	int exited;
 	int exit_status;
 	struct PROCESS64_FILE files[PROCESS64_MAX_FILES];
@@ -80,6 +99,29 @@ int process64_prepare_file(const char *path, const char *cmdline,
 	struct CONSOLE64 *console, struct PROCESS64 **result);
 /* Inactive prepared processes only; failed frees retain the handle and slot. */
 int process64_discard_prepared(struct PROCESS64 **process);
+/* Task-context lifecycle API; kernel pointers only. reserve publishes no child
+ * to wait until run_prepared starts it. NULL parent selects kernel PID 1.
+ * Slot exhaustion is -EAGAIN; mm backing/table exhaustion remains -ENOMEM.
+ */
+int process64_reserve_child(struct PROCESS64 *parent, struct PROCESS64 **result);
+/* Runs on the calling, unattached scheduler task, independent of console slots.
+ * Keeps the detached exit record for wait; returns 0 on execution completion
+ * and negative errno before entry. Failed release is retried by collect.
+ * A successful run transfers the handle to wait/init collection; the runner
+ * must not dereference it after return.
+ */
+int process64_run_prepared(struct PROCESS64 *process);
+/* pid > 0 or -1; only NOHANG is supported. Outputs are unchanged on error.
+ * Returns 0 with reaped_pid=0 when NOHANG finds only live children.
+ * One waiter per parent (A: one execution flow); second waiter gets -EBUSY.
+ * A console close interrupts blocking wait with -EINTR; caller unwinds to
+ * the user-return boundary before termination. Kernel waiters own their task
+ * for the entire call.
+ */
+int process64_wait_child(struct PROCESS64 *parent, int32_t pid,
+	unsigned int options, int32_t *reaped_pid, int32_t *wait_status);
+/* Bounded task-context retry and kernel PID 1 orphan collection, no IRQ caller. */
+void process64_collect(void);
 /* IRQ-off scheduler/entry boundary. No allocation or sleeping. */
 void process64_switch_task64(const struct TASK64 *task);
 uintptr_t process64_entry_stack_top(void);
@@ -105,6 +147,8 @@ int process64_user_write_valid(void *ptr, size_t size);
 /* Mark termination from SYS_EXIT, user fault or close at a user-return boundary.
    Release terminal/files/memory after returning to exec's kernel frame. */
 void process64_exit_current(int status);
+/* Preserve legacy console status, record signal termination separately for wait. */
+void process64_terminate_current(int status, unsigned int signal);
 uintptr_t process64_current_exit_rsp(void);
 int process64_current_exit_status(void);
 
