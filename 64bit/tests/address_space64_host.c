@@ -76,7 +76,7 @@ static void mappings64(void)
 	struct ADDRESS_SPACE64 *first = NULL, *second = NULL;
 	struct USER_BACKING64 one = {0}, two = {0};
 	struct USER_PAGE64 page = {0};
-	static uint64_t before[8][512];
+	static uint64_t before[AS_TABLES_MAX64][512];
 	uintptr_t pa;
 	unsigned int flags;
 
@@ -213,7 +213,7 @@ static void preservation64(void)
 	struct ADDRESS_SPACE64 *running = NULL, *failed = NULL;
 	struct USER_BACKING64 backing = {0};
 	struct USER_PAGE64 page;
-	static uint64_t before[8][512];
+	static uint64_t before[AS_TABLES_MAX64][512];
 	unsigned int count = as_arch_table_count64();
 	size_t live;
 

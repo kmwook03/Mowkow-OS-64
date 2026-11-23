@@ -5,7 +5,7 @@ static void mapping_lifetime64(void)
 {
 	struct ADDRESS_SPACE64 *space = NULL, *clone = NULL;
 	struct USER_BACKING64 backing = {0};
-	static uint64_t before[8][512];
+	static uint64_t before[AS_TABLES_MAX64][512];
 	unsigned int calls;
 
 	reset64(); assert(address_space_create64(&space) == 0);
@@ -89,7 +89,7 @@ static void clone_spaces64(void)
 {
 	struct ADDRESS_SPACE64 *source = NULL, *child = NULL;
 	struct USER_BACKING64 image = {0}, data = {0};
-	static uint64_t before[8][512];
+	static uint64_t before[AS_TABLES_MAX64][512];
 	const uintptr_t addresses[] = {0x400000, 0x402000, 0x403000, 0x405000,
 		0x100000000ULL, 0x100200000ULL};
 	const unsigned int permissions[] = {1, 5, 3, 3, 3, 3};

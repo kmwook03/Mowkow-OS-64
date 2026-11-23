@@ -2,6 +2,7 @@
 #include <arch/arch64.h>
 #include <fifo64.h>
 #include <stdint.h>
+#include <unix_wait64.h>
 
 #define TIMER_HZ 100U
 
@@ -46,6 +47,7 @@ uintptr_t arch64_timer_handle_irq(uintptr_t frame)
 	/* Move the compare point first so the level interrupt deasserts before EOI. */
 	timer_reload64();
 	timer_ticks++;
+	unix_wait_tick64(timer_ticks);
 	frame = arch64_scheduler_tick(frame);
 	if (timer_debug_output != 0 && timer_ticks % TIMER_HZ == 0) {
 		arch64_dbg_puts(arch64_scheduler_healthy() != 0 ? "M" : "?");

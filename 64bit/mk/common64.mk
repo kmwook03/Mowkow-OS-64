@@ -26,10 +26,13 @@ COMMON64_C_SRCS = \
 	$(SRC64_DIR)/kernel/mtask64.c \
 	$(SRC64_DIR)/kernel/mutex64.c \
 	$(SRC64_DIR)/kernel/process64.c \
+	$(SRC64_DIR)/kernel/process_file64.c \
 	$(SRC64_DIR)/kernel/process_exec64.c \
 	$(SRC64_DIR)/kernel/sheet64.c \
 	$(SRC64_DIR)/kernel/shutdown64.c \
 	$(SRC64_DIR)/kernel/syscall64.c \
+	$(SRC64_DIR)/kernel/unix_bridge64.c \
+	$(SRC64_DIR)/kernel/unix_wait64.c \
 	$(SRC64_DIR)/kernel/user_access64.c \
 	$(SRC64_DIR)/kernel/window64.c \
 	$(SRC64_DIR)/lib/draw64.c \

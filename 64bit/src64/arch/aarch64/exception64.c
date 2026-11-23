@@ -4,6 +4,7 @@
 #include <interrupt64.h>
 #include <process64.h>
 #include <syscall64.h>
+#include <uapi/unix64.h>
 #include <stdint.h>
 
 #define ESR64_EC_SHIFT 26
@@ -135,6 +136,16 @@ uint64_t arch64_sync_dispatch(struct ARCH64_EXCEPTION_FRAME *frame,
 		arch64_kernel_sync_handler(frame, esr, far);
 	}
 	syscall_frame.rax = frame->x[8];
+	if (frame->x[8] == UNIX64_SYS_SIGNAL_RAISE || frame->x[8] == UNIX64_SYS_SIGNAL_RETURN) {
+		int status = process64_signal_user64(frame->x[8], frame, NULL);
+
+		if (status != 0) { frame->x[0] = (uint64_t) status; }
+		return 0;
+	}
+	if (frame->x[8] == UNIX64_SYS_FORK) {
+		frame->x[0] = (uint64_t) process64_fork_user64(frame, NULL);
+		return 0;
+	}
 	syscall_frame.rdi = frame->x[0];
 	syscall_frame.rsi = frame->x[1];
 	syscall_frame.rdx = frame->x[2];

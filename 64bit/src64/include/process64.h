@@ -2,6 +2,7 @@
 #define MOWKOW64_PROCESS64_H
 
 #include <address_space64.h>
+#include <arch/user_context64.h>
 #include <fd64.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -29,6 +30,7 @@ struct PROCESS64_FILE {
 	int used;
 	int cloexec;
 	struct FDHANDLE64 fh;
+	struct UNIX_FILE64 *shared;
 };
 
 struct CONSOLE64;
@@ -50,6 +52,7 @@ struct PROCESS_THREAD64 {
 	uintptr_t initial_argv;
 	size_t initial_argc;
 	uintptr_t saved_kernel_rsp;
+	struct USER_CONTEXT64 fork_context;
 };
 
 /* Stable descriptor banks: exec switches pointers, never mapped backing owners. */
@@ -66,6 +69,8 @@ struct PROCESS_IMAGE64 {
 	uintptr_t stack_backing;
 	uintptr_t heap_backing;
 	uintptr_t heap_next;
+	/* Internal libc arena: head stores page count, tails are UINT16_MAX. */
+	uint16_t anon_pages[UNIX_HEAP_SIZE64 / USER_PAGE_SIZE64];
 	uint32_t abi;
 	uintptr_t phdr;
 	uint16_t phnum;
@@ -98,7 +103,17 @@ struct PROCESS64 {
 	int wait_status;
 	int exited;
 	int exit_status;
+	/* Fork runner is parked before collect kills it and releases its stack. */
+	struct TASK64 *fork_task;
+	struct USER_BACKING64 runner_storage;
+	struct USER_CONTEXT64 signal_context;
+	uintptr_t signal_handler;
+	uintptr_t signal_restorer;
+	uintptr_t signal_return_sp;
+	int signal_active;
+	int signal_pending;
 	struct PROCESS64_FILE files[PROCESS64_MAX_FILES];
+	unsigned int closed_stdio;
 	/* stdin/stdout이 향할 콘솔. 앱을 띄운 콘솔이지 그때그때 활성인 콘솔이
 	   아니다 -- 콘솔 2에서 띄운 앱이 콘솔 1에 찍으면 안 된다. */
 	struct CONSOLE64 *console;
@@ -111,6 +126,16 @@ int process64_release_image(struct PROCESS_IMAGE64 *image);
  */
 int process64_execve_user64(const char *path, const void *argv, const void *envp);
 int process64_set_tls64(uintptr_t pointer);
+int64_t process64_fork_user64(const void *frame, const void *fp);
+int64_t process64_wait_user64(int64_t pid, void *status, uint64_t options);
+int process64_signal_set64(uintptr_t handler, uintptr_t restorer);
+int process64_signal_user64(uint64_t number, void *frame, void *fp);
+int process64_signal_send64(int64_t pid);
+int process64_signal_pending64(const struct PROCESS64 *process);
+/* IRQ-off native return only: deliver after kernel continuations unwind. */
+int process64_native_return64(void *frame, void *fp);
+/* IRQ-safe retry of internal-signal/close wakes for fork runners and waiters. */
+void process64_wake_tick64(void);
 
 /* Kernel-owned NUL-terminated input; NULL cmdline uses path as the command line.
    Oversized names/lines or excess arguments return PROCESS64_ERR_ARGS. */

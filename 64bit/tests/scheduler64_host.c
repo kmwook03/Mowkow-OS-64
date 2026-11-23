@@ -9,6 +9,13 @@
 
 static uint64_t irq_enabled = 1;
 static int context_init_fail;
+static int stack_free_fail64;
+int __real_memman64_free_4k(struct MEMMAN64 *man, uintptr_t address, size_t size);
+int __wrap_memman64_free_4k(struct MEMMAN64 *man, uintptr_t address, size_t size);
+int __wrap_memman64_free_4k(struct MEMMAN64 *man, uintptr_t address, size_t size)
+{
+	return stack_free_fail64 ? -22 : __real_memman64_free_4k(man, address, size);
+}
 static int wake_during_sleep;
 static uint32_t context_switches;
 _Alignas(TASK64_STACK_ALIGNMENT)
@@ -234,6 +241,11 @@ static int test_entry_and_kill64(void)
 	task->process = (struct PROCESS64 *) (void *) task;
 	CHECK64(task_kill64(task) == TASK64_ERR_INVALID);
 	task->process = NULL;
+	stack_free_fail64 = 1;
+	CHECK64(task_kill64(task) == TASK64_ERR_INVALID);
+	CHECK64(task->flags == TASK64_FLAGS_ALLOCATED && task->stack_base == stack);
+	CHECK64(task->stack_size == TASK64_STACK_SIZE && task_validate64() == 0);
+	stack_free_fail64 = 0;
 	CHECK64(task_kill64(task) == 0);
 	CHECK64(task->flags == TASK64_FLAGS_UNUSED);
 	CHECK64(memman64_total(&memman64) == free_before);

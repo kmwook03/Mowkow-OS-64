@@ -23,6 +23,7 @@ class Scheduler64Test(unittest.TestCase):
                     "-Wextra",
                     "-Werror",
                     "-DMOWKOW64_TASK_STACK_DEBUG=1",
+                    "-Wl,--wrap=memman64_free_4k",
                     f"-I{ROOT / '64bit' / 'src64' / 'include'}",
                     str(ROOT / "64bit" / "tests" / "scheduler64_host.c"),
                     str(ROOT / "64bit" / "src64" / "kernel" / "memory64.c"),

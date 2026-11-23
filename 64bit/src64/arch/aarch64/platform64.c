@@ -2,7 +2,24 @@
 #include <arch/aarch64_boot64.h>
 #include <arch/aarch64_cache64.h>
 #include <arch/platform64.h>
+#include <arch/user_context64.h>
+#include <arch/exception_frame64.h>
+#include <kstring64.h>
+#include <process64.h>
 #include <mtask64.h>
+
+void platform_user_capture64(struct USER_CONTEXT64 *context,
+	const void *frame, const void *fp, int zero_result)
+{
+	(void) fp;
+	memset(context, 0, sizeof(*context));
+	struct ARCH64_EXCEPTION_FRAME saved = *(const struct ARCH64_EXCEPTION_FRAME *) frame;
+
+	if (zero_result) { saved.x[0] = 0; }
+	memcpy(context->frame, &saved, sizeof(saved));
+	__asm__ volatile ("mrs %0, tpidr_el0\n\tmrs %1, tpidrro_el0"
+		: "=r" (context->tls), "=r" (context->readonly_tls));
+}
 
 uint64_t platform_irq_save64(void)
 {
@@ -160,4 +177,15 @@ uint64_t aarch64_boot_frequency64(void)
 void aarch64_boot_relax64(void)
 {
 	__asm__ volatile ("yield");
+}
+
+void platform_user_restore_tls64(const struct USER_CONTEXT64 *context)
+{
+	uint64_t irq = platform_irq_save64();
+
+	platform_user_tls64(context->tls);
+	task_now64()->context.thread_pointer = context->tls;
+	task_now64()->context.readonly_thread_pointer = context->readonly_tls;
+	__asm__ volatile ("msr tpidrro_el0, %0" :: "r" (context->readonly_tls) : "memory");
+	platform_irq_restore64(irq);
 }

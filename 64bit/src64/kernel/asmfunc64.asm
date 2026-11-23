@@ -64,9 +64,11 @@ extern kernel64_main
 extern exception_handler64
 extern irq_handler64
 extern syscall_handler64
+extern syscall_entry64
+global platform_user_resume64
 extern process64_current_exit_rsp
 extern process64_current_exit_status
-extern process64_return_to_user64
+extern process64_native_return64
 extern process64_entry_stack_top
 
 section .text
@@ -306,9 +308,9 @@ asm_syscall80:
 
 %macro RESTORE_REGS64 0
 	; Only abandon a user return. Kernel IRQ frames may own locks/references.
-	mov rdi, [rbx + 144]
-	and edi, 3
-	call process64_return_to_user64
+	mov rdi, rbx
+	mov rsi, rsp
+	call process64_native_return64
 	test eax, eax
 	jnz syscall_exit_to_kernel
 	fxrstor64 [rsp]
@@ -356,7 +358,8 @@ syscall_common:
 	SAVE_REGS64
 	; Blocking and preemption use this process's own entry stack.
 	sti
-	call syscall_handler64
+	mov rsi, rsp
+	call syscall_entry64
 	cli
 	cmp rax, 1
 	je syscall_exit_to_kernel
@@ -440,6 +443,35 @@ enter_user_mode64:
 	pop rbx
 	; The C owner restores its IRQ token after switching back to the kernel root.
 	ret
+
+; rdi=kernel-owned USER_CONTEXT64, rsi=&runner continuation.
+platform_user_resume64:
+	cli
+	mov r10, rsi
+	push rbx
+	push rbp
+	push r12
+	push r13
+	push r14
+	push r15
+	mov rbx, rsp
+	mov r12, rdi
+	sub rsp, 520
+	and rsp, -16
+	fxsave64 [rsp]
+	mov [rsp + 512], rbx
+	lea r11, [rel enter_user_mode64.kernel_resume]
+	push r11
+	mov [r10], rsp
+	sub rsp, 8
+	call process64_entry_stack_top
+	lea rsp, [rax - 688]
+	mov rdi, rsp
+	mov rsi, r12
+	mov ecx, 86
+	rep movsq
+	lea rbx, [rsp + 512]
+	RESTORE_REGS64
 
 leave_user_mode64:
 	cli

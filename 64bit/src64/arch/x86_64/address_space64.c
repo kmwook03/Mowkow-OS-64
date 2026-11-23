@@ -5,7 +5,8 @@
 #define AS_NX64 (1ULL << 63)
 #define AS_PARENT64 7ULL
 
-/* Slots: PML4, PDPT, low PD, image PT[2], high PD, heap PT, stack PT.
+/* Slots: PML4, PDPT, low PD, image PT[2], high PD, heap PT, stack PT,
+ * UNIX arena PT[4].
  * Shared PDs cover [1,4) GiB with the boot map's supervisor identity/cache
  * attributes. The low PD is private because [4,8) MiB is the user image.
  */
@@ -20,7 +21,10 @@ _Static_assert((USER_HEAP_BASE64 >> 30) == 4 &&
 	((USER_STACK_END64 - 1) >> 21) == (USER_STACK_BASE64 >> 21),
 	"high user table indices");
 
-unsigned int as_arch_table_count64(void) { return 8; }
+_Static_assert((UNIX_HEAP_BASE64 >> 30) == 4 && UNIX_HEAP_SIZE64 == 4ULL << 21 &&
+	(UNIX_HEAP_BASE64 & ((1ULL << 21) - 1)) == 0, "UNIX arena PT indices");
+
+unsigned int as_arch_table_count64(void) { return 12; }
 int as_arch_supported64(void) { return as_cpu_nx64() ? 0 : -95; }
 uintptr_t as_arch_physical64(uintptr_t alias) { return as_cpu_physical64(alias); }
 uintptr_t as_arch_alias64(uintptr_t physical) { return as_cpu_alias64(physical); }
@@ -63,6 +67,9 @@ int as_arch_build64(const struct AS_TABLES64 *tables)
 	low[3] = table_link64(tables->page[4]);
 	high[0] = table_link64(tables->page[6]);
 	high[1] = table_link64(tables->page[7]);
+	for (unsigned int i = 0; i < 4; i++) {
+		high[((UNIX_HEAP_BASE64 >> 21) & 511) + i] = table_link64(tables->page[8 + i]);
+	}
 	return 0;
 }
 
@@ -81,6 +88,9 @@ uint64_t *as_arch_leaf64(const struct AS_TABLES64 *tables, uintptr_t address)
 		pd_slot = 5; pdpt_index = 4; pd_index = 0; pt_slot = 6;
 	} else if (address >= USER_STACK_BASE64 && address < USER_STACK_END64) {
 		pd_slot = 5; pdpt_index = 4; pd_index = 1; pt_slot = 7;
+	} else if (address >= UNIX_HEAP_BASE64 && address < UNIX_HEAP_BASE64 + UNIX_HEAP_SIZE64) {
+		pd_slot = 5; pdpt_index = 4; pd_index = (unsigned int) ((address >> 21) & 511);
+		pt_slot = 8 + (unsigned int) ((address - UNIX_HEAP_BASE64) >> 21);
 	} else { return NULL; }
 	pd = (uint64_t *) tables->page[pd_slot];
 	/* Hardware may set Accessed in parents after this root has run. */

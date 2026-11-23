@@ -3,7 +3,7 @@
 
 #include <address_space64.h>
 
-#define AS_TABLES_MAX64 8U
+#define AS_TABLES_MAX64 12U
 
 /* Kernel aliases, allocated and owned by the common layer. All tables are
  * eagerly allocated, so map/activate never allocate. Backends may reference

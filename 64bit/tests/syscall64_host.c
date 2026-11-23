@@ -3,11 +3,16 @@
 #include <console64.h>
 #include <fd64.h>
 #include <interrupt64.h>
+#include <arch/platform64.h>
+#include <mtask64.h>
 #include <process64.h>
+#include <process_file64.h>
 #include <stdio.h>
 #include <string.h>
 #include <syscall64.h>
 #include <timer64.h>
+#include <uapi/unix64.h>
+#include <unix_wait64.h>
 
 #define ERROR64 ((uint64_t) -1)
 #define CHECK64(condition) do { \
@@ -66,11 +71,88 @@ static uintptr_t created_name_pointer;
 static unsigned char space_token64;
 static unsigned int pins64;
 static int pin_failure64;
+static struct TASK64 wait_task64;
+static int irq_off64, wait_mode64, close_wait64, wake_calls64, wake_error64;
+static uint64_t wait_start64;
+
+uint64_t platform_irq_save64(void)
+{
+	uint64_t old = irq_off64;
+
+	irq_off64 = 1;
+	return old;
+}
+void platform_irq_restore64(uint64_t old) { irq_off64 = (int) old; }
+struct TASK64 *task_now64(void) { return &wait_task64; }
+int console64_close_requested(const struct CONSOLE64 *console)
+{
+	(void) console;
+	return close_wait64;
+}
+int task_run64(struct TASK64 *task, int level, int priority)
+{
+	assert(irq_off64 && task == &wait_task64 && level == -1 && priority == 0);
+	wake_calls64++;
+	return wake_error64;
+}
+int task_sleep_prepare64(struct TASK64 *task)
+{
+	assert(irq_off64 && task == &wait_task64 && pins64 == 1);
+	if (wait_mode64 == 3) { return -12; }
+	if (wait_mode64 == 1) { assert(unix_futex_wake64((uintptr_t) user_buffer) == 1); }
+	return 0;
+}
+int task_sleep_commit64(struct TASK64 *task)
+{
+	assert(!irq_off64 && task == &wait_task64 && pins64 == 1);
+	if (wait_mode64 == 1) { assert(wake_calls64 == 1); return 0; }
+	if (wait_mode64 == 2) {
+		unix_wait_tick64(wait_start64 + 1);
+		assert(wake_calls64 == 0);
+		unix_wait_tick64(wait_start64 + 2);
+		assert(wake_calls64 == 1);
+		return 0;
+	}
+	if (wait_mode64 == 4) { close_wait64 = 1; unix_wait_tick64(wait_start64 + 1); return 0; }
+	if (wait_mode64 == 5) { return -22; }
+	if (wait_mode64 == 6) {
+		wake_error64 = -12;
+		assert(unix_futex_wake64((uintptr_t) user_buffer) == 1);
+		assert(wake_calls64 == 1);
+		wake_error64 = 0;
+		unix_wait_tick64(wait_start64 + 1);
+		assert(wake_calls64 == 2);
+		return 0;
+	}
+	assert(!"unexpected futex sleep");
+	return -22;
+}
 
 int process64_execve_user64(const char *path, const void *argv, const void *envp)
 {
 	(void) path; (void) argv; (void) envp;
 	return -38;
+}
+int mutex64_lock(struct MUTEX64 *mutex) { (void) mutex; return 0; }
+int mutex64_unlock(struct MUTEX64 *mutex) { (void) mutex; return 0; }
+int64_t process64_fork_user64(const void *frame, const void *fp)
+{
+	(void) frame; (void) fp; return -38;
+}
+int64_t process64_wait_user64(int64_t pid, void *status, uint64_t options)
+{
+	(void) pid; (void) status; (void) options; return -38;
+}
+void process64_wake_tick64(void) { }
+int process64_signal_pending64(const struct PROCESS64 *process) { (void) process; return 0; }
+int process64_signal_send64(int64_t pid) { (void) pid; return -38; }
+int process64_signal_set64(uintptr_t handler, uintptr_t restorer)
+{
+	(void) handler; (void) restorer; return -38;
+}
+int process64_signal_user64(uint64_t number, void *frame, void *fp)
+{
+	(void) number; (void) frame; (void) fp; return -38;
 }
 int process64_set_tls64(uintptr_t pointer) { (void) pointer; return -38; }
 
@@ -716,6 +798,130 @@ static int test_copy_boundary64(void)
 	return 0;
 }
 
+static int test_unix_bridge64(void)
+{
+	static unsigned char arena[16384];
+	uintptr_t buffer = (uintptr_t) user_buffer;
+	uint64_t first, second;
+
+	reset64();
+	process.state = PROCESS_RUNNING64;
+	process.memory->abi = UNIX64_ABI_VERSION;
+	process.pid = 42; process.parent_pid = 7;
+	CHECK64(call64(UNIX64_SYS_GETPID, 0, 0, 0, 0, 0) == 42);
+	CHECK64(call64(UNIX64_SYS_GETPPID, 0, 0, 0, 0, 0) == 7);
+	CHECK64((int64_t) call64(UNIX64_SYS_WRITE, UINT64_MAX, buffer, 1, 0, 0) == -9);
+	CHECK64((int64_t) call64(UNIX64_SYS_WRITE, 1, UINT64_MAX, 1, 0, 0) == -14);
+	CHECK64(call64(UNIX64_SYS_WRITE, 1, 0, 0, 0, 0) == 0);
+	CHECK64(call64(UNIX64_SYS_WRITE, 1, buffer, 8, 0, 0) == 8);
+	CHECK64(console_writes == 1);
+	readonly64 = 1;
+	CHECK64((int64_t) call64(UNIX64_SYS_READ, 0, buffer, 8, 0, 0) == -14);
+	readonly64 = 0;
+	CHECK64(call64(UNIX64_SYS_READ, 0, buffer, 8, 0, 0) == 3);
+	CHECK64(user_buffer[0] == 0x5a && pins64 == 0);
+	console_read_result = 0;
+	CHECK64(call64(UNIX64_SYS_READ, 0, buffer, 8, 0, 0) == 0);
+	console_read_result = -1;
+	CHECK64((int64_t) call64(UNIX64_SYS_READ, 0, buffer, 8, 0, 0) == -4);
+	CHECK64(pins64 == 0);
+	io_failure64 = 1;
+	CHECK64((int64_t) call64(UNIX64_SYS_WRITE, 1, buffer, 8, 0, 0) == -12);
+	io_failure64 = 0;
+	CHECK64(call64(UNIX64_SYS_ISATTY, 1, 0, 0, 0, 0) == 0);
+	CHECK64(call64(UNIX64_SYS_CLOSE, 1, 0, 0, 0, 0) == 0);
+	CHECK64((int64_t) call64(UNIX64_SYS_WRITE, 1, buffer, 1, 0, 0) == -9);
+	CHECK64((int64_t) call64(UNIX64_SYS_CLOSE, 1, 0, 0, 0, 0) == -9);
+	memcpy(user_buffer, "app.txt", 8);
+	checked_error64 = -5;
+	CHECK64((int64_t) call64(UNIX64_SYS_OPEN, buffer, 0, 0, 0, 0) == -5);
+	CHECK64(!process.files[3].used);
+	checked_error64 = 0;
+	CHECK64(call64(UNIX64_SYS_OPEN, buffer, UNIX64_OPEN_CLOEXEC, 0, 0, 0) == 3);
+	CHECK64(process.files[3].cloexec && strcmp(opened_name, "app.txt") == 0);
+	CHECK64((int64_t) call64(UNIX64_SYS_OPEN, buffer, 1ULL << 32, 0, 0, 0) == -22);
+	CHECK64((int64_t) call64(UNIX64_SYS_WRITE, 3, buffer, 8, 0, 0) == -30);
+	CHECK64(call64(UNIX64_SYS_READ, 3, buffer, 8, 0, 0) == 7);
+	memset(user_buffer, 0xa5, 8);
+	checked_error64 = -5;
+	CHECK64((int64_t) call64(UNIX64_SYS_READ, 3, buffer, 8, 0, 0) == -5);
+	CHECK64(user_buffer[0] == 0xa5 && pins64 == 0);
+	CHECK64((int64_t) call64(UNIX64_SYS_ISATTY, 3, 0, 0, 0, 0) == -25);
+	CHECK64(call64(UNIX64_SYS_CLOSE, 3, 0, 0, 0, 0) == 0);
+	CHECK64(!process.files[3].used && !process.files[3].cloexec);
+	CHECK64(abi_error == 0);
+	process.memory->heap.base = 0x100000000UL;
+	process.memory->heap.size = sizeof(arena);
+	process.memory->heap_backing = (uintptr_t) arena;
+	memset(arena, 0xa5, sizeof(arena));
+	CHECK64((int64_t) call64(UNIX64_SYS_ANON_ALLOC, UINT64_MAX, 0, 0, 0, 0) == -22);
+	CHECK64((int64_t) call64(UNIX64_SYS_ANON_ALLOC, 0, 0, 0, 0, 0) == -22);
+	first = call64(UNIX64_SYS_ANON_ALLOC, 8192, 0, 0, 0, 0);
+	second = call64(UNIX64_SYS_ANON_ALLOC, 8192, 0, 0, 0, 0);
+	CHECK64(first == 0x100000000UL && second == first + 8192);
+	for (size_t i = 0; i < sizeof(arena); i++) { CHECK64(arena[i] == 0); }
+	CHECK64((int64_t) call64(UNIX64_SYS_ANON_ALLOC, 4096, 0, 0, 0, 0) == -12);
+	CHECK64((int64_t) call64(UNIX64_SYS_ANON_FREE, first + 4096, 4096, 0, 0, 0) == -22);
+	CHECK64((int64_t) call64(UNIX64_SYS_ANON_FREE, first, 4096, 0, 0, 0) == -22);
+	CHECK64(call64(UNIX64_SYS_ANON_FREE, first, 8192, 0, 0, 0) == 0);
+	CHECK64((int64_t) call64(UNIX64_SYS_ANON_FREE, first, 8192, 0, 0, 0) == -22);
+	memset(arena, 0x7b, sizeof(arena));
+	CHECK64(call64(UNIX64_SYS_ANON_ALLOC, 8192, 0, 0, 0, 0) == first);
+	for (size_t i = 0; i < 8192; i++) { CHECK64(arena[i] == 0 && arena[i + 8192] == 0x7b); }
+	CHECK64(call64(SYS_ALLOC, 16, 0, 0, 0, 0) == 0);
+	return 0;
+}
+
+static int test_unix_wait64(void)
+{
+	uintptr_t word = (uintptr_t) user_buffer;
+	uintptr_t timeout = word + 16;
+	struct UNIX_TIMESPEC64 time = {0};
+	int32_t value = 7;
+
+	reset64();
+	process.state = PROCESS_RUNNING64;
+	process.memory->abi = UNIX64_ABI_VERSION;
+	memcpy(user_buffer, &value, sizeof(value));
+	memcpy(user_buffer + 16, &time, sizeof(time));
+	CHECK64((int64_t) call64(UNIX64_SYS_FUTEX_WAIT, word + 1, 7, 0, 0, 0) == -22);
+	CHECK64((int64_t) call64(UNIX64_SYS_FUTEX_WAIT, 0, 7, 0, 0, 0) == -14);
+	CHECK64((int64_t) call64(UNIX64_SYS_FUTEX_WAIT, word, 6, timeout, 0, 0) == -11);
+	CHECK64((int64_t) call64(UNIX64_SYS_FUTEX_WAIT, word, 7, timeout, 0, 0) == -110);
+	CHECK64((int64_t) call64(UNIX64_SYS_FUTEX_WAIT, word, 7, UINT64_MAX, 0, 0) == -14);
+	time.nanoseconds = 1000000000;
+	memcpy(user_buffer + 16, &time, sizeof(time));
+	CHECK64((int64_t) call64(UNIX64_SYS_FUTEX_WAIT, word, 7, timeout, 0, 0) == -22);
+	time.seconds = INT64_MAX; time.nanoseconds = 0;
+	memcpy(user_buffer + 16, &time, sizeof(time));
+	CHECK64((int64_t) call64(UNIX64_SYS_FUTEX_WAIT, word, 7, timeout, 0, 0) == -22);
+	time.seconds = -1;
+	memcpy(user_buffer + 16, &time, sizeof(time));
+	CHECK64((int64_t) call64(UNIX64_SYS_FUTEX_WAIT, word, 7, timeout, 0, 0) == -22);
+	time.seconds = 0; time.nanoseconds = 1;
+	memcpy(user_buffer + 16, &time, sizeof(time));
+	for (int mode = 1; mode <= 6; mode++) {
+		static const int expected[] = {0, 0, -110, -12, -4, -22, 0};
+
+		wait_mode64 = mode; wake_calls64 = close_wait64 = wake_error64 = 0;
+		wait_start64 = UINT64_MAX;
+		unix_wait_tick64(wait_start64);
+		CHECK64((int64_t) call64(UNIX64_SYS_FUTEX_WAIT, word, 7, timeout, 0, 0) ==
+			expected[mode]);
+		CHECK64(pins64 == 0 && !irq_off64);
+		CHECK64(call64(UNIX64_SYS_FUTEX_WAKE, word, 0, 0, 0, 0) == 0);
+	}
+	close_wait64 = 0;
+	CHECK64((int64_t) call64(UNIX64_SYS_FUTEX_WAKE, UINT64_MAX, 0, 0, 0, 0) == -22);
+	CHECK64((int64_t) call64(UNIX64_SYS_FUTEX_WAKE, 0, 0, 0, 0, 0) == -14);
+	unix_wait_tick64(1234);
+	CHECK64(call64(UNIX64_SYS_CLOCK_GET, timeout, 0, 0, 0, 0) == 0);
+	memcpy(&time, user_buffer + 16, sizeof(time));
+	CHECK64(time.seconds == 12 && time.nanoseconds == 340000000);
+	CHECK64((int64_t) call64(UNIX64_SYS_CLOCK_GET, UINT64_MAX, 0, 0, 0, 0) == -14);
+	return 0;
+}
+
 static int test_unix_reservation64(void)
 {
 	reset64();
@@ -733,6 +939,8 @@ static int test_unix_reservation64(void)
 int main(void)
 {
 	CHECK64(test_unix_reservation64() == 0);
+	CHECK64(test_unix_bridge64() == 0);
+	CHECK64(test_unix_wait64() == 0);
 	CHECK64(test_copy_boundary64() == 0);
 	CHECK64(test_checked_files64() == 0);
 	CHECK64(test_open64() == 0);

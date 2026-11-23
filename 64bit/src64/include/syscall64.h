@@ -81,7 +81,13 @@
 #define TTY_MOD_ALT   0x04
 
 struct INTERRUPT_FRAME64;
+struct PROCESS64;
+/* Task context, current v1 process only; may sleep during console/FAT I/O. */
+int64_t unix_bridge_call64(struct PROCESS64 *process, uint64_t number,
+	uint64_t a0, uint64_t a1, uint64_t a2);
 /* Native entry action: 0 resume, 1 terminate, 2 new exec frame + reset user FP. */
 uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame);
+/* x86 native entry, including the saved user FP image for fork. */
+uint64_t syscall_entry64(struct INTERRUPT_FRAME64 *frame, const void *fp);
 
 #endif

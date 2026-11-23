@@ -7,7 +7,7 @@
 /* Valid page, normal WB MAIR[0], EL0 access, inner-shareable, AF, nG, PXN. */
 #define AS_USER_FLAGS64 (0xf43ULL | AS_PXN64)
 
-/* Slots: L1, image L2, high L2, image L3[2], heap L3, stack L3.
+/* Slots: L1, image L2, high L2, image L3[2], heap L3, stack L3, UNIX arena L3[4].
  * TTBR1 is never modified or owned by these objects.
  */
 _Static_assert((USER_IMAGE_BASE64 >> 21) == 2 &&
@@ -18,7 +18,10 @@ _Static_assert((USER_HEAP_BASE64 >> 30) == 4 &&
 	((USER_STACK_END64 - 1) >> 21) == (USER_STACK_BASE64 >> 21),
 	"high user L1/L2 indices");
 
-unsigned int as_arch_table_count64(void) { return 7; }
+_Static_assert((UNIX_HEAP_BASE64 >> 30) == 4 && UNIX_HEAP_SIZE64 == 4ULL << 21 &&
+	(UNIX_HEAP_BASE64 & ((1ULL << 21) - 1)) == 0, "UNIX arena L3 indices");
+
+unsigned int as_arch_table_count64(void) { return 11; }
 int as_arch_supported64(void) { return 0; }
 uintptr_t as_arch_physical64(uintptr_t alias) { return as_cpu_physical64(alias); }
 uintptr_t as_arch_alias64(uintptr_t physical) { return as_cpu_alias64(physical); }
@@ -41,6 +44,9 @@ int as_arch_build64(const struct AS_TABLES64 *tables)
 	image[3] = table_link64(tables->page[4]);
 	high[0] = table_link64(tables->page[5]);
 	high[1] = table_link64(tables->page[6]);
+	for (unsigned int i = 0; i < 4; i++) {
+		high[((UNIX_HEAP_BASE64 >> 21) & 511) + i] = table_link64(tables->page[7 + i]);
+	}
 	return 0;
 }
 
@@ -58,6 +64,9 @@ uint64_t *as_arch_leaf64(const struct AS_TABLES64 *tables, uintptr_t address)
 		l1_index = 4; l2_slot = 2; l2_index = 0; l3_slot = 5;
 	} else if (address >= USER_STACK_BASE64 && address < USER_STACK_END64) {
 		l1_index = 4; l2_slot = 2; l2_index = 1; l3_slot = 6;
+	} else if (address >= UNIX_HEAP_BASE64 && address < UNIX_HEAP_BASE64 + UNIX_HEAP_SIZE64) {
+		l1_index = 4; l2_slot = 2; l2_index = (unsigned int) ((address >> 21) & 511);
+		l3_slot = 7 + (unsigned int) ((address - UNIX_HEAP_BASE64) >> 21);
 	} else { return NULL; }
 	l2 = (uint64_t *) tables->page[l2_slot];
 	if (root[l1_index] != table_link64(tables->page[l2_slot]) ||

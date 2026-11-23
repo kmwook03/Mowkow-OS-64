@@ -15,6 +15,7 @@
 #include <interrupt64.h>
 #include <kstring64.h>
 #include <process64.h>
+#include <process_file64.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <syscall64.h>
@@ -44,7 +45,8 @@ static struct FDHANDLE64 *syscall_file64(struct PROCESS64 *process, uint64_t fd)
 	if (fd < 3 || fd >= PROCESS64_MAX_FILES || process->files[fd].used == 0) {
 		return NULL;
 	}
-	return &process->files[fd].fh;
+	return process->files[fd].shared != NULL ?
+		&process->files[fd].shared->handle : &process->files[fd].fh;
 }
 
 static int syscall_open64(struct PROCESS64 *process, const char *path, uint64_t flags)
@@ -98,7 +100,11 @@ static int64_t syscall_write64(struct PROCESS64 *process, uint64_t fd,
 		console64_write_con(process->console, snapshot, size);
 		return (int64_t) size;
 	}
-	return (int64_t) fd64_write(fh, snapshot, (size_t) size);
+	if (process_file_lock64(&process->files[fd], &fh) != 0) { return -1; }
+	int64_t result = (int64_t) fd64_write(fh, snapshot, (size_t) size);
+
+	process_file_unlock64(&process->files[fd]);
+	return result;
 }
 
 /* Preserve one backend call, partial counts and negative errors. In particular,
@@ -113,6 +119,7 @@ static int64_t syscall_read64(struct PROCESS64 *process, uint64_t fd,
 	void *snapshot;
 	int64_t result;
 
+	if (fd == 0 && process->fork_task != NULL) { return -95; }
 	if (checked && fh == NULL) { return -9; }
 	if (size > INT64_MAX) { return checked ? -22 : -1; }
 	if (!process64_user_write_valid(buffer, (size_t) size)) { return checked ? -14 : -1; }
@@ -122,9 +129,15 @@ static int64_t syscall_read64(struct PROCESS64 *process, uint64_t fd,
 	if (user_access_begin64(&access, buffer, (size_t) size, USER_WRITE64) != 0) {
 		return checked ? -14 : -1;
 	}
-	if (checked) { result = fd64_read_checked(fh, snapshot, (size_t) size); }
-	else if (fd == 0) { result = (int64_t) console64_read_con(process->console, snapshot, size); }
-	else { result = (int64_t) fd64_read(fh, snapshot, (size_t) size); }
+	if (fd == 0) { result = (int64_t) console64_read_con(process->console, snapshot, size); }
+	else {
+		result = process_file_lock64(&process->files[fd], &fh);
+		if (result == 0) {
+			result = checked ? fd64_read_checked(fh, snapshot, (size_t) size) :
+				(int64_t) fd64_read(fh, snapshot, (size_t) size);
+			process_file_unlock64(&process->files[fd]);
+		}
+	}
 	if (result >= 0) {
 		if ((uint64_t) result > size) { result = -5; }
 		else if (copy_to_user_access64(&access, snapshot, (size_t) result) != 0) {
@@ -156,7 +169,11 @@ static int syscall_seek64(struct PROCESS64 *process, uint64_t fd,
 	if (fh == NULL || whence > 2) {
 		return -1;
 	}
-	return fd64_seek(fh, offset, (int) whence);
+	if (process_file_lock64(&process->files[fd], &fh) != 0) { return -1; }
+	int status = fd64_seek(fh, offset, (int) whence);
+
+	process_file_unlock64(&process->files[fd]);
+	return status;
 }
 
 static int syscall_close64(struct PROCESS64 *process, uint64_t fd)
@@ -164,7 +181,7 @@ static int syscall_close64(struct PROCESS64 *process, uint64_t fd)
 	if (syscall_file64(process, fd) == NULL) {
 		return -1;
 	}
-	process->files[fd].used = 0;
+	process_file_close64(&process->files[fd]);
 	return 0;
 }
 
@@ -215,7 +232,11 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 		return fd64_sync() < 0 ? -5 : 0;
 	}
 	if (!process64_user_write_valid((void *) arg1, sizeof(info))) { return -14; }
-	return syscall_stat64(fh, NULL, (void *) arg1);
+	status = process_file_lock64(&process->files[arg0], &fh);
+	if (status != 0) { return status; }
+	status = syscall_stat64(fh, NULL, (void *) arg1);
+	process_file_unlock64(&process->files[arg0]);
+	return status;
 }
 
 static uintptr_t syscall_alloc64(struct PROCESS64 *process, uint64_t request)
@@ -280,6 +301,7 @@ static uint64_t syscall_tty64(struct PROCESS64 *process,
 		console64_set_raw((int) row);
 		break;
 	case TTY_READKEY:
+		if (process->fork_task != NULL) { return (uint64_t) -95; }
 		return console64_is_raw() != 0 ? console64_read_key() : (uint64_t) -1;
 	case TTY_SIZE:
 		return console64_size();
@@ -325,6 +347,21 @@ static uint64_t syscall_tty64(struct PROCESS64 *process,
 	return 0;
 }
 
+uint64_t syscall_entry64(struct INTERRUPT_FRAME64 *frame, const void *fp)
+{
+	if (frame->rax == UNIX64_SYS_SIGNAL_RAISE || frame->rax == UNIX64_SYS_SIGNAL_RETURN) {
+		int status = process64_signal_user64(frame->rax, frame, (void *) fp);
+
+		if (status != 0) { frame->rax = (uint64_t) status; }
+		return 0;
+	}
+	if (frame->rax == UNIX64_SYS_FORK) {
+		frame->rax = (uint64_t) process64_fork_user64(frame, fp);
+		return 0;
+	}
+	return syscall_handler64(frame);
+}
+
 uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame)
 {
 	struct PROCESS64 *process;
@@ -358,6 +395,11 @@ uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame)
 				frame->cs = 0x33; frame->ss = 0x2b; frame->rflags = 0x202;
 				return 2;
 			}
+			if (process->memory->abi == UNIX64_ABI_VERSION) {
+				frame->rax = (uint64_t) unix_bridge_call64(process, frame->rax,
+					frame->rdi, frame->rsi, frame->rdx);
+				return 0;
+			}
 		}
 		frame->rax = (uint64_t) -UNIX64_ENOSYS;
 		return 0;
@@ -390,7 +432,8 @@ uint64_t syscall_handler64(struct INTERRUPT_FRAME64 *frame)
 		frame->rax = (uint64_t) syscall_seek64(process, a0, (int64_t) a1, a2);
 		break;
 	case SYS_ALLOC:
-		frame->rax = syscall_alloc64(process, a0);
+		frame->rax = process->memory->abi == UNIX64_ABI_VERSION ? 0 :
+			syscall_alloc64(process, a0);
 		break;
 	case SYS_FREE:
 		frame->rax = (uint64_t) syscall_free64(process, (uintptr_t) a0, (size_t) a1);

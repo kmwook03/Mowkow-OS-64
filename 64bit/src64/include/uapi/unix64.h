@@ -21,6 +21,25 @@
 #define UNIX64_SYS_GETPID 0x106
 #define UNIX64_SYS_GETPPID 0x107
 #define UNIX64_SYS_TCB_SET 0x108     /* aligned writable user thread pointer */
+#define UNIX64_SYS_ANON_ALLOC 0x109  /* page-multiple size -> zeroed RW address */
+#define UNIX64_SYS_ANON_FREE 0x10a   /* exact address, size; internal libc arena */
+#define UNIX64_SYS_OPEN 0x10b        /* root filename, flags; read-only bridge */
+#define UNIX64_SYS_CLOSE 0x10c       /* fd */
+#define UNIX64_SYS_SEEK 0x10d        /* fd, signed offset, whence -> offset */
+#define UNIX64_SYS_ISATTY 0x10e      /* fd -> 0 or negative errno */
+#define UNIX64_SYS_FUTEX_WAIT 0x10f  /* private int32 address, value, relative timespec */
+#define UNIX64_SYS_FUTEX_WAKE 0x110  /* private int32 address -> number woken */
+#define UNIX64_SYS_CLOCK_GET 0x111   /* monotonic timespec output, 10-ms resolution */
+/* A1 internal signal 32. Not POSIX sigaction/kill/job control.
+ * SET(handler, restorer), zero/zero disables; RAISE() calls handler(32).
+ * One active delivery; nested RAISE returns EBUSY. RETURN() is restorer-only.
+ */
+#define UNIX64_SYS_SIGNAL_SET 0x112
+#define UNIX64_SYS_SIGNAL_RAISE 0x113
+#define UNIX64_SYS_SIGNAL_RETURN 0x114
+#define UNIX64_SYS_SIGNAL_SEND 0x115 /* positive PID; coalesced, deferred while active */
+#define UNIX64_OPEN_CLOEXEC 1
+#define UNIX64_WAIT_NOHANG 1
 
 #define UNIX64_ENOEXEC 8
 #define UNIX64_ENOSYS 38

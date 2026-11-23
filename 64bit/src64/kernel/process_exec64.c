@@ -4,6 +4,7 @@
 #include <kstring64.h>
 #include <mtask64.h>
 #include <process64.h>
+#include <process_file64.h>
 #include <uapi/unix64.h>
 #include <user_access64.h>
 
@@ -106,14 +107,14 @@ static int prepare_unix64(struct PROCESS_IMAGE64 *image, const struct EXEC_ARGS6
 	if (status != 0) { return status; }
 	status = user_backing_alloc64(&image->stack_storage, USER_STACK_END64 - USER_STACK_BASE64);
 	if (status == 0) {
-		status = user_backing_alloc64(&image->heap_storage, USER_HEAP_END64 - USER_HEAP_BASE64);
+		status = user_backing_alloc64(&image->heap_storage, UNIX_HEAP_SIZE64);
 	}
 	if (status != 0) { return status; }
 	image->stack = (struct PROCESS64_RANGE) {USER_STACK_BASE64, image->stack_storage.size};
-	image->heap = (struct PROCESS64_RANGE) {USER_HEAP_BASE64, image->heap_storage.size};
+	image->heap = (struct PROCESS64_RANGE) {UNIX_HEAP_BASE64, image->heap_storage.size};
 	image->stack_backing = image->stack_storage.kernel_address;
 	image->heap_backing = image->heap_storage.kernel_address;
-	image->heap_next = USER_HEAP_BASE64;
+	image->heap_next = UNIX_HEAP_BASE64;
 	status = initial_stack64(image, args);
 	if (status == 0) {
 		status = address_space_map_backing64(image->space, image->stack.base,
@@ -157,15 +158,16 @@ int process64_execve_user64(const char *path, const void *argv, const void *envp
 	else { status = address_space_replace64(old->space, next->space); }
 	if (status == 0) {
 		process->memory = next;
+		process->signal_handler = process->signal_restorer = 0;
+		process->signal_active = 0;
+		process->signal_pending = 0;
 		process->thread.initial_rsp = next->initial_rsp;
 		process->thread.initial_argc = 0;
 		process->thread.initial_argv = 0;
 		process->thread.task->context.thread_pointer = 0;
 		process->thread.task->context.readonly_thread_pointer = 0;
 		platform_user_tls64(0);
-		for (size_t i = 0; i < PROCESS64_MAX_FILES; i++) {
-			if (process->files[i].cloexec) { memset(&process->files[i], 0, sizeof(process->files[i])); }
-		}
+		process_files_close64(process, 1);
 	}
 	platform_irq_restore64(irq);
 	if (status != 0) { goto failed; }

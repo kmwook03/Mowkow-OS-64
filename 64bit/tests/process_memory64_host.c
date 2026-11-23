@@ -10,11 +10,74 @@
 #define copy_bytes elf_copy_bytes64
 #include "../src64/kernel/elf64_loader.c"
 #undef copy_bytes
+#include "../src64/kernel/process_file64.c"
 #include "../src64/kernel/process64.c"
 #include "../src64/kernel/user_access64.c"
 #include "../src64/kernel/process_exec64.c"
+#ifdef TEST_AS_AARCH64
+#include "../src64/arch/aarch64/user_signal64.c"
+#else
+#include "../src64/arch/x86_64/user_signal64.c"
+#endif
+
+int mutex64_lock(struct MUTEX64 *mutex) { assert(!mutex->locked); mutex->locked = 1; return 0; }
+int mutex64_unlock(struct MUTEX64 *mutex) { assert(mutex->locked); mutex->locked = 0; return 0; }
+static struct TASK64 fork_tasks64[4];
+static int fork_admit_fail64, fork_entry_fail64;
+struct TASK64 *task_alloc64(void)
+{
+	for (unsigned int i = 0; i < 4; i++) {
+		if (fork_tasks64[i].flags) { continue; }
+		fork_tasks64[i].flags = TASK64_FLAGS_ALLOCATED;
+		return &fork_tasks64[i];
+	}
+	return NULL;
+}
+int task_set_entry64(struct TASK64 *task, void (*entry)(void), uintptr_t stack, size_t size)
+{
+	assert(entry != NULL && task->flags == TASK64_FLAGS_ALLOCATED);
+	if (fork_entry_fail64) { return -12; }
+	task->stack_base = stack; task->stack_size = size; return 0;
+}
+int task_kill64(struct TASK64 *task)
+{
+	assert(task != task_now64() && task->process == NULL);
+	if (task->stack_base && memman64_free_4k(&memman64,
+		task->stack_base, task->stack_size) != 0) { return -22; }
+	memset(task, 0, sizeof(*task)); return 0;
+}
+int task_sleep64(struct TASK64 *task) { (void) task; assert(0); return -22; }
+void platform_irq_disable64(void) { irq_off64 = 1; }
+static int capture_native64;
+void platform_user_capture64(struct USER_CONTEXT64 *context,
+	const void *frame, const void *fp, int zero_result)
+{
+	if (!capture_native64) { memcpy(context, frame, sizeof(*context)); return; }
+	memset(context, 0, sizeof(*context));
+#ifdef TEST_AS_AARCH64
+	struct ARCH64_EXCEPTION_FRAME saved = *(const struct ARCH64_EXCEPTION_FRAME *) frame;
+
+	(void) fp;
+	if (zero_result) { saved.x[0] = 0; }
+#else
+	struct INTERRUPT_FRAME64 saved = *(const struct INTERRUPT_FRAME64 *) frame;
+
+	if (zero_result) { saved.rax = 0; }
+	memcpy(context->fp, fp, 512);
+#endif
+	memcpy(context->frame, &saved, sizeof(saved));
+	context->tls = 0x12345000;
+}
+int platform_user_resume64(const struct USER_CONTEXT64 *context, uintptr_t *runner)
+{
+	(void) context; (void) runner; assert(0); return -22;
+}
 
 static uintptr_t tls_pointer64;
+void platform_user_restore_tls64(const struct USER_CONTEXT64 *context)
+{
+	tls_pointer64 = context->tls;
+}
 void platform_user_tls64(uintptr_t pointer) { assert(irq_off64); tls_pointer64 = pointer; }
 
 static uint8_t elf_bytes64[0x4000];
@@ -37,7 +100,13 @@ static int wake_fail64, close_on_sleep64;
 struct TASK64 *task_now64(void) { return current_task64; }
 int task_run64(struct TASK64 *task, int level, int priority)
 {
-	assert(irq_off64 && task != NULL && level == -1 && priority == 0);
+	assert(irq_off64 && task != NULL);
+	if (level >= 0) {
+		(void) priority;
+		if (fork_admit_fail64) { return -12; }
+		task->flags = TASK64_FLAGS_RUNNING; return 0;
+	}
+	assert(level == -1 && priority == 0);
 	waiter_wakes64++;
 	return wake_fail64 ? -12 : 0;
 }
@@ -322,7 +391,7 @@ static void isolation64(void)
 static void failures_process64(void)
 {
 	struct PROCESS64 *owner = NULL, *other = NULL;
-	static uint64_t before[8][512];
+	static uint64_t before[AS_TABLES_MAX64][512];
 	unsigned int count = as_arch_table_count64();
 	size_t base;
 
@@ -772,6 +841,7 @@ static void lifecycle64(void)
 }
 
 #include "process_exec_fixture64.h"
+#include "process_fork_fixture64.h"
 
 int main(void)
 {
@@ -780,7 +850,7 @@ int main(void)
 	isolation64();
 	user_copy64(); failures_process64(); permissions_process64();
 	execution64(); close_lifetime64(); command_limits64();
-	lifecycle64(); exec_transaction64();
+	lifecycle64(); exec_transaction64(); fork_transaction64();
 	puts("process memory: private ELF, argv, W^X, slots, execution, exit/reap and rollback PASS");
 	return 0;
 }

@@ -46,7 +46,7 @@ static void exec_transaction64(void)
 	struct PROCESS_IMAGE64 *old;
 	unsigned int count = as_arch_table_count64();
 	size_t baseline, empty = live_pages64;
-	static uint64_t before[8][512];
+	static uint64_t before[AS_TABLES_MAX64][512];
 
 	fixture64(); assert(prepare64(&owner) == 0);
 	old = owner->memory;

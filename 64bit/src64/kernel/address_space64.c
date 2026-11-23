@@ -58,6 +58,8 @@ static int user_span64(uintptr_t base, size_t size)
 		size <= USER_IMAGE_END64 - base) ||
 		(base >= USER_HEAP_BASE64 && base < USER_HEAP_END64 &&
 		size <= USER_HEAP_END64 - base) ||
+		(base >= UNIX_HEAP_BASE64 && base < UNIX_HEAP_BASE64 + UNIX_HEAP_SIZE64 &&
+		size <= UNIX_HEAP_BASE64 + UNIX_HEAP_SIZE64 - base) ||
 		(base >= USER_STACK_BASE64 && base < USER_STACK_END64 &&
 		size <= USER_STACK_END64 - base);
 }

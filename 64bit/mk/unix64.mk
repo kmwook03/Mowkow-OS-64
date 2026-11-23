@@ -52,3 +52,26 @@ test64-unix-exec : $(IMG64_FILE) unix64-sdk
 test64-unix-exec-ahci : $(IMG64_FILE) unix64-sdk
 	$(PYTHON) 64bit/tools/unix_exec_regression64.py --ahci \
 		$(if $(UNIX_EXEC_LOG64),--log $(UNIX_EXEC_LOG64))
+
+# Explicit offline build; archives and Meson/Ninja are environment prerequisites.
+UNIX64_MLIBC_ARCH ?= x86_64
+.PHONY : unix64-mlibc test64-unix-libc test64-unix-libc-ahci
+unix64-mlibc : unix64-sdk
+	@test -n "$(UNIX64_ARCHIVES)" -a -n "$(UNIX64_WORK)" || \
+		{ echo 'Set UNIX64_ARCHIVES and a new UNIX64_WORK directory'; exit 1; }
+	$(PYTHON) 64bit/tools/unix_mlibc64.py --archives "$(UNIX64_ARCHIVES)" \
+		--work "$(UNIX64_WORK)" --architecture $(UNIX64_MLIBC_ARCH) \
+		--sdk "$(UNIX64_BUILD)/$(UNIX64_MLIBC_ARCH)/sysroot"
+
+test64-unix-libc : $(IMG64_FILE) unix64-sdk
+	@test -n "$(UNIX64_LIBC_SYSROOT)" || { echo 'Set UNIX64_LIBC_SYSROOT'; exit 1; }
+	$(PYTHON) 64bit/tools/unix_libc_regression64.py --sysroot "$(UNIX64_LIBC_SYSROOT)" \
+		$(if $(UNIX64_A64_LIBC_SYSROOT),--aarch64-sysroot "$(UNIX64_A64_LIBC_SYSROOT)") \
+		$(if $(UNIX_LIBC_LOG64),--log "$(UNIX_LIBC_LOG64)")
+
+test64-unix-libc-ahci : $(IMG64_FILE) unix64-sdk
+	@test -n "$(UNIX64_LIBC_SYSROOT)" || { echo 'Set UNIX64_LIBC_SYSROOT'; exit 1; }
+	$(PYTHON) 64bit/tools/unix_libc_regression64.py --ahci \
+		--sysroot "$(UNIX64_LIBC_SYSROOT)" \
+		$(if $(UNIX64_A64_LIBC_SYSROOT),--aarch64-sysroot "$(UNIX64_A64_LIBC_SYSROOT)") \
+		$(if $(UNIX_LIBC_LOG64),--log "$(UNIX_LIBC_LOG64)")

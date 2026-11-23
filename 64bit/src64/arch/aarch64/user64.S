@@ -40,6 +40,46 @@ enter_user_mode64:
 	eret
 	.size enter_user_mode64, . - enter_user_mode64
 
+	.global platform_user_resume64
+	.type platform_user_resume64, %function
+platform_user_resume64:
+	msr daifset, #2
+	sub sp, sp, #16
+	mrs x9, tpidr_el0
+	mrs x10, tpidrro_el0
+	stp x9, x10, [sp]
+	SAVE_EXCEPTION_FRAME
+	mov x19, sp
+	str x19, [x1]
+	bl process64_entry_stack_top
+	mov sp, x0
+	sub sp, sp, #ARCH64_EXCEPTION_FRAME_SIZE
+	ldr x9, [x19]
+	ldr x10, [x9, #1320]
+	msr tpidrro_el0, x10
+	add x9, x9, #512
+	mov x10, sp
+	mov x11, #(ARCH64_EXCEPTION_FRAME_SIZE / 16)
+1:
+	ldp x12, x13, [x9], #16
+	stp x12, x13, [x10], #16
+	subs x11, x11, #1
+	b.ne 1b
+	mov x0, sp
+	mov x1, xzr
+	bl process64_native_return64
+	cbnz x0, 2f
+	RESTORE_EXCEPTION_FRAME
+	eret
+2:
+	bl process64_current_exit_rsp
+	mov x19, x0
+	bl process64_current_exit_status
+	mov x1, x0
+	mov x0, x19
+	b arch64_leave_user_mode
+	.size platform_user_resume64, . - platform_user_resume64
+
 /* x0=saved console SP, x1=application exit status; return IRQ-off. */
 arch64_leave_user_mode:
 	msr	daifset, #2

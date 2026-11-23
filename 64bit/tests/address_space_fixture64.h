@@ -17,7 +17,7 @@ static void *copy_with_preemption64(void *destination, const void *source, size_
 #include "../src64/arch/x86_64/address_space64.c"
 #endif
 
-#define ARENA_PAGES64 4096U
+#define ARENA_PAGES64 16384U
 static unsigned char arena64[ARENA_PAGES64 * 4096U] __attribute__((aligned(4096)));
 static size_t allocations64[ARENA_PAGES64];
 static unsigned char occupied64[ARENA_PAGES64];
@@ -162,14 +162,14 @@ static void reset64(void)
 }
 
 
-static void snapshot64(const struct ADDRESS_SPACE64 *space, uint64_t pages[8][512])
+static void snapshot64(const struct ADDRESS_SPACE64 *space, uint64_t pages[AS_TABLES_MAX64][512])
 {
 	for (unsigned int i = 0; i < as_arch_table_count64(); i++) {
 		memcpy(pages[i], (const void *) space->tables.page[i], 4096);
 	}
 }
 
-static void unchanged64(const struct ADDRESS_SPACE64 *space, uint64_t pages[8][512])
+static void unchanged64(const struct ADDRESS_SPACE64 *space, uint64_t pages[AS_TABLES_MAX64][512])
 {
 	for (unsigned int i = 0; i < as_arch_table_count64(); i++) {
 		assert(memcmp(pages[i], (const void *) space->tables.page[i], 4096) == 0);

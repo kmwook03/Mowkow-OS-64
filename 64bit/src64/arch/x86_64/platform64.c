@@ -6,6 +6,24 @@
 #include <kstring64.h>
 #include <mtask64.h>
 #include <stdint.h>
+#include <arch/user_context64.h>
+#include <interrupt64.h>
+#include <user_access64.h>
+
+void platform_user_capture64(struct USER_CONTEXT64 *context,
+	const void *frame, const void *fp, int zero_result)
+{
+	uint32_t low, high;
+
+	memset(context, 0, sizeof(*context));
+	struct INTERRUPT_FRAME64 saved = *(const struct INTERRUPT_FRAME64 *) frame;
+
+	if (zero_result) { saved.rax = 0; }
+	memcpy(context->frame, &saved, sizeof(saved));
+	memcpy(context->fp, fp, sizeof(context->fp));
+	__asm__ volatile ("rdmsr" : "=a" (low), "=d" (high) : "c" (0xc0000100U));
+	context->tls = (uintptr_t) low | (uintptr_t) high << 32;
+}
 
 uint64_t platform_irq_save64(void)
 {
@@ -116,4 +134,13 @@ void platform_framebuffer_flush64(uintptr_t address, size_t bytes)
 
 void platform_framebuffer_sync64(void)
 {
+}
+
+void platform_user_restore_tls64(const struct USER_CONTEXT64 *context)
+{
+	uint64_t irq = platform_irq_save64();
+
+	platform_user_tls64(context->tls);
+	task_now64()->context.thread_pointer = context->tls;
+	platform_irq_restore64(irq);
 }

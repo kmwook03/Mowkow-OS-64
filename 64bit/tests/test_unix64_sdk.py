@@ -18,6 +18,9 @@ _Thread_local int initialized_tls = 37;
 _Thread_local char zero_tls[180];
 volatile int data = 1;
 volatile int bss;
+static void __attribute__((constructor(101))) early(void) { bss = 1; }
+static void __attribute__((constructor)) late(void) { bss = 2; }
+static void __attribute__((destructor)) finish(void) { bss = 3; }
 int main(void);
 void __mlibc_entry(uintptr_t *stack, int (*entry)(void));
 void __mlibc_entry(uintptr_t *stack, int (*entry)(void))
@@ -87,16 +90,23 @@ class Unix64SdkTest(unittest.TestCase):
                         (ROOT / "64bit/src64/include/uapi/unix64.h").read_bytes(),
                     )
                     elf = directory / f"{arch}.elf"
+                    compiler_objects = {
+                        name: subprocess.check_output(
+                            [cc, f"-print-file-name={name}.o"], text=True).strip()
+                        for name in ("crtbegin", "crtend")
+                    }
                     command = [
                         cc, "-nostdlib", "-static", "-ffreestanding", "-fno-pie",
                         "-fno-pic", "-fno-stack-protector", "-Wl,--build-id=none",
-                        f"-I{sdk / 'usr/include'}", str(source),
+                        f"-I{sdk / 'usr/include'}", compiler_objects["crtbegin"], str(source),
                         str(sdk / "usr/lib/crt1.o"), str(sdk / "usr/lib/syscall64.o"),
+                        compiler_objects["crtend"],
                         f"-Wl,-T,{sdk / 'usr/lib/unix64.ld'}", "-o", str(elf),
                     ]
                     result = subprocess.run(command, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.check_elf(elf.read_bytes(), 62 if arch == "x86_64" else 183)
+                    self.check_constructors(elf.read_bytes())
                     # Empty .data must not let TLS share the preceding RX page.
                     source.write_text(FIXTURE.replace("volatile int data = 1;",
                                                      "volatile int data;"), encoding="utf-8")
@@ -121,6 +131,30 @@ class Unix64SdkTest(unittest.TestCase):
                         result = subprocess.run(altered, capture_output=True, text=True)
                         self.assertNotEqual(result.returncode, 0)
                         self.assertIn("exactly one UNIX ABI note required", result.stderr)
+
+    def check_constructors(self, data: bytes) -> None:
+        shoff = struct.unpack_from("<Q", data, 40)[0]
+        shsize, shnum, names_index = struct.unpack_from("<HHH", data, 58)
+        sections = [struct.unpack_from("<IIQQQQIIQQ", data, shoff + i * shsize)
+                    for i in range(shnum)]
+        names_header = sections[names_index]
+        names = data[names_header[4]:names_header[4] + names_header[5]]
+        named = {names[s[0]:].split(b"\0", 1)[0].decode(): s for s in sections}
+        symbols = {}
+        symbol_header = named[".symtab"]
+        strings_header = sections[symbol_header[6]]
+        strings = data[strings_header[4]:strings_header[4] + strings_header[5]]
+        for offset in range(symbol_header[4], symbol_header[4] + symbol_header[5], 24):
+            name, _, _, _, value, _ = struct.unpack_from("<IBBHQQ", data, offset)
+            symbols[strings[name:].split(b"\0", 1)[0].decode()] = value
+        for section, expected in ((".init_array", ("early", "late")),
+                                  (".fini_array", ("finish",))):
+            header = named[section]
+            pointers = struct.unpack_from(f"<{header[5] // 8}Q", data, header[4])
+            self.assertNotIn(0, pointers)
+            self.assertNotIn(2**64 - 1, pointers)
+            self.assertEqual([p for p in pointers if p in {symbols[n] for n in expected}],
+                             [symbols[n] for n in expected])
 
     def check_elf(self, data: bytes, machine: int) -> None:
         self.assertEqual(data[:7], b"\x7fELF\x02\x01\x01")

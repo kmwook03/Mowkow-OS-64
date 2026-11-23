@@ -17,6 +17,9 @@
 #include <memory64.h>
 #include <mtask64.h>
 #include <process64.h>
+#include <process_file64.h>
+#include <uapi/unix64.h>
+#include <user_access64.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -422,7 +425,17 @@ int process64_release_image(struct PROCESS_IMAGE64 *image)
 
 static int process_release64(struct PROCESS64 *process)
 {
-	int status = address_space_destroy64(&process->images[0].space);
+	int status;
+
+	if (process->fork_task != NULL) {
+		status = task_kill64(process->fork_task);
+		if (status != 0) { return status; }
+		process->fork_task = NULL;
+	}
+	status = user_backing_free64(&process->runner_storage);
+	if (status != 0) { return status; }
+	process_files_close64(process, 0);
+	status = address_space_destroy64(&process->images[0].space);
 
 	if (status == 0) { status = address_space_destroy64(&process->images[1].space); }
 	if (status != 0) { return status; }
@@ -579,7 +592,8 @@ int process64_wait_child(struct PROCESS64 *parent, int32_t pid,
 			platform_irq_restore64(irq);
 			return children ? 0 : -10;
 		}
-		if (parent != &init_process64 && console64_close_requested(parent->console)) {
+		if (parent != &init_process64 && (console64_close_requested(parent->console) ||
+			process64_signal_pending64(parent))) {
 			platform_irq_restore64(irq);
 			return -4;
 		}
@@ -613,7 +627,7 @@ int process64_run_prepared(struct PROCESS64 *process)
 		platform_irq_restore64(irq);
 		return -22;
 	}
-	if (console64_close_requested(process->console)) {
+	if (process->fork_task == NULL && console64_close_requested(process->console)) {
 		platform_irq_restore64(irq);
 		return -125;
 	}
@@ -626,9 +640,17 @@ int process64_run_prepared(struct PROCESS64 *process)
 	process->state = PROCESS_RUNNING64;
 	process->started = 1;
 	process64_switch_task64(task);
-	status = enter_user_mode64(process->memory->entry, process->thread.initial_rsp,
-		process->thread.initial_argc, process->thread.initial_argv, GDT64_USER_CODE,
-		GDT64_USER_DATA, &process->thread.saved_kernel_rsp);
+	if (process->fork_task != NULL) {
+		task->context.thread_pointer = process->thread.fork_context.tls;
+		task->context.readonly_thread_pointer = process->thread.fork_context.readonly_tls;
+		platform_user_tls64(process->thread.fork_context.tls);
+		status = platform_user_resume64(&process->thread.fork_context,
+			&process->thread.saved_kernel_rsp);
+	} else {
+		status = enter_user_mode64(process->memory->entry, process->thread.initial_rsp,
+			process->thread.initial_argc, process->thread.initial_argv, GDT64_USER_CODE,
+			GDT64_USER_DATA, &process->thread.saved_kernel_rsp);
+	}
 	/* Assembly returns to the runner's kernel stack with IRQs disabled. */
 	if (!process->exited) { process64_exit_current(status); }
 	task->process = NULL;
@@ -646,8 +668,9 @@ int process64_run_prepared(struct PROCESS64 *process)
 	process_reparent64(process);
 	platform_irq_restore64(irq);
 	process_wake_parent64(1);
+	if (process->fork_task != NULL) { return 0; }
 	console64_set_raw_con(process->console, 0);
-	memzero(process->files, sizeof(process->files));
+	process_files_close64(process, 0);
 	if (process_finish64(process) != 0) {
 		irq = platform_irq_save64();
 		process->reap_pending = 1;
@@ -777,4 +800,222 @@ failed:
 	/* One bounded unwind attempt. A retained handle must be retried by its owner. */
 	(void) process64_discard_prepared(result);
 	return status;
+}
+
+/* The child owns an independent scheduler stack. Only the collector may free
+ * it, after this runner has detached and parked with IRQs still disabled.
+ */
+static void fork_runner64(void)
+{
+	struct TASK64 *task = task_now64();
+	struct PROCESS64 *process = NULL;
+	uint64_t irq = platform_irq_save64();
+
+	for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
+		if (process_table[i].fork_task == task) { process = &process_table[i]; break; }
+	}
+	platform_irq_restore64(irq);
+	if (process == NULL || process64_run_prepared(process) != 0) { __builtin_trap(); }
+	platform_irq_disable64();
+	process->reap_pending = 1;
+	(void) task_sleep64(task);
+	/* No caller may wake this detached runner; collect owns its task. */
+	__builtin_trap();
+}
+
+int64_t process64_fork_user64(const void *frame, const void *fp)
+{
+	struct PROCESS64 *parent = process64_current(), *child = NULL;
+	struct PROCESS_IMAGE64 *source, *target;
+	struct USER_PAGE64 page;
+	uint64_t irq;
+	int status;
+	int64_t pid;
+
+	if (parent == NULL || parent->memory->abi != UNIX64_ABI_VERSION || frame == NULL) {
+		return -38;
+	}
+	process64_collect();
+	status = process64_reserve_child(parent, &child);
+	if (status != 0) { return status; }
+	child->console = parent->console;
+	child->signal_context = parent->signal_context;
+	child->signal_handler = parent->signal_handler;
+	child->signal_restorer = parent->signal_restorer;
+	child->signal_return_sp = parent->signal_return_sp;
+	child->signal_active = parent->signal_active;
+	source = parent->memory; target = child->memory;
+	platform_user_capture64(&child->thread.fork_context, frame, fp, 1);
+	status = address_space_clone64(source->space, &target->space);
+	if (status != 0) { goto failed; }
+	/* Only scalar image metadata is copied. Clone owns all mapped backing;
+	 * the child's embedded backing descriptors remain empty and stable.
+	 */
+	copy_bytes(&target->entry, &source->entry,
+		sizeof(*target) - offsetof(struct PROCESS_IMAGE64, entry));
+	status = address_space_query64(target->space, target->heap.base, &page);
+	if (status != 0) { goto failed; }
+	target->heap_backing = page.kernel_address;
+	status = address_space_query64(target->space, target->stack.base, &page);
+	if (status != 0) { goto failed; }
+	target->stack_backing = page.kernel_address;
+	status = user_backing_alloc64(&child->thread.entry_storage, PROCESS64_ENTRY_STACK_SIZE);
+	if (status != 0) { goto failed; }
+	child->fork_task = task_alloc64();
+	if (child->fork_task == NULL) { status = -11; goto failed; }
+	status = user_backing_alloc64(&child->runner_storage, TASK64_STACK_SIZE);
+	if (status != 0) { goto failed; }
+	status = task_set_entry64(child->fork_task, fork_runner64,
+		child->runner_storage.kernel_address, child->runner_storage.size);
+	if (status != 0) { goto failed; }
+	/* task_kill owns the scheduler stack from this point, including retries. */
+	memzero(&child->runner_storage, sizeof(child->runner_storage));
+	status = process_file_inherit64(parent, child);
+	if (status != 0) { goto failed; }
+	irq = platform_irq_save64();
+	if (console64_close_requested(parent->console)) { status = -4; }
+	else {
+		child->state = PROCESS_READY64;
+		status = task_run64(child->fork_task, (int) parent->thread.task->level,
+			(int) parent->thread.task->priority);
+	}
+	if (status == 0) { child->started = 1; }
+	pid = child->pid;
+	platform_irq_restore64(irq);
+	if (status == 0) { return pid; }
+failed:
+	if (process64_discard_prepared(&child) != 0) {
+		irq = platform_irq_save64();
+		child->reap_pending = 1;
+		platform_irq_restore64(irq);
+	}
+	return status;
+}
+
+int64_t process64_wait_user64(int64_t pid, void *output, uint64_t options)
+{
+	struct USER_ACCESS64 access = {0};
+	int32_t reaped = 0, status_value = 0;
+	int status;
+
+	if ((pid != -1 && (pid <= 0 || pid > INT32_MAX)) ||
+		(options & ~(uint64_t) PROCESS64_WAIT_NOHANG) != 0) { return -22; }
+	/* Freeze the destination before consuming a zombie. A failed preflight
+	 * leaves it waitable; the lease guarantees copyout across a blocking wait.
+	 */
+	if (output != NULL) {
+		status = user_access_begin64(&access, output, sizeof(status_value), USER_WRITE64);
+		if (status != 0) { return status; }
+	}
+	status = process64_wait_child(process64_current(), (int32_t) pid,
+		(unsigned int) options, &reaped, &status_value);
+	if (status == 0 && reaped != 0 && output != NULL) {
+		status = copy_to_user_access64(&access, &status_value, sizeof(status_value));
+	}
+	user_access_end64(&access);
+	return status != 0 ? status : reaped;
+}
+
+int process64_signal_set64(uintptr_t handler, uintptr_t restorer)
+{
+	struct PROCESS64 *process = process64_current();
+
+	if (process == NULL || process->memory->abi != UNIX64_ABI_VERSION) { return -38; }
+	if ((handler == 0) != (restorer == 0)) { return -22; }
+	if (handler != 0 &&
+		(address_space_validate64(process->memory->space, handler, 1, USER_EXEC64) != 0 ||
+		address_space_validate64(process->memory->space, restorer, 1, USER_EXEC64) != 0)) {
+		return -14;
+	}
+	uint64_t irq = platform_irq_save64();
+
+	process->signal_handler = handler;
+	process->signal_restorer = restorer;
+	if (handler == 0) { process->signal_pending = 0; }
+	platform_irq_restore64(irq);
+	return 0;
+}
+
+int process64_signal_user64(uint64_t number, void *frame, void *fp)
+{
+	struct PROCESS64 *process = process64_current();
+	int status;
+
+	if (process == NULL || process->memory->abi != UNIX64_ABI_VERSION) { return -38; }
+	if (number == UNIX64_SYS_SIGNAL_RETURN) {
+		if (!process->signal_active) { return -22; }
+		status = platform_user_signal_restore64(&process->signal_context,
+			frame, fp, process->signal_return_sp);
+		if (status == 0) { process->signal_active = 0; }
+		return status;
+	}
+	if (number != UNIX64_SYS_SIGNAL_RAISE) { return -38; }
+	if (process->signal_active) { return -16; }
+	if (process->signal_handler == 0) { return -22; }
+	status = platform_user_signal_enter64(&process->signal_context, frame, fp,
+		process->signal_handler, process->signal_restorer, &process->signal_return_sp, 1);
+	if (status == 0) { process->signal_active = 1; }
+	return status;
+}
+
+int process64_signal_pending64(const struct PROCESS64 *process)
+{
+	return process != NULL && process->signal_pending && !process->signal_active;
+}
+
+void process64_wake_tick64(void)
+{
+	uint64_t irq = platform_irq_save64();
+
+	for (size_t i = 0; i < PROCESS64_MAX - 1; i++) {
+		struct PROCESS64 *process = &process_table[i];
+
+		if (process->state != PROCESS_RUNNING64 || process->thread.task == NULL) { continue; }
+		if (process64_signal_pending64(process) ||
+			(process->fork_task != NULL && console64_close_requested(process->console))) {
+			(void) task_run64(process->thread.task, -1, 0);
+		}
+	}
+	platform_irq_restore64(irq);
+}
+
+int process64_signal_send64(int64_t pid)
+{
+	uint64_t irq;
+	struct PROCESS64 *process;
+	int status = 0;
+
+	if (pid <= 1 || pid > INT32_MAX) { return -22; }
+	irq = platform_irq_save64();
+	process = process_by_pid64((uint32_t) pid);
+	if (process == NULL || (process->state != PROCESS_READY64 &&
+		process->state != PROCESS_RUNNING64) || !process->started || process->exited) {
+		status = -3;
+	} else if (process->signal_handler == 0) { status = -22; }
+	else {
+		process->signal_pending = 1;
+		if (process->thread.task != NULL) { (void) task_run64(process->thread.task, -1, 0); }
+	}
+	platform_irq_restore64(irq);
+	return status;
+}
+
+int process64_native_return64(void *frame, void *fp)
+{
+	struct PROCESS64 *process = process64_current();
+	int user = platform_user_mode64(frame);
+
+	if (process64_return_to_user64(user)) { return 1; }
+	if (!user || !process64_signal_pending64(process)) { return 0; }
+	/* No user-supplied context is imported. Kernel IRQ frames, which may own
+	 * locks and pinned buffers, must always finish their original continuation.
+	 */
+	if (platform_user_signal_enter64(&process->signal_context, frame, fp,
+		process->signal_handler, process->signal_restorer, &process->signal_return_sp, 0) != 0) {
+		process64_terminate_current(139, 11);
+		return 1;
+	}
+	process->signal_pending = 0;
+	process->signal_active = 1;
+	return 0;
 }

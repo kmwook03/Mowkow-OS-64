@@ -713,13 +713,21 @@ int task_kill64(struct TASK64 *task)
 			return status;
 		}
 	}
+	/* Keep the allocated record and stack owner on a failed free. The
+	 * allocator never sleeps; no task may reuse this slot before release.
+	 */
+	stack_base = task->stack_base;
+	stack_size = task->stack_size;
+	if (stack_base != 0 &&
+		memman64_free_4k(&memman64, stack_base, stack_size) != 0) {
+		platform_irq_restore64(irq_state);
+		return TASK64_ERR_INVALID;
+	}
 	status = task_state_change_nolock(task, TASK64_FLAGS_UNUSED);
 	if (status != 0) {
 		platform_irq_restore64(irq_state);
 		return status;
 	}
-	stack_base = task->stack_base;
-	stack_size = task->stack_size;
 	task->stack_base = 0;
 	task->stack_size = 0;
 	task->stack_usable_base = 0;
@@ -727,10 +735,6 @@ int task_kill64(struct TASK64 *task)
 	task->stack_high_water = 0;
 	task->context.stack_pointer = 0;
 	platform_irq_restore64(irq_state);
-	if (stack_base != 0 &&
-			memman64_free_4k(&memman64, stack_base, stack_size) != 0) {
-		return TASK64_ERR_INVALID;
-	}
 	return 0;
 }
 

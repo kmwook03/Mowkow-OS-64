@@ -9,6 +9,7 @@
 #include <int64.h>
 #include <mtask64.h>
 #include <timer64.h>
+#include <unix_wait64.h>
 
 #define PIT_CTRL 0x0043
 #define PIT_CNT0 0x0040
@@ -148,6 +149,7 @@ void inthandler20_64(void)
 
 	io_out8(PIC0_OCW2, 0x60);
 	timerctl64.count++;
+	unix_wait_tick64(timerctl64.count);
 	event.type = EVENT64_TIMER;
 	event.data = (uint32_t) timerctl64.count;
 	fifo64_put(timerctl64.fifo, event);
