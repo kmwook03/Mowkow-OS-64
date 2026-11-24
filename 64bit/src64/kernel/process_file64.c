@@ -2,6 +2,13 @@
 #include <kstring64.h>
 #include <process_file64.h>
 
+static int64_t fat_read64(struct UNIX_FILE64 *file, void *buffer, size_t size);
+static int64_t fat_seek64(struct UNIX_FILE64 *file, int64_t offset, int whence);
+static const struct PROCESS_FILE_OPS64 fat_ops64 = {
+	.read = fat_read64,
+	.seek = fat_seek64,
+};
+
 static struct UNIX_FILE64 open_files64[PROCESS64_MAX * (PROCESS64_MAX_FILES - 3)];
 
 /* Caller holds irq-save. A reserved reference prevents reuse during open. */
@@ -13,6 +20,7 @@ static struct UNIX_FILE64 *allocate_file64(void)
 		if (shared->references != 0) { continue; }
 		memset(shared, 0, sizeof(*shared));
 		shared->references = 1;
+		shared->ops = &fat_ops64;
 		return shared;
 	}
 	return NULL;
@@ -250,10 +258,65 @@ void process_files_close64(struct PROCESS64 *process, int cloexec_only)
 	platform_irq_restore64(irq);
 }
 
+static int64_t fat_read64(struct UNIX_FILE64 *file, void *buffer, size_t size)
+{
+	return fd64_read_checked(&file->handle, buffer, size);
+}
+
+static int64_t fat_seek64(struct UNIX_FILE64 *file, int64_t offset, int whence)
+{
+	struct FDHANDLE64 *handle = &file->handle;
+	struct FDHANDLE64 temporary;
+	int64_t base = whence == 0 ? 0 : (whence == 1 ? handle->pos : handle->info.size);
+
+	if (offset < -base) { return -22; }
+	if (offset > (int64_t) handle->info.size - base) { return -95; }
+	/* FAT seek may mutate chain traversal state before reporting failure. */
+	temporary = *handle;
+	if (fd64_seek(&temporary, offset, whence) != 0) { return -5; }
+	*handle = temporary;
+	return handle->pos;
+}
+
+static int lock_file64(struct PROCESS64_FILE *file)
+{
+	if (file == NULL || !file->used || file->shared == NULL) { return -9; }
+	return mutex64_lock(&file->shared->mutex);
+}
+
+int64_t process_file_read64(struct PROCESS64_FILE *file, void *buffer, size_t size)
+{
+	if (file == NULL) { return -9; }
+	if (buffer == NULL || size > INT64_MAX) { return -22; }
+	int status = lock_file64(file);
+
+	if (status != 0) { return status; }
+	struct UNIX_FILE64 *shared = file->shared;
+	int64_t result = shared->ops && shared->ops->read ?
+		shared->ops->read(shared, buffer, size) : -95;
+
+	process_file_unlock64(file);
+	return result;
+}
+
+int64_t process_file_seek64(struct PROCESS64_FILE *file, int64_t offset, int whence)
+{
+	if (file == NULL) { return -9; }
+	if (whence < 0 || whence > 2) { return -22; }
+	int status = lock_file64(file);
+
+	if (status != 0) { return status; }
+	struct UNIX_FILE64 *shared = file->shared;
+	int64_t result = shared->ops && shared->ops->seek ?
+		shared->ops->seek(shared, offset, whence) : -95;
+
+	process_file_unlock64(file);
+	return result;
+}
+
 int process_file_lock64(struct PROCESS64_FILE *file, struct FDHANDLE64 **handle)
 {
-	if (!file->used || file->shared == NULL) { return -9; }
-	int status = mutex64_lock(&file->shared->mutex);
+	int status = lock_file64(file);
 
 	if (status == 0) { *handle = &file->shared->handle; }
 	return status;

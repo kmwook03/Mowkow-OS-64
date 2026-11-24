@@ -4,13 +4,25 @@
 #include <process64.h>
 #include <mutex64.h>
 
-/* FAT OFD: task context, lock before the FAT/cache mutex.
+struct UNIX_FILE64;
+
+/* Immutable for the OFD lifetime. Called in task context with its mutex held;
+ * callbacks may sleep but must not reacquire that mutex or access user memory.
+ * Return signed count/offset or errno. Failed seek must preserve backend state.
+ */
+struct PROCESS_FILE_OPS64 {
+	int64_t (*read)(struct UNIX_FILE64 *file, void *buffer, size_t size);
+	int64_t (*seek)(struct UNIX_FILE64 *file, int64_t offset, int whence);
+};
+
+/* OFD: task context, lock before the FAT/cache mutex.
  * An installed descriptor retains a reference through sleeping I/O. One
  * execution flow per process; close/exec cannot race that process's syscall.
  */
 struct UNIX_FILE64 {
 	unsigned int references;
 	struct MUTEX64 mutex;
+	const struct PROCESS_FILE_OPS64 *ops;
 	struct FDHANDLE64 handle;
 };
 
@@ -48,6 +60,17 @@ int process_file_set_cloexec64(struct PROCESS64 *process, int fd, int cloexec);
 int process_fd_close64(struct PROCESS64 *process, int fd);
 void process_file_close64(struct PROCESS64_FILE *file);
 void process_files_close64(struct PROCESS64 *process, int cloexec_only);
+/* Read once into a kernel-owned buffer while holding the OFD cursor mutex.
+ * Task context; caller retains the descriptor through sleeping I/O and owns
+ * buffer capacity. Returns signed byte count/errno. Errors may advance offset;
+ * caller must discard buffer contents on error. No user-memory access here.
+ */
+int64_t process_file_read64(struct PROCESS64_FILE *file, void *buffer, size_t size);
+/* Same task/descriptor ownership as read. whence: 0=start, 1=current, 2=end.
+ * Returns new offset/errno; errors preserve the entire shared cursor state.
+ * Negative positions are EINVAL; positions beyond EOF remain ENOTSUP.
+ */
+int64_t process_file_seek64(struct PROCESS64_FILE *file, int64_t offset, int whence);
 int process_file_lock64(struct PROCESS64_FILE *file, struct FDHANDLE64 **handle);
 void process_file_unlock64(struct PROCESS64_FILE *file);
 

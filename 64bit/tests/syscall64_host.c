@@ -33,6 +33,7 @@ static int open_result;
 static int create_result;
 static int truncate_result;
 static int seek_result;
+static int seek_mutate64;
 static uint32_t open_calls;
 static uint32_t create_calls;
 static uint32_t truncate_calls;
@@ -135,8 +136,21 @@ int process64_execve_user64(const char *path, const void *argv, const void *envp
 	(void) path; (void) argv; (void) envp;
 	return -38;
 }
-int mutex64_lock(struct MUTEX64 *mutex) { (void) mutex; return 0; }
-int mutex64_unlock(struct MUTEX64 *mutex) { (void) mutex; return 0; }
+static struct MUTEX64 *held_mutex64;
+static int mutex_error64;
+int mutex64_lock(struct MUTEX64 *mutex)
+{
+	assert(held_mutex64 == NULL);
+	if (mutex_error64) { return mutex_error64; }
+	held_mutex64 = mutex;
+	return 0;
+}
+int mutex64_unlock(struct MUTEX64 *mutex)
+{
+	assert(held_mutex64 == mutex);
+	held_mutex64 = NULL;
+	return 0;
+}
 int64_t process64_fork_user64(const void *frame, const void *fp)
 {
 	(void) frame; (void) fp; return -38;
@@ -294,7 +308,13 @@ size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
 
 int fd64_seek(struct FDHANDLE64 *fh, int64_t offset, int whence)
 {
-	(void) fh;
+	if (seek_mutate64) {
+		assert(held_mutex64 != NULL);
+		int64_t base = whence == 0 ? 0 : (whence == 1 ? fh->pos : fh->info.size);
+
+		fh->pos = (uint32_t) (base + offset);
+		fh->cluster++;
+	}
 	seek_calls++;
 	last_offset = offset;
 	last_whence = whence;
@@ -327,6 +347,7 @@ int fd64_open_checked(struct FDHANDLE64 *fh, const char *name, unsigned int flag
 int64_t fd64_read_checked(struct FDHANDLE64 *fh, void *dst, size_t size)
 {
 	assert(pins64 > 0);
+	assert(held_mutex64 != NULL);
 	(void) fh;
 	if ((void *) dst != snapshot64) { abi_error = 1; }
 	memset(dst, 0x7c, size);
@@ -471,6 +492,7 @@ static void reset64(void)
 	create_result = 1;
 	truncate_result = 0;
 	seek_result = 0;
+	seek_mutate64 = 0;
 	open_calls = create_calls = truncate_calls = 0;
 	read_calls = write_calls = seek_calls = 0;
 	console_reads = console_writes = 0;
@@ -762,11 +784,25 @@ static int test_checked_files64(void)
 	CHECK64((int64_t) call64(SYS_FILE, FILE_STAT64, (uintptr_t) user_buffer, 1, 0, 0) == -14);
 	CHECK64(call64(SYS_FILE, FILE_OPEN64, (uintptr_t) user_buffer, 0, 0, 0) == 3);
 	CHECK64(process.files[3].shared && process.files[3].shared->references == 1);
+	int before = checked_calls64;
+
+	CHECK64(process_file_read64(NULL, snapshot64, 8) == -9);
+	CHECK64(process_file_read64(&process.files[4], snapshot64, 8) == -9);
+	CHECK64(process_file_read64(&process.files[3], NULL, 8) == -22);
+	CHECK64(process_file_read64(&process.files[3], snapshot64, SIZE_MAX) == -22);
+	mutex_error64 = -4;
+	memset((void *) output, 0xa5, 8);
+	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, output, 8, 0) == -4);
+	CHECK64(checked_calls64 == before && user_buffer[161] == 0xa5);
+	CHECK64(pins64 == 0 && held_mutex64 == NULL);
+	mutex_error64 = 0;
 	CHECK64(call64(SYS_FILE, FILE_FSTAT64, 3, output, 0, 0) == 0);
 	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, output, UINT64_MAX, 0) == -22);
 	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, 1, 1, 0) == -14);
+	memset((void *) output, 0xa5, 8);
 	checked_error64 = -5;
 	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, output, 8, 0) == -5);
+	CHECK64(pins64 == 0 && held_mutex64 == NULL && user_buffer[161] == 0xa5);
 	CHECK64((int64_t) call64(SYS_FILE, FILE_SYNC64, 3, 0, 0, 0) == -5);
 	checked_error64 = 0;
 	CHECK64(call64(SYS_FILE, FILE_READ64, 3, output, 8, 0) == 7);
@@ -867,9 +903,17 @@ static int test_unix_bridge64(void)
 	CHECK64((int64_t) call64(UNIX64_SYS_WRITE, 3, buffer, 8, 0, 0) == -30);
 	CHECK64(call64(UNIX64_SYS_READ, 3, buffer, 8, 0, 0) == 7);
 	memset(user_buffer, 0xa5, 8);
+	int calls_before = checked_calls64;
+
+	mutex_error64 = -4;
+	CHECK64((int64_t) call64(UNIX64_SYS_READ, 3, buffer, 8, 0, 0) == -4);
+	CHECK64(checked_calls64 == calls_before && user_buffer[0] == 0xa5);
+	CHECK64(pins64 == 0 && held_mutex64 == NULL);
+	mutex_error64 = 0;
 	checked_error64 = -5;
 	CHECK64((int64_t) call64(UNIX64_SYS_READ, 3, buffer, 8, 0, 0) == -5);
 	CHECK64(user_buffer[0] == 0xa5 && pins64 == 0);
+	CHECK64(held_mutex64 == NULL);
 	CHECK64((int64_t) call64(UNIX64_SYS_ISATTY, 3, 0, 0, 0, 0) == -25);
 	CHECK64(call64(UNIX64_SYS_CLOSE, 3, 0, 0, 0, 0) == 0);
 	CHECK64(!process.files[3].used && !process.files[3].cloexec);
@@ -1040,6 +1084,122 @@ static int test_unix_dupfd64(void)
 	return 0;
 }
 
+static int test_unix_dup264(void)
+{
+	reset64();
+	process.state = PROCESS_RUNNING64;
+	process.memory->abi = UNIX64_ABI_VERSION;
+	memcpy(user_buffer, "app.txt", 8);
+	for (int fd = 3; fd <= 4; fd++) {
+		CHECK64(call64(UNIX64_SYS_OPEN, (uintptr_t) user_buffer,
+			UNIX64_OPEN_CLOEXEC, 0, 0, 0) == (uint64_t) fd);
+	}
+	struct UNIX_FILE64 *source = process.files[3].shared;
+	struct UNIX_FILE64 *target = process.files[4].shared;
+	const uint64_t invalid[] = {PROCESS64_MAX_FILES, UINT64_MAX, (1ULL << 32) | 3};
+
+	source->handle.pos = 17;
+	target->handle.pos = 29;
+	for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+		CHECK64((int64_t) call64(UNIX64_SYS_DUP2, invalid[i], 4, 0, 0, 0) == -9);
+		CHECK64((int64_t) call64(UNIX64_SYS_DUP2, 3, invalid[i], 0, 0, 0) == -9);
+	}
+	CHECK64((int64_t) call64(UNIX64_SYS_DUP2, 7, 4, 0, 0, 0) == -9);
+	CHECK64((int64_t) call64(UNIX64_SYS_DUP2, 1, 4, 0, 0, 0) == -95);
+	CHECK64((int64_t) call64(UNIX64_SYS_DUP2, 3, 1, 0, 0, 0) == -95);
+	CHECK64(process.files[4].shared == target && target->references == 1);
+	CHECK64(process.files[4].cloexec && target->handle.pos == 29);
+	CHECK64(call64(UNIX64_SYS_DUP2, 3, 3, 0, 0, 0) == 3);
+	CHECK64(process.files[3].cloexec && source->references == 1);
+	CHECK64(call64(UNIX64_SYS_DUP2, 3, 4, 0, 0, 0) == 4);
+	CHECK64(process.files[4].shared == source && !process.files[4].cloexec);
+	CHECK64(target->references == 0 && source->references == 2);
+	CHECK64(call64(UNIX64_SYS_DUP2, 3, 7, 0, 0, 0) == 7);
+	CHECK64(call64(UNIX64_SYS_DUP2, 3, 4, 0, 0, 0) == 4);
+	CHECK64(source->references == 3 && source->handle.pos == 17);
+	CHECK64(call64(UNIX64_SYS_CLOSE, 3, 0, 0, 0, 0) == 0);
+	CHECK64((int64_t) call64(UNIX64_SYS_DUP2, 3, 3, 0, 0, 0) == -9);
+	CHECK64(source->references == 2 && process.files[7].shared == source);
+	CHECK64(!irq_off64 && abi_error == 0);
+	return 0;
+}
+
+static int test_unix_seek64(void)
+{
+	reset64();
+	process.state = PROCESS_RUNNING64;
+	process.memory->abi = UNIX64_ABI_VERSION;
+	CHECK64(call64(UNIX64_SYS_OPEN, (uintptr_t) user_buffer, 0, 0, 0, 0) == 3);
+	CHECK64(call64(UNIX64_SYS_DUP2, 3, 4, 0, 0, 0) == 4);
+	struct FDHANDLE64 *handle = &process.files[3].shared->handle;
+
+	handle->info.size = 100;
+	handle->cluster = 7;
+	seek_mutate64 = 1;
+	CHECK64(call64(UNIX64_SYS_SEEK, 3, 20, 0, 0, 0) == 20);
+	CHECK64(call64(UNIX64_SYS_SEEK, 4, 5, 1, 0, 0) == 25);
+	CHECK64(call64(UNIX64_SYS_SEEK, 3, (uint64_t) -10, 2, 0, 0) == 90);
+	CHECK64(handle->pos == 90 && handle->cluster == 10);
+	struct FDHANDLE64 saved = *handle;
+	uint32_t calls = seek_calls;
+
+	CHECK64((int64_t) call64(UNIX64_SYS_SEEK, 3, INT64_MIN, 1, 0, 0) == -22);
+	CHECK64((int64_t) call64(UNIX64_SYS_SEEK, 3, INT64_MAX, 1, 0, 0) == -95);
+	CHECK64((int64_t) call64(UNIX64_SYS_SEEK, 3, 11, 1, 0, 0) == -95);
+	CHECK64((int64_t) call64(UNIX64_SYS_SEEK, 3, 0, (1ULL << 32) | 1, 0, 0) == -22);
+	CHECK64((int64_t) call64(UNIX64_SYS_SEEK, 0, 0, 0, 0, 0) == -29);
+	CHECK64((int64_t) call64(UNIX64_SYS_SEEK, 7, 0, 0, 0, 0) == -9);
+	mutex_error64 = -4;
+	CHECK64((int64_t) call64(UNIX64_SYS_SEEK, 3, 0, 0, 0, 0) == -4);
+	mutex_error64 = 0;
+	CHECK64(seek_calls == calls && memcmp(handle, &saved, sizeof(saved)) == 0);
+	seek_result = -1;
+	CHECK64((int64_t) call64(UNIX64_SYS_SEEK, 4, 50, 0, 0, 0) == -5);
+	CHECK64(seek_calls == calls + 1 && memcmp(handle, &saved, sizeof(saved)) == 0);
+	CHECK64(held_mutex64 == NULL);
+	seek_result = 0;
+	CHECK64(call64(UNIX64_SYS_SEEK, 4, 0, 2, 0, 0) == 100);
+	CHECK64(call64(UNIX64_SYS_SEEK, 3, (uint64_t) -100, 1, 0, 0) == 0);
+	CHECK64(held_mutex64 == NULL && !irq_off64 && abi_error == 0);
+	return 0;
+}
+
+static int64_t backend_read64(struct UNIX_FILE64 *file, void *buffer, size_t size)
+{
+	assert(held_mutex64 == &file->mutex && size == 8);
+	memcpy(buffer, "ok", 2);
+	return 2;
+}
+
+static int64_t backend_seek64(struct UNIX_FILE64 *file, int64_t offset, int whence)
+{
+	assert(held_mutex64 == &file->mutex && offset == 7 && whence == 1);
+	return -29;
+}
+
+static int test_file_ops64(void)
+{
+	static const struct PROCESS_FILE_OPS64 ops = {
+		.read = backend_read64, .seek = backend_seek64,
+	};
+	static const struct PROCESS_FILE_OPS64 missing_ops = {0};
+	struct UNIX_FILE64 shared = {.references = 1, .ops = &ops};
+	struct UNIX_FILE64 unsupported = {.references = 1, .ops = &missing_ops};
+	struct PROCESS64_FILE file = {.used = 1, .shared = &shared};
+	struct PROCESS64_FILE missing = {.used = 1, .shared = &unsupported};
+	char buffer[8] = {0};
+	int reads = checked_calls64;
+	uint32_t seeks = seek_calls;
+
+	CHECK64(process_file_read64(&file, buffer, sizeof(buffer)) == 2);
+	CHECK64(buffer[0] == 'o' && buffer[1] == 'k' && buffer[2] == 0);
+	CHECK64(process_file_seek64(&file, 7, 1) == -29);
+	CHECK64(process_file_read64(&missing, buffer, sizeof(buffer)) == -95);
+	CHECK64(process_file_seek64(&missing, 7, 1) == -95);
+	CHECK64(held_mutex64 == NULL && checked_calls64 == reads && seek_calls == seeks);
+	return 0;
+}
+
 static int test_unix_reservation64(void)
 {
 	reset64();
@@ -1132,6 +1292,9 @@ int main(void)
 	CHECK64(test_unix_bridge64() == 0);
 	CHECK64(test_unix_fcntl64() == 0);
 	CHECK64(test_unix_dupfd64() == 0);
+	CHECK64(test_unix_dup264() == 0);
+	CHECK64(test_unix_seek64() == 0);
+	CHECK64(test_file_ops64() == 0);
 	CHECK64(test_unix_wait64() == 0);
 	CHECK64(test_copy_boundary64() == 0);
 	CHECK64(test_checked_files64() == 0);

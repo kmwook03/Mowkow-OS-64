@@ -119,11 +119,12 @@ static int64_t syscall_read64(struct PROCESS64 *process, uint64_t fd,
 		return checked ? -14 : -1;
 	}
 	if (fd == 0) { result = (int64_t) console64_read_con(process->console, snapshot, size); }
-	else {
+	else if (checked) {
+		result = process_file_read64(&process->files[fd], snapshot, (size_t) size);
+	} else {
 		result = process_file_lock64(&process->files[fd], &fh);
 		if (result == 0) {
-			result = checked ? fd64_read_checked(fh, snapshot, (size_t) size) :
-				(int64_t) fd64_read(fh, snapshot, (size_t) size);
+			result = (int64_t) fd64_read(fh, snapshot, (size_t) size);
 			process_file_unlock64(&process->files[fd]);
 		}
 	}

@@ -52,13 +52,7 @@ static int64_t unix_io64(struct PROCESS64 *process, uint64_t fd,
 		result = (int64_t) console64_read_con(process->console, snapshot, size);
 		if (result < 0) { result = -4; }
 	} else {
-		struct FDHANDLE64 *file;
-
-		result = process_file_lock64(&process->files[fd], &file);
-		if (result == 0) {
-			result = fd64_read_checked(file, snapshot, size);
-			process_file_unlock64(&process->files[fd]);
-		}
+		result = process_file_read64(&process->files[fd], snapshot, size);
 	}
 	if (result >= 0) {
 		if ((uint64_t) result > size) { result = -5; }
@@ -122,9 +116,6 @@ static int64_t unix_anon64(struct PROCESS_IMAGE64 *memory,
 int64_t unix_bridge_call64(struct PROCESS64 *process, uint64_t number,
 	uint64_t a0, uint64_t a1, uint64_t a2)
 {
-	struct FDHANDLE64 temporary;
-	struct FDHANDLE64 *file;
-	int64_t base, offset;
 	int status;
 	int cloexec;
 	int newfd;
@@ -141,6 +132,11 @@ int64_t unix_bridge_call64(struct PROCESS64 *process, uint64_t number,
 	case UNIX64_SYS_READ: return unix_io64(process, a0, (void *) a1, a2, 0);
 	case UNIX64_SYS_WRITE: return unix_io64(process, a0, (void *) a1, a2, 1);
 	case UNIX64_SYS_OPEN: return unix_open64(process, (const char *) a0, a1);
+	case UNIX64_SYS_DUP2:
+		if (!valid_fd64(process, a0) || a1 >= PROCESS64_MAX_FILES) { return -9; }
+		if (a0 < 3 || a1 < 3) { return -95; }
+		status = process_file_dup264(process, (int) a0, (int) a1);
+		return status != 0 ? status : (int64_t) a1;
 	case UNIX64_SYS_FCNTL:
 		/* Validate full-width wire values before narrowing to internal ints. */
 		if (!valid_fd64(process, a0)) { return -9; }
@@ -172,21 +168,7 @@ int64_t unix_bridge_call64(struct PROCESS64 *process, uint64_t number,
 		if (!valid_fd64(process, a0)) { return -9; }
 		if (a0 < 3) { return -29; }
 		if (a2 > 2) { return -22; }
-		status = process_file_lock64(&process->files[a0], &file);
-		if (status != 0) { return status; }
-		base = a2 == 0 ? 0 : (a2 == 1 ? file->pos : file->info.size);
-		offset = (int64_t) a1;
-		if (offset < -base) { status = -22; goto seek_out; }
-		if (offset > (int64_t) file->info.size - base) { status = -95; goto seek_out; }
-		/* Legacy seek may mutate its cursor before a chain read fails. */
-		temporary = *file;
-		status = fd64_seek(&temporary, offset, (int) a2);
-		if (status != 0) { status = -5; }
-		else { *file = temporary; }
-seek_out:
-		base = file->pos;
-		process_file_unlock64(&process->files[a0]);
-		return status != 0 ? status : base;
+		return process_file_seek64(&process->files[a0], (int64_t) a1, (int) a2);
 	default: return -38;
 	}
 }

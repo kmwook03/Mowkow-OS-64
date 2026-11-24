@@ -261,6 +261,13 @@ int fd64_open_checked(struct FDHANDLE64 *file, const char *name, unsigned int fl
 	return 0;
 }
 
+int fd64_seek(struct FDHANDLE64 *file, int64_t offset, int whence)
+{
+	(void) file; (void) offset; (void) whence;
+	assert(!"process lifecycle fixture must not seek FAT files");
+	return -95;
+}
+
 int64_t fd64_read_checked(struct FDHANDLE64 *file, void *buffer, size_t size)
 {
 	assert(file->info.size == size && !irq_off64);
