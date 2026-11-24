@@ -866,6 +866,8 @@ int main(void)
 	execution64(); close_lifetime64(); command_limits64();
 	lifecycle64(); exec_transaction64(); fork_transaction64();
 	file_duplicates64(); file_pool_exhaustion64();
+	file_cloexec64();
+	stdio_cloexec64();
 	puts("process memory: private ELF, argv, W^X, slots, execution, exit/reap and rollback PASS");
 	return 0;
 }

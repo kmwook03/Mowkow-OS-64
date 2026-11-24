@@ -146,6 +146,45 @@ int process_file_dup264(struct PROCESS64 *process, int oldfd, int newfd)
 	return status;
 }
 
+/* Caller holds irq-save; stdio has no OFD until console FD unification. */
+static int descriptor_open64(const struct PROCESS64 *process, int fd)
+{
+	if (fd < 3) {
+		return process->console != NULL && !(process->closed_stdio & (1U << fd));
+	}
+	return process->files[fd].used;
+}
+
+int process_file_get_cloexec64(struct PROCESS64 *process, int fd, int *cloexec)
+{
+	if (process == NULL || cloexec == NULL) { return -22; }
+	if (fd < 0 || fd >= PROCESS64_MAX_FILES) { return -9; }
+	uint64_t irq = platform_irq_save64();
+	int status = -9;
+
+	if (descriptor_open64(process, fd)) {
+		*cloexec = process->files[fd].cloexec;
+		status = 0;
+	}
+	platform_irq_restore64(irq);
+	return status;
+}
+
+int process_file_set_cloexec64(struct PROCESS64 *process, int fd, int cloexec)
+{
+	if (process == NULL || (cloexec != 0 && cloexec != 1)) { return -22; }
+	if (fd < 0 || fd >= PROCESS64_MAX_FILES) { return -9; }
+	uint64_t irq = platform_irq_save64();
+	int status = -9;
+
+	if (descriptor_open64(process, fd)) {
+		process->files[fd].cloexec = cloexec;
+		status = 0;
+	}
+	platform_irq_restore64(irq);
+	return status;
+}
+
 int process_file_inherit64(struct PROCESS64 *parent, struct PROCESS64 *child)
 {
 	uint64_t irq = platform_irq_save64();
@@ -160,6 +199,9 @@ int process_file_inherit64(struct PROCESS64 *parent, struct PROCESS64 *child)
 		child->files[i] = parent->files[i];
 	}
 	child->closed_stdio = parent->closed_stdio;
+	for (size_t i = 0; i < 3; i++) {
+		child->files[i].cloexec = parent->files[i].cloexec;
+	}
 	platform_irq_restore64(irq);
 	if (status != 0) { process_files_close64(child, 0); }
 	return status;
@@ -178,6 +220,7 @@ void process_files_close64(struct PROCESS64 *process, int cloexec_only)
 {
 	for (size_t i = 0; i < PROCESS64_MAX_FILES; i++) {
 		if (!cloexec_only || process->files[i].cloexec) {
+			if (i < 3) { process->closed_stdio |= 1U << i; }
 			process_file_close64(&process->files[i]);
 		}
 	}

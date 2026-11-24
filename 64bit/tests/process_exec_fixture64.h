@@ -124,8 +124,10 @@ static void exec_transaction64(void)
 	assert(exec_fixture64(owner) == -12 && owner->memory == old);
 	for (unsigned int i = 0; i < 3; i++) { assert(address_space_destroy64(&occupied[i]) == 0); }
 	owner->console = (struct CONSOLE64 *) &console_tokens64[0];
+	assert(process_file_set_cloexec64(owner, 1, 1) == 0);
 	closing_console64 = owner->console;
 	assert(exec_fixture64(owner) == -4 && owner->memory == old && live_pages64 == baseline);
+	assert(owner->closed_stdio == 0 && owner->files[1].cloexec == 1);
 	owner->console = NULL; closing_console64 = NULL;
 	/* A root/backing retirement error after commit cannot turn success into
 	 * failure or free the still-running supervisor continuation stack.
@@ -135,6 +137,7 @@ static void exec_transaction64(void)
 	uintptr_t entry = owner->thread.entry_storage.kernel_address;
 
 	assert(exec_fixture64(owner) == 0);
+	assert(owner->closed_stdio == 2 && !owner->files[1].cloexec);
 	assert(owner->memory != old && old->space != NULL && old->space->state == AS_REAP64);
 	free_fail64 = -1;
 	assert(process64_release_image(old) == 0);

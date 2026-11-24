@@ -35,6 +35,12 @@ int process_file_open_legacy64(struct PROCESS64 *process, const char *name,
 int process_file_dup64(struct PROCESS64 *process, int oldfd, int minimum,
 	int cloexec, int *newfd);
 int process_file_dup264(struct PROCESS64 *process, int oldfd, int newfd);
+/* Same task/table ownership as dup; includes open console descriptors 0..2.
+ * CLOEXEC is 0 or 1. Stdio stores only this flag in its file-table slot.
+ * Get writes its kernel-owned output only on success; set preserves aliases.
+ */
+int process_file_get_cloexec64(struct PROCESS64 *process, int fd, int *cloexec);
+int process_file_set_cloexec64(struct PROCESS64 *process, int fd, int cloexec);
 void process_file_close64(struct PROCESS64_FILE *file);
 void process_files_close64(struct PROCESS64 *process, int cloexec_only);
 int process_file_lock64(struct PROCESS64_FILE *file, struct FDHANDLE64 **handle);
