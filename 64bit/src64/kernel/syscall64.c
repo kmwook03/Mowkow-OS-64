@@ -207,17 +207,10 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 		if (operation == FILE_STAT64) {
 			return syscall_stat64(NULL, name, (void *) arg1);
 		}
-		for (size_t i = 3; i < PROCESS64_MAX_FILES; i++) {
-			if (!process->files[i].used) {
-				status = fd64_open_checked(&process->files[i].fh, name,
-					(unsigned int) arg1);
-				if (status != 0) { return status; }
-				process->files[i].used = 1;
-				process->files[i].cloexec = 0;
-				return (int64_t) i;
-			}
-		}
-		return -24;
+		int fd;
+
+		status = process_file_open64(process, name, (unsigned int) arg1, 0, &fd);
+		return status != 0 ? status : fd;
 	}
 	if (operation != FILE_READ64 && operation != FILE_SYNC64 &&
 		operation != FILE_FSTAT64) { return -38; }

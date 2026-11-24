@@ -4,7 +4,7 @@
 #include <process64.h>
 #include <mutex64.h>
 
-/* Temporary read-only OFD: task context, lock before the FAT/cache mutex.
+/* FAT OFD: task context, lock before the FAT/cache mutex.
  * An installed descriptor retains a reference through sleeping I/O. One
  * execution flow per process; close/exec cannot race that process's syscall.
  */
@@ -15,6 +15,12 @@ struct UNIX_FILE64 {
 };
 
 int process_file_inherit64(struct PROCESS64 *parent, struct PROCESS64 *child);
+/* name is a kernel-owned snapshot; flags use fd64_open_checked's contract.
+ * Reserve an OFD before backend I/O, publish the FD/output only on success.
+ * Task context, one execution flow per table; slots 3..MAX_FILES-1 only.
+ */
+int process_file_open64(struct PROCESS64 *process, const char *name,
+	unsigned int flags, int cloexec, int *newfd);
 /* Internal FAT FD operations, limited to slots 3..MAX_FILES-1. Task context
  * only, under the single-execution-flow ownership above; no user ABI yet.
  * Both return 0 or negative errno. dup chooses the lowest free slot >= minimum

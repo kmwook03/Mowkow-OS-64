@@ -73,21 +73,15 @@ static int64_t unix_open64(struct PROCESS64 *process, const char *path, uint64_t
 	char name[FD64_NAME_MAX];
 	int64_t length;
 	int status;
+	int fd;
 
 	if (flags & ~(uint64_t) UNIX64_OPEN_CLOEXEC) { return -22; }
 	length = copy_string_from_user64(name, sizeof(name), path);
 	if (length < 0) { return length; }
 	if (length == 0) { return -2; }
 	/* fd64_open_checked validates UTF-8 and the bounded FAT root name. */
-	for (size_t i = 3; i < PROCESS64_MAX_FILES; i++) {
-		if (process->files[i].used) { continue; }
-		status = fd64_open_checked(&process->files[i].fh, name, 0);
-		if (status != 0) { return status; }
-		process->files[i].used = 1;
-		process->files[i].cloexec = !!(flags & UNIX64_OPEN_CLOEXEC);
-		return (int64_t) i;
-	}
-	return -24;
+	status = process_file_open64(process, name, 0, !!(flags & UNIX64_OPEN_CLOEXEC), &fd);
+	return status != 0 ? status : fd;
 }
 
 static int64_t unix_anon64(struct PROCESS_IMAGE64 *memory,

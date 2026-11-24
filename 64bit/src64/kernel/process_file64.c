@@ -4,20 +4,66 @@
 
 static struct UNIX_FILE64 open_files64[PROCESS64_MAX * (PROCESS64_MAX_FILES - 3)];
 
-static struct UNIX_FILE64 *promote_file64(struct PROCESS64_FILE *file)
+/* Caller holds irq-save. A reserved reference prevents reuse during open. */
+static struct UNIX_FILE64 *allocate_file64(void)
 {
-	if (file->shared != NULL) { return file->shared; }
 	for (size_t i = 0; i < sizeof(open_files64) / sizeof(open_files64[0]); i++) {
 		struct UNIX_FILE64 *shared = &open_files64[i];
 
 		if (shared->references != 0) { continue; }
 		memset(shared, 0, sizeof(*shared));
-		shared->handle = file->fh;
 		shared->references = 1;
-		file->shared = shared;
 		return shared;
 	}
 	return NULL;
+}
+
+static struct UNIX_FILE64 *promote_file64(struct PROCESS64_FILE *file)
+{
+	if (file->shared == NULL) {
+		struct UNIX_FILE64 *shared = allocate_file64();
+
+		if (shared == NULL) { return NULL; }
+		shared->handle = file->fh;
+		file->shared = shared;
+	}
+	return file->shared;
+}
+
+int process_file_open64(struct PROCESS64 *process, const char *name,
+	unsigned int flags, int cloexec, int *newfd)
+{
+	if (process == NULL || name == NULL || newfd == NULL ||
+		(cloexec != 0 && cloexec != 1)) { return -22; }
+	uint64_t irq = platform_irq_save64();
+	int fd;
+
+	for (fd = 3; fd < PROCESS64_MAX_FILES; fd++) {
+		if (!process->files[fd].used) { break; }
+	}
+	if (fd == PROCESS64_MAX_FILES) {
+		platform_irq_restore64(irq);
+		return -24;
+	}
+	struct PROCESS64_FILE prepared = {.cloexec = cloexec, .shared = allocate_file64()};
+
+	platform_irq_restore64(irq);
+	if (prepared.shared == NULL) { return -23; }
+	/* One execution flow owns the table. Keep the FD unpublished until the
+	 * sleeping backend succeeds; no allocation may fail after file mutation.
+	 */
+	int status = fd64_open_checked(&prepared.shared->handle, name, flags);
+
+	if (status != 0) {
+		process_file_close64(&prepared);
+		return status;
+	}
+	prepared.used = 1;
+	irq = platform_irq_save64();
+	process->files[fd] = prepared;
+	*newfd = fd;
+	platform_irq_restore64(irq);
+	return 0;
 }
 
 /* Caller holds irq-save through reference acquisition and FD publication. */
