@@ -22,6 +22,19 @@
 
 int mutex64_lock(struct MUTEX64 *mutex) { assert(!mutex->locked); mutex->locked = 1; return 0; }
 int mutex64_unlock(struct MUTEX64 *mutex) { assert(mutex->locked); mutex->locked = 0; return 0; }
+static void install_file_fixture64(struct PROCESS64 *owner, int fd, uint32_t pos,
+	int cloexec)
+{
+	uint64_t irq = platform_irq_save64();
+	struct UNIX_FILE64 *shared = allocate_file64();
+
+	assert(!owner->files[fd].used && shared != NULL);
+	shared->handle.pos = pos;
+	owner->files[fd] = (struct PROCESS64_FILE) {
+		.used = 1, .cloexec = cloexec, .shared = shared,
+	};
+	platform_irq_restore64(irq);
+}
 static struct TASK64 fork_tasks64[4];
 static int fork_admit_fail64, fork_entry_fail64;
 struct TASK64 *task_alloc64(void)
@@ -188,7 +201,7 @@ int enter_user_mode64(uintptr_t entry, uintptr_t stack, uint64_t argc, uintptr_t
 	assert(!process64_user_range_valid((void *) process->thread.entry_storage.kernel_address, 1));
 	assert(!process64_user_write_valid((void *) UINTPTR_MAX, 2));
 	*saved_kernel_rsp = 0x123000 + depth * 0x1000;
-	process->files[3].used = 1;
+	install_file_fixture64(process, 3, 0, 0);
 	unsigned char *snapshot = process64_io_buffer(17);
 
 	assert(snapshot != NULL && process->io_ready);

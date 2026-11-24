@@ -21,6 +21,11 @@ int process_file_inherit64(struct PROCESS64 *parent, struct PROCESS64 *child);
  */
 int process_file_open64(struct PROCESS64 *process, const char *name,
 	unsigned int flags, int cloexec, int *newfd);
+/* Legacy backend sequencing; flags are FILE_CREATE64/FILE_TRUNCATE64.
+ * Returns errno-style failures; the syscall boundary maps legacy errors.
+ */
+int process_file_open_legacy64(struct PROCESS64 *process, const char *name,
+	unsigned int flags, int *newfd);
 /* Internal FAT FD operations, limited to slots 3..MAX_FILES-1. Task context
  * only, under the single-execution-flow ownership above; no user ABI yet.
  * Both return 0 or negative errno. dup chooses the lowest free slot >= minimum

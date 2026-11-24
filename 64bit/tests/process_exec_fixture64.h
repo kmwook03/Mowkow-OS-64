@@ -54,7 +54,8 @@ static void exec_transaction64(void)
 	owner->state = PROCESS_RUNNING64; owner->thread.task = &task;
 	owner->thread.saved_kernel_rsp = 0x12340;
 	task.process = owner; current_task64 = &task;
-	owner->files[3].used = owner->files[4].used = owner->files[4].cloexec = 1;
+	install_file_fixture64(owner, 3, 0, 0);
+	install_file_fixture64(owner, 4, 0, 1);
 	irq_off64 = 1; assert(address_space_activate64(old->space) == 0); irq_off64 = 0;
 	assert(process64_set_tls64(old->heap.base + 0x800) == 0);
 	assert(tls_pointer64 == old->heap.base + 0x800);

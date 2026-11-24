@@ -45,16 +45,16 @@ static struct FDHANDLE64 *syscall_file64(struct PROCESS64 *process, uint64_t fd)
 	if (fd < 3 || fd >= PROCESS64_MAX_FILES || process->files[fd].used == 0) {
 		return NULL;
 	}
-	return process->files[fd].shared != NULL ?
-		&process->files[fd].shared->handle : &process->files[fd].fh;
+	return process->files[fd].shared != NULL ? &process->files[fd].shared->handle : NULL;
 }
 
 static int syscall_open64(struct PROCESS64 *process, const char *path, uint64_t flags)
 {
-	struct FDHANDLE64 *fh;
 	char name[FD64_NAME_MAX];
 	int64_t length;
-	size_t i;
+	int fd;
+	int status;
+	unsigned int open_flags = 0;
 
 	/* Check the full register before any narrowing or filesystem mutation. */
 	if ((flags & ~(uint64_t) (O_CREAT | O_TRUNC)) != 0) {
@@ -64,22 +64,11 @@ static int syscall_open64(struct PROCESS64 *process, const char *path, uint64_t 
 	if (length < 0 || validate_filename_utf864(name, (size_t) length) != 0) {
 		return -1;
 	}
-	for (i = 3; i < PROCESS64_MAX_FILES; i++) {
-		if (process->files[i].used == 0) {
-			fh = &process->files[i].fh;
-			if (fd64_open(fh, name) == 0) {
-				if ((flags & O_CREAT) == 0 || fd64_create(fh, name) == 0) {
-					return -2;
-				}
-			} else if ((flags & O_TRUNC) != 0 && fd64_truncate(fh, 0) != 0) {
-				return -2;
-			}
-			process->files[i].used = 1;
-			process->files[i].cloexec = 0;
-			return (int) i;
-		}
-	}
-	return -3;
+	if (flags & O_CREAT) { open_flags |= FILE_CREATE64; }
+	if (flags & O_TRUNC) { open_flags |= FILE_TRUNCATE64; }
+	status = process_file_open_legacy64(process, name, open_flags, &fd);
+	if (status == -23 || status == -24) { return -3; }
+	return status != 0 ? -2 : fd;
 }
 
 static int64_t syscall_write64(struct PROCESS64 *process, uint64_t fd,

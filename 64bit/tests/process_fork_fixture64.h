@@ -90,8 +90,8 @@ static void fork_transaction64(void)
 	task.process = parent; current_task64 = &task;
 	irq_off64 = 1; assert(address_space_activate64(parent->memory->space) == 0); irq_off64 = 0;
 	unix_fixture64(); assert(exec_fixture64(parent) == 0);
-	parent->files[3].used = 1; parent->files[3].fh.pos = 7;
-	parent->files[4].used = parent->files[4].cloexec = 1;
+	install_file_fixture64(parent, 3, 7, 0);
+	install_file_fixture64(parent, 4, 0, 1);
 	parent->closed_stdio = 4;
 	parent->memory->anon_pages[0] = 1;
 	*(uint64_t *) parent->memory->heap_backing = 0x12345678;

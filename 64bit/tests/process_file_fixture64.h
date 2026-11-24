@@ -7,8 +7,7 @@ static void file_duplicates64(void)
 	struct FDHANDLE64 *handle;
 	int fd = -1;
 
-	process.files[3].used = process.files[3].cloexec = 1;
-	process.files[3].fh.pos = 7;
+	install_file_fixture64(&process, 3, 7, 1);
 	assert(process_file_dup64(&process, 3, 4, 0, &fd) == 0 && fd == 4);
 	struct UNIX_FILE64 *shared = process.files[3].shared;
 
@@ -34,7 +33,7 @@ static void file_duplicates64(void)
 	assert(shared->references == 3 && process.files[4].used);
 
 	/* Replace a different OFD and leave another alias of the old one alive. */
-	process.files[3].used = 1; process.files[3].fh.pos = 41;
+	install_file_fixture64(&process, 3, 41, 0);
 	assert(process_file_dup264(&process, 3, 6) == 0);
 	struct UNIX_FILE64 *other = process.files[3].shared;
 
@@ -77,21 +76,28 @@ static void file_pool_exhaustion64(void)
 
 	for (size_t i = 0; i < sizeof(held) / sizeof(held[0]); i++) {
 		held[i].used = 1;
-		assert(promote_file64(&held[i]) != NULL);
+		held[i].shared = allocate_file64();
+		assert(held[i].shared != NULL);
 	}
+	process.files[3] = held[0]; process.files[4] = held[1];
+	memset(&held[0], 0, 2 * sizeof(held[0]));
 	platform_irq_restore64(irq);
-	process.files[3].used = process.files[4].used = 1;
-	process.files[3].fh.pos = 17; process.files[4].fh.pos = 23;
+	process.files[3].shared->handle.pos = 17;
+	process.files[4].shared->handle.pos = 23;
 	process.files[4].cloexec = 1;
-	assert(process_file_dup264(&process, 3, 4) == -23);
-	assert(process.files[4].used && process.files[4].cloexec);
-	assert(process.files[4].fh.pos == 23 && !process.files[4].shared);
-	assert(!process.files[3].shared && process.files[3].fh.pos == 17);
-	assert(process_file_dup64(&process, 3, 5, 0, &fd) == -23 && fd == 99);
-	assert(!process.files[5].used);
-	process_file_close64(&held[0]);
+	/* Dup needs no new OFD, even with every pool entry reserved. */
+	assert(process_file_dup64(&process, 3, 5, 0, &fd) == 0 && fd == 5);
+	irq = platform_irq_save64();
+	assert(allocate_file64() == NULL);
+	platform_irq_restore64(irq);
 	assert(process_file_dup264(&process, 3, 4) == 0);
 	assert(process.files[4].shared->handle.pos == 17 && !process.files[4].cloexec);
+	assert(process.files[3].shared->references == 3);
+	/* Replacing the last reference to the old target makes one slot reusable. */
+	irq = platform_irq_save64();
+	held[0].shared = allocate_file64();
+	assert(held[0].shared != NULL && held[0].shared->handle.pos == 0);
+	platform_irq_restore64(irq);
 	process_files_close64(&process, 0);
 	for (size_t i = 0; i < sizeof(held) / sizeof(held[0]); i++) {
 		process_file_close64(&held[i]);

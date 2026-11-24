@@ -29,7 +29,7 @@ struct PROCESS64_RANGE {
 struct PROCESS64_FILE {
 	int used;
 	int cloexec;
-	struct FDHANDLE64 fh;
+	/* Every used file slot (3+) owns one OFD reference; stdio is separate. */
 	struct UNIX_FILE64 *shared;
 };
 

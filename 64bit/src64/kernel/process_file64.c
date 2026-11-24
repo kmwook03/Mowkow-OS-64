@@ -18,20 +18,9 @@ static struct UNIX_FILE64 *allocate_file64(void)
 	return NULL;
 }
 
-static struct UNIX_FILE64 *promote_file64(struct PROCESS64_FILE *file)
-{
-	if (file->shared == NULL) {
-		struct UNIX_FILE64 *shared = allocate_file64();
-
-		if (shared == NULL) { return NULL; }
-		shared->handle = file->fh;
-		file->shared = shared;
-	}
-	return file->shared;
-}
-
-int process_file_open64(struct PROCESS64 *process, const char *name,
-	unsigned int flags, int cloexec, int *newfd)
+static int open_file64(struct PROCESS64 *process, const char *name,
+	unsigned int flags, int cloexec, int *newfd,
+	int (*open_backend)(struct FDHANDLE64 *, const char *, unsigned int))
 {
 	if (process == NULL || name == NULL || newfd == NULL ||
 		(cloexec != 0 && cloexec != 1)) { return -22; }
@@ -52,7 +41,7 @@ int process_file_open64(struct PROCESS64 *process, const char *name,
 	/* One execution flow owns the table. Keep the FD unpublished until the
 	 * sleeping backend succeeds; no allocation may fail after file mutation.
 	 */
-	int status = fd64_open_checked(&prepared.shared->handle, name, flags);
+	int status = open_backend(&prepared.shared->handle, name, flags);
 
 	if (status != 0) {
 		process_file_close64(&prepared);
@@ -66,12 +55,37 @@ int process_file_open64(struct PROCESS64 *process, const char *name,
 	return 0;
 }
 
+int process_file_open64(struct PROCESS64 *process, const char *name,
+	unsigned int flags, int cloexec, int *newfd)
+{
+	return open_file64(process, name, flags, cloexec, newfd, fd64_open_checked);
+}
+
+static int legacy_open_backend64(struct FDHANDLE64 *handle, const char *name,
+	unsigned int flags)
+{
+	/* Preserve legacy create fallback and truncate-only-for-existing behavior. */
+	if (fd64_open(handle, name) == 0) {
+		if (!(flags & FILE_CREATE64) || fd64_create(handle, name) == 0) { return -5; }
+	} else if ((flags & FILE_TRUNCATE64) && fd64_truncate(handle, 0) != 0) {
+		return -5;
+	}
+	return 0;
+}
+
+int process_file_open_legacy64(struct PROCESS64 *process, const char *name,
+	unsigned int flags, int *newfd)
+{
+	if (flags & ~(unsigned int) (FILE_CREATE64 | FILE_TRUNCATE64)) { return -22; }
+	return open_file64(process, name, flags, 0, newfd, legacy_open_backend64);
+}
+
 /* Caller holds irq-save through reference acquisition and FD publication. */
 static int retain_file64(struct PROCESS64_FILE *file, struct UNIX_FILE64 **result)
 {
-	struct UNIX_FILE64 *shared = promote_file64(file);
+	struct UNIX_FILE64 *shared = file->shared;
 
-	if (shared == NULL) { return -23; }
+	if (shared == NULL) { return -9; }
 	if (shared->references == ~0U) { return -75; }
 	shared->references++;
 	*result = shared;
@@ -171,9 +185,10 @@ void process_files_close64(struct PROCESS64 *process, int cloexec_only)
 
 int process_file_lock64(struct PROCESS64_FILE *file, struct FDHANDLE64 **handle)
 {
-	int status = file->shared != NULL ? mutex64_lock(&file->shared->mutex) : 0;
+	if (!file->used || file->shared == NULL) { return -9; }
+	int status = mutex64_lock(&file->shared->mutex);
 
-	if (status == 0) { *handle = file->shared != NULL ? &file->shared->handle : &file->fh; }
+	if (status == 0) { *handle = &file->shared->handle; }
 	return status;
 }
 

@@ -74,6 +74,8 @@ static int pin_failure64;
 static struct TASK64 wait_task64;
 static int irq_off64, wait_mode64, close_wait64, wake_calls64, wake_error64;
 static uint64_t wait_start64;
+static struct PROCESS64 *opening_process64;
+static int opening_fd64;
 
 uint64_t platform_irq_save64(void)
 {
@@ -230,6 +232,10 @@ static void capture_name64(char *dst, const char *name)
 
 int fd64_open(struct FDHANDLE64 *fh, const char *name)
 {
+	assert(!irq_off64);
+	if (opening_process64 != NULL) {
+		assert(!opening_process64->files[opening_fd64].used && fh->pos == 0);
+	}
 	capture_name64(opened_name, name);
 	opened_name_pointer = (uintptr_t) name;
 	open_calls++;
@@ -243,6 +249,10 @@ int fd64_open(struct FDHANDLE64 *fh, const char *name)
 
 int fd64_create(struct FDHANDLE64 *fh, const char *name)
 {
+	assert(!irq_off64);
+	if (opening_process64 != NULL) {
+		assert(!opening_process64->files[opening_fd64].used);
+	}
 	(void) fh;
 	capture_name64(created_name, name);
 	created_name_pointer = (uintptr_t) name;
@@ -252,6 +262,10 @@ int fd64_create(struct FDHANDLE64 *fh, const char *name)
 
 int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size)
 {
+	assert(!irq_off64);
+	if (opening_process64 != NULL) {
+		assert(!opening_process64->files[opening_fd64].used);
+	}
 	(void) fh;
 	if (size != 0) {
 		abi_error = 1;
@@ -288,8 +302,6 @@ int fd64_seek(struct FDHANDLE64 *fh, int64_t offset, int whence)
 }
 
 static int checked_error64, checked_calls64, sync_calls64;
-static struct PROCESS64 *opening_process64;
-static int opening_fd64;
 int fd64_stat_checked(struct FDHANDLE64 *fh, const char *name, struct FILE_INFO64 *info)
 {
 	assert(pins64 > 0);
@@ -481,6 +493,7 @@ static int test_open64(void)
 		reset64();
 		CHECK64(call64(SYS_OPEN, path, flags, 0, 0, 0) == 3);
 		CHECK64(process.files[3].used == 1 && open_calls == 1);
+		CHECK64(process.files[3].shared && process.files[3].shared->references == 1);
 		CHECK64(create_calls == 0);
 		CHECK64(truncate_calls == ((flags & O_TRUNC) != 0));
 		CHECK64(name_error == 0 && strcmp(opened_name, "app.txt") == 0);
@@ -595,7 +608,7 @@ static int test_files64(void)
 	reset64();
 	/* Stdio slots are reserved even if their unused file fields are nonzero. */
 	process.files[0].used = process.files[1].used = process.files[2].used = 1;
-	process.files[3].used = 1;
+	CHECK64(call64(SYS_OPEN, buffer, 0, 0, 0, 0) == 3);
 	CHECK64(call64(SYS_READ, 0, buffer, 8, 0, 0) == 3);
 	CHECK64(call64(SYS_WRITE, 1, buffer, 8, 0, 0) == 8);
 	CHECK64(call64(SYS_WRITE, 2, buffer, 8, 0, 0) == 8);
@@ -777,7 +790,7 @@ static int test_copy_boundary64(void)
 	struct FILE_INFO64 info;
 
 	reset64();
-	process.files[3].used = 1;
+	CHECK64(call64(SYS_OPEN, buffer, 0, 0, 0, 0) == 3);
 	memset(user_buffer, 0xa5, sizeof(user_buffer));
 	readonly64 = 1;
 	CHECK64(call64(SYS_READ, 0, buffer, 8, 0, 0) == ERROR64);
@@ -955,6 +968,20 @@ static int test_open_ownership64(void)
 
 	reset64();
 	opening_process64 = &process; opening_fd64 = 3;
+	open_result = create_result = 0;
+	for (unsigned int i = 0; i <= capacity; i++) {
+		CHECK64((int64_t) call64(SYS_OPEN, (uintptr_t) user_buffer, O_CREAT, 0, 0, 0) == -2);
+		CHECK64(!process.files[3].used && !process.files[3].shared);
+	}
+	open_result = create_result = 1; truncate_result = -1;
+	for (unsigned int i = 0; i <= capacity; i++) {
+		CHECK64((int64_t) call64(SYS_OPEN, (uintptr_t) user_buffer, O_TRUNC, 0, 0, 0) == -2);
+		CHECK64(!process.files[3].used && !process.files[3].shared);
+	}
+	truncate_result = 0;
+	CHECK64(call64(SYS_OPEN, (uintptr_t) user_buffer, 0, 0, 0, 0) == 3);
+	CHECK64(process.files[3].shared->references == 1 && !process.files[3].cloexec);
+	CHECK64(call64(SYS_CLOSE, 3, 0, 0, 0, 0) == 0);
 	/* More failures than pool slots must still leave room for a later open. */
 	checked_error64 = -5;
 	for (unsigned int i = 0; i <= capacity; i++) {
@@ -988,6 +1015,11 @@ static int test_open_ownership64(void)
 	CHECK64(fd == 99 && !process.files[3].used && checked_calls64 == calls);
 	CHECK64(process_file_open64(&owners[0], "app.txt", 0, 0, &fd) == -24);
 	CHECK64(fd == 99 && checked_calls64 == calls);
+	uint32_t legacy_calls = open_calls + create_calls + truncate_calls;
+
+	CHECK64((int64_t) call64(SYS_OPEN, (uintptr_t) user_buffer, O_CREAT, 0, 0, 0) == -3);
+	CHECK64(!process.files[3].used && !process.files[3].shared);
+	CHECK64(open_calls + create_calls + truncate_calls == legacy_calls);
 	process_file_close64(&owners[0].files[3]);
 	CHECK64(process_file_open64(&process, "app.txt", 0, 0, &fd) == 0 && fd == 3);
 	CHECK64(process.files[3].shared->references == 1);
