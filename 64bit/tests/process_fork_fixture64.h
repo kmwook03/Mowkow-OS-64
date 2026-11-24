@@ -118,6 +118,7 @@ static void fork_transaction64(void)
 	handle->pos = 19; process_file_unlock64(&child->files[3]);
 	assert(parent->files[3].shared->handle.pos == 19);
 	assert(process64_wait_user64(pid, (void *) parent->memory->heap.base, 1) == 0);
+	assert(*(uint64_t *) parent->memory->heap_backing == 0x12345678);
 	/* Model a detached, parked runner; real task switching is tested in QEMU. */
 	child->state = PROCESS_REAP64; child->wait_status = 43 << 8;
 	child->reap_pending = 1;

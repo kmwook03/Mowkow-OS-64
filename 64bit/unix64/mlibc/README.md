@@ -37,8 +37,11 @@ bare-metal GCC의 fast integer types와 libc 정의를 맞춘다. 버전·패치
 갱신하거나 최신 mlibc sysdeps 인터페이스를 이 6.3.1 포트에 섞지 않는다.
 
 지원 범위는 단일 실행 흐름의 startup/exit, TLS/errno, allocation, console stdio,
-read-only FAT root file, exec, PID, private futex와 monotonic clock이다. syscall
-실패는 positive errno와 성공 out parameter라는 mlibc 계약으로 변환한다.
+read-only FAT root file, fork/exec/wait, 공유 OFD offset, PID, private futex와
+monotonic clock이다. syscall 실패는 positive errno와 성공 out parameter라는
+mlibc 계약으로 변환한다.
 `sigaction=ENOSYS`로 upstream의 cancellation opt-out을 선택한다. pthread,
-signal delivery/return, fork/wait, mmap/munmap, 일반 VFS를 제공하지 않는다.
+POSIX signal, mmap/munmap, 일반 VFS를 제공하지 않는다. 내부 signal 32의
+등록·전달·커널 snapshot 복귀는 raw UAPI로 검증하며 libc cancellation과 구분한다.
+자식의 콘솔 stdin은 A3의 reader queue 전까지 ENOTSUP다.
 8-MiB arena는 image 전체 수명에 매핑되며 free는 재사용을 뜻한다.
