@@ -4,9 +4,11 @@
 
 static int64_t fat_read64(struct UNIX_FILE64 *file, void *buffer, size_t size);
 static int64_t fat_seek64(struct UNIX_FILE64 *file, int64_t offset, int whence);
+static int fat_stat64(struct UNIX_FILE64 *file, struct FILE_INFO64 *info);
 static const struct PROCESS_FILE_OPS64 fat_ops64 = {
 	.read = fat_read64,
 	.seek = fat_seek64,
+	.stat = fat_stat64,
 };
 
 static struct UNIX_FILE64 open_files64[PROCESS64_MAX * (PROCESS64_MAX_FILES - 3)];
@@ -278,6 +280,11 @@ static int64_t fat_seek64(struct UNIX_FILE64 *file, int64_t offset, int whence)
 	return handle->pos;
 }
 
+static int fat_stat64(struct UNIX_FILE64 *file, struct FILE_INFO64 *info)
+{
+	return fd64_stat_checked(&file->handle, NULL, info);
+}
+
 static int lock_file64(struct PROCESS64_FILE *file)
 {
 	if (file == NULL || !file->used || file->shared == NULL) { return -9; }
@@ -312,6 +319,22 @@ int64_t process_file_seek64(struct PROCESS64_FILE *file, int64_t offset, int whe
 
 	process_file_unlock64(file);
 	return result;
+}
+
+int process_file_stat64(struct PROCESS64_FILE *file, struct FILE_INFO64 *info)
+{
+	struct FILE_INFO64 snapshot = {0};
+
+	if (info == NULL) { return -22; }
+	int status = lock_file64(file);
+
+	if (status != 0) { return status; }
+	struct UNIX_FILE64 *shared = file->shared;
+
+	status = shared->ops && shared->ops->stat ? shared->ops->stat(shared, &snapshot) : -95;
+	process_file_unlock64(file);
+	if (status == 0) { *info = snapshot; }
+	return status;
 }
 
 int process_file_lock64(struct PROCESS64_FILE *file, struct FDHANDLE64 **handle)

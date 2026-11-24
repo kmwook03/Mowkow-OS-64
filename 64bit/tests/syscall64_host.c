@@ -325,7 +325,7 @@ static int checked_error64, checked_calls64, sync_calls64;
 int fd64_stat_checked(struct FDHANDLE64 *fh, const char *name, struct FILE_INFO64 *info)
 {
 	assert(pins64 > 0);
-	(void) fh;
+	if (fh != NULL) { assert(held_mutex64 != NULL && name == NULL); }
 	if (name != NULL) { capture_name64(opened_name, name); }
 	checked_calls64++;
 	if (checked_error64) { return checked_error64; }
@@ -797,6 +797,18 @@ static int test_checked_files64(void)
 	CHECK64(pins64 == 0 && held_mutex64 == NULL);
 	mutex_error64 = 0;
 	CHECK64(call64(SYS_FILE, FILE_FSTAT64, 3, output, 0, 0) == 0);
+	memcpy(&info, (void *) output, sizeof(info));
+	CHECK64(info.size64 == 123 && info.identity64 == 0x200000040UL);
+	before = checked_calls64;
+	mutex_error64 = -4;
+	CHECK64((int64_t) call64(SYS_FILE, FILE_FSTAT64, 3, output, 0, 0) == -4);
+	CHECK64(checked_calls64 == before && pins64 == 0 && held_mutex64 == NULL);
+	mutex_error64 = 0;
+	checked_error64 = -5;
+	CHECK64((int64_t) call64(SYS_FILE, FILE_FSTAT64, 3, output, 0, 0) == -5);
+	CHECK64(memcmp(&info, (void *) output, sizeof(info)) == 0);
+	CHECK64(pins64 == 0 && held_mutex64 == NULL);
+	checked_error64 = 0;
 	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, output, UINT64_MAX, 0) == -22);
 	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, 1, 1, 0) == -14);
 	memset((void *) output, 0xa5, 8);
@@ -1177,10 +1189,20 @@ static int64_t backend_seek64(struct UNIX_FILE64 *file, int64_t offset, int when
 	return -29;
 }
 
+static int backend_stat_error64;
+static int backend_stat64(struct UNIX_FILE64 *file, struct FILE_INFO64 *info)
+{
+	assert(held_mutex64 == &file->mutex);
+	info->size64 = 42;
+	info->identity64 = 1234;
+	return backend_stat_error64;
+}
+
 static int test_file_ops64(void)
 {
 	static const struct PROCESS_FILE_OPS64 ops = {
 		.read = backend_read64, .seek = backend_seek64,
+		.stat = backend_stat64,
 	};
 	static const struct PROCESS_FILE_OPS64 missing_ops = {0};
 	struct UNIX_FILE64 shared = {.references = 1, .ops = &ops};
@@ -1196,6 +1218,21 @@ static int test_file_ops64(void)
 	CHECK64(process_file_seek64(&file, 7, 1) == -29);
 	CHECK64(process_file_read64(&missing, buffer, sizeof(buffer)) == -95);
 	CHECK64(process_file_seek64(&missing, 7, 1) == -95);
+	struct FILE_INFO64 info;
+
+	memset(&info, 0xa5, sizeof(info));
+	CHECK64(process_file_stat64(&file, &info) == 0);
+	CHECK64(info.size64 == 42 && info.identity64 == 1234 && info.reserved64 == 0);
+	struct FILE_INFO64 saved = info;
+
+	backend_stat_error64 = -5;
+	CHECK64(process_file_stat64(&file, &info) == -5);
+	CHECK64(memcmp(&info, &saved, sizeof(info)) == 0);
+	backend_stat_error64 = 0;
+	CHECK64(process_file_stat64(&missing, &info) == -95);
+	CHECK64(process_file_stat64(NULL, &info) == -9);
+	CHECK64(process_file_stat64(&file, NULL) == -22);
+	CHECK64(memcmp(&info, &saved, sizeof(info)) == 0);
 	CHECK64(held_mutex64 == NULL && checked_calls64 == reads && seek_calls == seeks);
 	return 0;
 }

@@ -268,6 +268,13 @@ int fd64_seek(struct FDHANDLE64 *file, int64_t offset, int whence)
 	return -95;
 }
 
+int fd64_stat_checked(struct FDHANDLE64 *file, const char *name, struct FILE_INFO64 *info)
+{
+	(void) file; (void) name; (void) info;
+	assert(!"process lifecycle fixture must not stat FAT files");
+	return -95;
+}
+
 int64_t fd64_read_checked(struct FDHANDLE64 *file, void *buffer, size_t size)
 {
 	assert(file->info.size == size && !irq_off64);

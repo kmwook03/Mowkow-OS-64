@@ -138,14 +138,15 @@ static int64_t syscall_read64(struct PROCESS64 *process, uint64_t fd,
 	return result;
 }
 
-static int syscall_stat64(struct FDHANDLE64 *file, const char *name, void *buffer)
+static int syscall_stat64(struct PROCESS64_FILE *file, const char *name, void *buffer)
 {
 	struct FILE_INFO64 info;
 	struct USER_ACCESS64 access = {0};
 	int status = user_access_begin64(&access, buffer, sizeof(info), USER_WRITE64);
 
 	if (status != 0) { return status; }
-	status = fd64_stat_checked(file, name, &info);
+	status = file != NULL ? process_file_stat64(file, &info) :
+		fd64_stat_checked(NULL, name, &info);
 	if (status == 0) { status = copy_to_user_access64(&access, &info, sizeof(info)); }
 	user_access_end64(&access);
 	return status;
@@ -213,11 +214,7 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 		return fd64_sync() < 0 ? -5 : 0;
 	}
 	if (!process64_user_write_valid((void *) arg1, sizeof(info))) { return -14; }
-	status = process_file_lock64(&process->files[arg0], &fh);
-	if (status != 0) { return status; }
-	status = syscall_stat64(fh, NULL, (void *) arg1);
-	process_file_unlock64(&process->files[arg0]);
-	return status;
+	return syscall_stat64(&process->files[arg0], NULL, (void *) arg1);
 }
 
 static uintptr_t syscall_alloc64(struct PROCESS64 *process, uint64_t request)

@@ -8,11 +8,13 @@ struct UNIX_FILE64;
 
 /* Immutable for the OFD lifetime. Called in task context with its mutex held;
  * callbacks may sleep but must not reacquire that mutex or access user memory.
- * Return signed count/offset or errno. Failed seek must preserve backend state.
+ * Read/seek return signed count/offset or errno; stat returns 0 or errno.
+ * Failed seek must preserve backend state. Stat writes only its snapshot.
  */
 struct PROCESS_FILE_OPS64 {
 	int64_t (*read)(struct UNIX_FILE64 *file, void *buffer, size_t size);
 	int64_t (*seek)(struct UNIX_FILE64 *file, int64_t offset, int whence);
+	int (*stat)(struct UNIX_FILE64 *file, struct FILE_INFO64 *info);
 };
 
 /* OFD: task context, lock before the FAT/cache mutex.
@@ -71,6 +73,10 @@ int64_t process_file_read64(struct PROCESS64_FILE *file, void *buffer, size_t si
  * Negative positions are EINVAL; positions beyond EOF remain ENOTSUP.
  */
 int64_t process_file_seek64(struct PROCESS64_FILE *file, int64_t offset, int whence);
+/* Checked metadata snapshot, same task/descriptor ownership as read.
+ * Kernel-owned output is published only on success; returns 0 or errno.
+ */
+int process_file_stat64(struct PROCESS64_FILE *file, struct FILE_INFO64 *info);
 int process_file_lock64(struct PROCESS64_FILE *file, struct FDHANDLE64 **handle);
 void process_file_unlock64(struct PROCESS64_FILE *file);
 
