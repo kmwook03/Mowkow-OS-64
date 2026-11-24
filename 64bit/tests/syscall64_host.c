@@ -946,6 +946,100 @@ static int test_unix_wait64(void)
 	return 0;
 }
 
+static int test_unix_fcntl64(void)
+{
+	reset64();
+	process.state = PROCESS_RUNNING64;
+	process.memory->abi = UNIX64_ABI_VERSION;
+	memcpy(user_buffer, "app.txt", 8);
+	CHECK64(call64(UNIX64_SYS_OPEN, (uintptr_t) user_buffer, 0, 0, 0, 0) == 3);
+	CHECK64(process_file_dup264(&process, 3, 4) == 0);
+	struct UNIX_FILE64 *shared = process.files[3].shared;
+
+	shared->handle.pos = 17;
+	for (uint64_t fd = 0; fd <= 3; fd++) {
+		CHECK64(call64(UNIX64_SYS_FCNTL, fd, UNIX64_F_GETFD, UINT64_MAX, 0, 0) == 0);
+		CHECK64(call64(UNIX64_SYS_FCNTL, fd, UNIX64_F_SETFD, UNIX64_FD_CLOEXEC, 0, 0) == 0);
+		CHECK64(call64(UNIX64_SYS_FCNTL, fd, UNIX64_F_GETFD, 0, 0, 0) == UNIX64_FD_CLOEXEC);
+		CHECK64((int64_t) call64(UNIX64_SYS_FCNTL, fd, UNIX64_F_SETFD, 2, 0, 0) == -22);
+		CHECK64((int64_t) call64(UNIX64_SYS_FCNTL, fd, UNIX64_F_SETFD,
+			(1ULL << 32) | UNIX64_FD_CLOEXEC, 0, 0) == -22);
+		CHECK64((int64_t) call64(UNIX64_SYS_FCNTL, fd,
+			(1ULL << 32) | UNIX64_F_SETFD, 0, 0, 0) == -22);
+		CHECK64((int64_t) call64(UNIX64_SYS_FCNTL, fd, UINT64_MAX, 0, 0, 0) == -22);
+		CHECK64(call64(UNIX64_SYS_FCNTL, fd, UNIX64_F_GETFD, 0, 0, 0) == UNIX64_FD_CLOEXEC);
+		CHECK64(call64(UNIX64_SYS_FCNTL, fd, UNIX64_F_SETFD, 0, 0, 0) == 0);
+		CHECK64(call64(UNIX64_SYS_FCNTL, fd, UNIX64_F_GETFD, 0, 0, 0) == 0);
+	}
+	CHECK64(call64(UNIX64_SYS_FCNTL, 3, UNIX64_F_SETFD, UNIX64_FD_CLOEXEC, 0, 0) == 0);
+	CHECK64(call64(UNIX64_SYS_FCNTL, 4, UNIX64_F_GETFD, 0, 0, 0) == 0);
+	CHECK64(shared->references == 2 && shared->handle.pos == 17);
+	CHECK64((int64_t) call64(UNIX64_SYS_CLOSE, (1ULL << 32) | 4, 0, 0, 0, 0) == -9);
+	CHECK64((int64_t) call64(UNIX64_SYS_CLOSE, UINT64_MAX, 0, 0, 0, 0) == -9);
+	CHECK64(shared->references == 2 && process.files[4].used);
+	CHECK64(call64(UNIX64_SYS_FCNTL, 1, UNIX64_F_SETFD, UNIX64_FD_CLOEXEC, 0, 0) == 0);
+	CHECK64(call64(UNIX64_SYS_CLOSE, 1, 0, 0, 0, 0) == 0);
+	CHECK64((process.closed_stdio & 2) && !process.files[1].cloexec);
+	CHECK64((int64_t) call64(UNIX64_SYS_CLOSE, 1, 0, 0, 0, 0) == -9);
+	CHECK64(call64(UNIX64_SYS_CLOSE, 3, 0, 0, 0, 0) == 0);
+	CHECK64(!process.files[3].cloexec && process.files[3].shared == NULL);
+	CHECK64((int64_t) call64(UNIX64_SYS_CLOSE, 3, 0, 0, 0, 0) == -9);
+	const uint64_t invalid[] = {1, 3, 7, PROCESS64_MAX_FILES, UINT64_MAX, (1ULL << 32) | 4};
+
+	for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+		CHECK64((int64_t) call64(UNIX64_SYS_FCNTL, invalid[i], UNIX64_F_GETFD, 0, 0, 0) == -9);
+		CHECK64((int64_t) call64(UNIX64_SYS_FCNTL, invalid[i], UNIX64_F_SETFD, 0, 0, 0) == -9);
+	}
+	CHECK64(shared->references == 1 && shared->handle.pos == 17);
+	CHECK64(call64(UNIX64_SYS_FCNTL, 4, UNIX64_F_GETFD, 0, 0, 0) == 0);
+	CHECK64(!irq_off64 && abi_error == 0);
+	return 0;
+}
+
+static int test_unix_dupfd64(void)
+{
+	reset64();
+	process.state = PROCESS_RUNNING64;
+	process.memory->abi = UNIX64_ABI_VERSION;
+	memcpy(user_buffer, "app.txt", 8);
+	CHECK64(call64(UNIX64_SYS_OPEN, (uintptr_t) user_buffer,
+		UNIX64_OPEN_CLOEXEC, 0, 0, 0) == 3);
+	struct UNIX_FILE64 *shared = process.files[3].shared;
+
+	shared->handle.pos = 17;
+	const uint64_t commands[] = {UNIX64_F_DUPFD, UNIX64_F_DUPFD_CLOEXEC};
+
+	for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
+		CHECK64((int64_t) call64(UNIX64_SYS_FCNTL, 7, commands[i], 3, 0, 0) == -9);
+		CHECK64((int64_t) call64(UNIX64_SYS_FCNTL, (1ULL << 32) | 3,
+			commands[i], 3, 0, 0) == -9);
+		CHECK64((int64_t) call64(UNIX64_SYS_FCNTL, 1, commands[i], 3, 0, 0) == -95);
+		const uint64_t minimums[] = {0, 2, PROCESS64_MAX_FILES, UINT64_MAX, (1ULL << 32) | 3};
+
+		for (size_t j = 0; j < sizeof(minimums) / sizeof(minimums[0]); j++) {
+			CHECK64((int64_t) call64(UNIX64_SYS_FCNTL, 3, commands[i], minimums[j], 0, 0)
+				== (minimums[j] < 3 ? -95 : -22));
+		}
+	}
+	CHECK64(shared->references == 1 && !process.files[4].used);
+	CHECK64(call64(UNIX64_SYS_FCNTL, 3, UNIX64_F_DUPFD, 5, 0, 0) == 5);
+	CHECK64(call64(UNIX64_SYS_FCNTL, 3, UNIX64_F_DUPFD_CLOEXEC, 3, 0, 0) == 4);
+	CHECK64(process.files[5].shared == shared && process.files[4].shared == shared);
+	CHECK64(call64(UNIX64_SYS_FCNTL, 5, UNIX64_F_GETFD, 0, 0, 0) == 0);
+	CHECK64(call64(UNIX64_SYS_FCNTL, 4, UNIX64_F_GETFD, 0, 0, 0) == UNIX64_FD_CLOEXEC);
+	CHECK64(call64(UNIX64_SYS_FCNTL, 5, UNIX64_F_DUPFD, 3, 0, 0) == 6);
+	CHECK64(call64(UNIX64_SYS_FCNTL, 5, UNIX64_F_DUPFD_CLOEXEC, 7, 0, 0) == 7);
+	CHECK64((int64_t) call64(UNIX64_SYS_FCNTL, 3, UNIX64_F_DUPFD, 3, 0, 0) == -24);
+	CHECK64(shared->references == 5 && shared->handle.pos == 17);
+	process_files_close64(&process, 1);
+	CHECK64(!process.files[3].used && !process.files[4].used && !process.files[7].used);
+	CHECK64(process.files[5].used && process.files[6].used && shared->references == 2);
+	CHECK64(call64(UNIX64_SYS_FCNTL, 5, UNIX64_F_DUPFD, 3, 0, 0) == 3);
+	CHECK64(process.files[3].shared == shared && shared->handle.pos == 17);
+	CHECK64(!irq_off64 && abi_error == 0);
+	return 0;
+}
+
 static int test_unix_reservation64(void)
 {
 	reset64();
@@ -1036,6 +1130,8 @@ int main(void)
 {
 	CHECK64(test_unix_reservation64() == 0);
 	CHECK64(test_unix_bridge64() == 0);
+	CHECK64(test_unix_fcntl64() == 0);
+	CHECK64(test_unix_dupfd64() == 0);
 	CHECK64(test_unix_wait64() == 0);
 	CHECK64(test_copy_boundary64() == 0);
 	CHECK64(test_checked_files64() == 0);

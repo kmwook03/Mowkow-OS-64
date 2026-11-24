@@ -41,6 +41,11 @@ int process_file_dup264(struct PROCESS64 *process, int oldfd, int newfd);
  */
 int process_file_get_cloexec64(struct PROCESS64 *process, int fd, int *cloexec);
 int process_file_set_cloexec64(struct PROCESS64 *process, int fd, int cloexec);
+/* Close an open stdio/file descriptor under the same task/table ownership.
+ * Returns 0, -EBADF for closed/out-of-range FD, or -EINVAL for NULL process.
+ * Clears descriptor flags; aliases retain their OFD and offset.
+ */
+int process_fd_close64(struct PROCESS64 *process, int fd);
 void process_file_close64(struct PROCESS64_FILE *file);
 void process_files_close64(struct PROCESS64 *process, int cloexec_only);
 int process_file_lock64(struct PROCESS64_FILE *file, struct FDHANDLE64 **handle);

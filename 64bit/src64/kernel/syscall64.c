@@ -167,11 +167,9 @@ static int syscall_seek64(struct PROCESS64 *process, uint64_t fd,
 
 static int syscall_close64(struct PROCESS64 *process, uint64_t fd)
 {
-	if (syscall_file64(process, fd) == NULL) {
-		return -1;
-	}
-	process_file_close64(&process->files[fd]);
-	return 0;
+	/* Legacy close rejects stdio and retains its single -1 error result. */
+	if (fd < 3 || fd >= PROCESS64_MAX_FILES) { return -1; }
+	return process_fd_close64(process, (int) fd) == 0 ? 0 : -1;
 }
 
 static int64_t syscall_file_call64(struct PROCESS64 *process,

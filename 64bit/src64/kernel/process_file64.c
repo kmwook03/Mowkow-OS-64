@@ -216,14 +216,38 @@ void process_file_close64(struct PROCESS64_FILE *file)
 	platform_irq_restore64(irq);
 }
 
+/* Caller holds irq-save. Cleanup may also release an already closed slot. */
+static void close_descriptor64(struct PROCESS64 *process, int fd)
+{
+	if (fd < 3) { process->closed_stdio |= 1U << fd; }
+	process_file_close64(&process->files[fd]);
+}
+
+int process_fd_close64(struct PROCESS64 *process, int fd)
+{
+	if (process == NULL) { return -22; }
+	if (fd < 0 || fd >= PROCESS64_MAX_FILES) { return -9; }
+	uint64_t irq = platform_irq_save64();
+	int status = -9;
+
+	if (descriptor_open64(process, fd)) {
+		close_descriptor64(process, fd);
+		status = 0;
+	}
+	platform_irq_restore64(irq);
+	return status;
+}
+
 void process_files_close64(struct PROCESS64 *process, int cloexec_only)
 {
+	uint64_t irq = platform_irq_save64();
+
 	for (size_t i = 0; i < PROCESS64_MAX_FILES; i++) {
 		if (!cloexec_only || process->files[i].cloexec) {
-			if (i < 3) { process->closed_stdio |= 1U << i; }
-			process_file_close64(&process->files[i]);
+			close_descriptor64(process, (int) i);
 		}
 	}
+	platform_irq_restore64(irq);
 }
 
 int process_file_lock64(struct PROCESS64_FILE *file, struct FDHANDLE64 **handle)

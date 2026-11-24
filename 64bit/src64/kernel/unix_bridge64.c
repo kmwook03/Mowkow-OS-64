@@ -126,6 +126,8 @@ int64_t unix_bridge_call64(struct PROCESS64 *process, uint64_t number,
 	struct FDHANDLE64 *file;
 	int64_t base, offset;
 	int status;
+	int cloexec;
+	int newfd;
 
 	switch (number) {
 	case UNIX64_SYS_SIGNAL_SET: return process64_signal_set64(a0, a1);
@@ -139,13 +141,30 @@ int64_t unix_bridge_call64(struct PROCESS64 *process, uint64_t number,
 	case UNIX64_SYS_READ: return unix_io64(process, a0, (void *) a1, a2, 0);
 	case UNIX64_SYS_WRITE: return unix_io64(process, a0, (void *) a1, a2, 1);
 	case UNIX64_SYS_OPEN: return unix_open64(process, (const char *) a0, a1);
+	case UNIX64_SYS_FCNTL:
+		/* Validate full-width wire values before narrowing to internal ints. */
+		if (!valid_fd64(process, a0)) { return -9; }
+		if (a1 == UNIX64_F_DUPFD || a1 == UNIX64_F_DUPFD_CLOEXEC) {
+			if (a2 >= PROCESS64_MAX_FILES) { return -22; }
+			/* Do not skip a closed stdio slot and claim lowest-FD semantics. */
+			if (a0 < 3 || a2 < 3) { return -95; }
+			status = process_file_dup64(process, (int) a0, (int) a2,
+				a1 == UNIX64_F_DUPFD_CLOEXEC, &newfd);
+			return status != 0 ? status : newfd;
+		}
+		if (a1 == UNIX64_F_GETFD) {
+			status = process_file_get_cloexec64(process, (int) a0, &cloexec);
+			return status != 0 ? status : (cloexec ? UNIX64_FD_CLOEXEC : 0);
+		}
+		if (a1 != UNIX64_F_SETFD || (a2 & ~(uint64_t) UNIX64_FD_CLOEXEC)) {
+			return -22;
+		}
+		return process_file_set_cloexec64(process, (int) a0, !!(a2 & UNIX64_FD_CLOEXEC));
 	case UNIX64_SYS_ANON_ALLOC: return unix_anon64(process->memory, 0, a0, 0);
 	case UNIX64_SYS_ANON_FREE: return unix_anon64(process->memory, a0, a1, 1);
 	case UNIX64_SYS_CLOSE:
-		if (!valid_fd64(process, a0)) { return -9; }
-		if (a0 < 3) { process->closed_stdio |= 1U << a0; }
-		else { process_file_close64(&process->files[a0]); }
-		return 0;
+		if (a0 >= PROCESS64_MAX_FILES) { return -9; }
+		return process_fd_close64(process, (int) a0);
 	case UNIX64_SYS_ISATTY:
 		if (!valid_fd64(process, a0)) { return -9; }
 		return a0 < 3 ? 0 : -25;
