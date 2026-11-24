@@ -842,6 +842,7 @@ static void lifecycle64(void)
 
 #include "process_exec_fixture64.h"
 #include "process_fork_fixture64.h"
+#include "process_file_fixture64.h"
 
 int main(void)
 {
@@ -851,6 +852,7 @@ int main(void)
 	user_copy64(); failures_process64(); permissions_process64();
 	execution64(); close_lifetime64(); command_limits64();
 	lifecycle64(); exec_transaction64(); fork_transaction64();
+	file_duplicates64(); file_pool_exhaustion64();
 	puts("process memory: private ELF, argv, W^X, slots, execution, exit/reap and rollback PASS");
 	return 0;
 }

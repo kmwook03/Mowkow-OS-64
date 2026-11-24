@@ -15,6 +15,15 @@ struct UNIX_FILE64 {
 };
 
 int process_file_inherit64(struct PROCESS64 *parent, struct PROCESS64 *child);
+/* Internal FAT FD operations, limited to slots 3..MAX_FILES-1. Task context
+ * only, under the single-execution-flow ownership above; no user ABI yet.
+ * Both return 0 or negative errno. dup chooses the lowest free slot >= minimum
+ * and writes a kernel-owned newfd only on success. dup2 atomically replaces its
+ * target and clears CLOEXEC; self-dup preserves it. Failure preserves target.
+ */
+int process_file_dup64(struct PROCESS64 *process, int oldfd, int minimum,
+	int cloexec, int *newfd);
+int process_file_dup264(struct PROCESS64 *process, int oldfd, int newfd);
 void process_file_close64(struct PROCESS64_FILE *file);
 void process_files_close64(struct PROCESS64 *process, int cloexec_only);
 int process_file_lock64(struct PROCESS64_FILE *file, struct FDHANDLE64 **handle);

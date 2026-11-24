@@ -20,6 +20,72 @@ static struct UNIX_FILE64 *promote_file64(struct PROCESS64_FILE *file)
 	return NULL;
 }
 
+/* Caller holds irq-save through reference acquisition and FD publication. */
+static int retain_file64(struct PROCESS64_FILE *file, struct UNIX_FILE64 **result)
+{
+	struct UNIX_FILE64 *shared = promote_file64(file);
+
+	if (shared == NULL) { return -23; }
+	if (shared->references == ~0U) { return -75; }
+	shared->references++;
+	*result = shared;
+	return 0;
+}
+
+static int duplicate_file64(struct PROCESS64_FILE *source,
+	struct PROCESS64_FILE *target, int cloexec)
+{
+	struct UNIX_FILE64 *shared;
+	int status = retain_file64(source, &shared);
+
+	if (status != 0) { return status; }
+	/* Acquire before dropping target: both descriptors may name one OFD. */
+	process_file_close64(target);
+	*target = *source;
+	target->shared = shared;
+	target->cloexec = cloexec;
+	return 0;
+}
+
+int process_file_dup64(struct PROCESS64 *process, int oldfd, int minimum,
+	int cloexec, int *newfd)
+{
+	if (process == NULL || newfd == NULL || minimum < 3 ||
+		minimum >= PROCESS64_MAX_FILES || (cloexec != 0 && cloexec != 1)) { return -22; }
+	uint64_t irq = platform_irq_save64();
+	int status = -9;
+
+	if (oldfd < 3 || oldfd >= PROCESS64_MAX_FILES || !process->files[oldfd].used) {
+		goto out;
+	}
+	status = -24;
+	for (int fd = minimum; fd < PROCESS64_MAX_FILES; fd++) {
+		if (process->files[fd].used) { continue; }
+		status = duplicate_file64(&process->files[oldfd], &process->files[fd], cloexec);
+		if (status == 0) { *newfd = fd; }
+		break;
+	}
+out:
+	platform_irq_restore64(irq);
+	return status;
+}
+
+int process_file_dup264(struct PROCESS64 *process, int oldfd, int newfd)
+{
+	if (process == NULL) { return -22; }
+	if (oldfd < 3 || oldfd >= PROCESS64_MAX_FILES ||
+		newfd < 3 || newfd >= PROCESS64_MAX_FILES) { return -9; }
+	uint64_t irq = platform_irq_save64();
+	int status = -9;
+
+	if (process->files[oldfd].used) {
+		status = oldfd == newfd ? 0 :
+			duplicate_file64(&process->files[oldfd], &process->files[newfd], 0);
+	}
+	platform_irq_restore64(irq);
+	return status;
+}
+
 int process_file_inherit64(struct PROCESS64 *parent, struct PROCESS64 *child)
 {
 	uint64_t irq = platform_irq_save64();
@@ -27,10 +93,10 @@ int process_file_inherit64(struct PROCESS64 *parent, struct PROCESS64 *child)
 
 	for (size_t i = 3; i < PROCESS64_MAX_FILES; i++) {
 		if (!parent->files[i].used) { continue; }
-		struct UNIX_FILE64 *shared = promote_file64(&parent->files[i]);
+		struct UNIX_FILE64 *shared;
 
-		if (shared == NULL) { status = -23; break; }
-		shared->references++;
+		status = retain_file64(&parent->files[i], &shared);
+		if (status != 0) { break; }
 		child->files[i] = parent->files[i];
 	}
 	child->closed_stdio = parent->closed_stdio;
