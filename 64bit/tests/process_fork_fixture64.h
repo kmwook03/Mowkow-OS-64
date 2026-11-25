@@ -112,10 +112,7 @@ static void fork_transaction64(void)
 	assert(*(uint64_t *) child->memory->heap_backing == 0x12345678);
 	*(uint64_t *) child->memory->heap_backing = 9;
 	assert(*(uint64_t *) parent->memory->heap_backing == 0x12345678);
-	struct FDHANDLE64 *handle;
-
-	assert(process_file_lock64(&child->files[3], &handle) == 0);
-	handle->pos = 19; process_file_unlock64(&child->files[3]);
+	child->files[3].shared->handle.pos = 19;
 	assert(parent->files[3].shared->handle.pos == 19);
 	assert(process64_wait_user64(pid, (void *) parent->memory->heap.base, 1) == 0);
 	assert(*(uint64_t *) parent->memory->heap_backing == 0x12345678);

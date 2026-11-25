@@ -4,7 +4,6 @@
 static void file_duplicates64(void)
 {
 	struct PROCESS64 process = {0};
-	struct FDHANDLE64 *handle;
 	int fd = -1;
 
 	install_file_fixture64(&process, 3, 7, 1);
@@ -13,11 +12,9 @@ static void file_duplicates64(void)
 
 	assert(shared && shared->references == 2);
 	assert(process.files[4].shared == shared && !process.files[4].cloexec);
-	assert(process_file_lock64(&process.files[4], &handle) == 0);
-	assert(handle->pos == 7);
-	handle->pos = 19; process_file_unlock64(&process.files[4]);
-	assert(process_file_lock64(&process.files[3], &handle) == 0);
-	assert(handle->pos == 19); process_file_unlock64(&process.files[3]);
+	assert(shared->handle.pos == 7);
+	shared->handle.pos = 19;
+	assert(process.files[4].shared->handle.pos == 19);
 	assert(process_file_dup264(&process, 3, 3) == 0);
 	assert(process.files[3].cloexec && shared->references == 2);
 	assert(process_file_dup264(&process, 3, 4) == 0 && shared->references == 2);

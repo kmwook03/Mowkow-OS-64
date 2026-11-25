@@ -83,7 +83,5 @@ int64_t process_file_seek64(struct PROCESS64_FILE *file, int64_t offset, int whe
  * Kernel-owned output is published only on success; returns 0 or errno.
  */
 int process_file_stat64(struct PROCESS64_FILE *file, struct FILE_INFO64 *info);
-int process_file_lock64(struct PROCESS64_FILE *file, struct FDHANDLE64 **handle);
-void process_file_unlock64(struct PROCESS64_FILE *file);
 
 #endif

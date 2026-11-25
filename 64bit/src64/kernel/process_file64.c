@@ -301,6 +301,11 @@ static int lock_file64(struct PROCESS64_FILE *file)
 	return mutex64_lock(&file->shared->mutex);
 }
 
+static void process_file_unlock64(struct PROCESS64_FILE *file)
+{
+	if (file->shared != NULL) { (void) mutex64_unlock(&file->shared->mutex); }
+}
+
 int64_t process_file_read64(struct PROCESS64_FILE *file, void *buffer, size_t size)
 {
 	if (file == NULL) { return -9; }
@@ -361,17 +366,4 @@ int process_file_stat64(struct PROCESS64_FILE *file, struct FILE_INFO64 *info)
 	process_file_unlock64(file);
 	if (status == 0) { *info = snapshot; }
 	return status;
-}
-
-int process_file_lock64(struct PROCESS64_FILE *file, struct FDHANDLE64 **handle)
-{
-	int status = lock_file64(file);
-
-	if (status == 0) { *handle = &file->shared->handle; }
-	return status;
-}
-
-void process_file_unlock64(struct PROCESS64_FILE *file)
-{
-	if (file->shared != NULL) { (void) mutex64_unlock(&file->shared->mutex); }
 }

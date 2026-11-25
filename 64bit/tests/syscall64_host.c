@@ -37,7 +37,6 @@ static int seek_mutate64;
 static uint32_t open_calls;
 static uint32_t create_calls;
 static uint32_t truncate_calls;
-static uint32_t read_calls;
 static uint32_t write_calls;
 static uint32_t seek_calls;
 static int64_t last_offset;
@@ -288,16 +287,6 @@ int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size)
 	return truncate_result;
 }
 
-size_t fd64_read(struct FDHANDLE64 *fh, void *dst, size_t size)
-{
-	assert(pins64 > 0);
-	(void) fh;
-	if ((void *) dst != snapshot64) { abi_error = 1; }
-	memset(dst, 0x6b, io_result < size ? io_result : size);
-	read_calls++;
-	return io_result < size ? io_result : size;
-}
-
 size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
 {
 	assert(held_mutex64 != NULL);
@@ -495,7 +484,7 @@ static void reset64(void)
 	seek_result = 0;
 	seek_mutate64 = 0;
 	open_calls = create_calls = truncate_calls = 0;
-	read_calls = write_calls = seek_calls = 0;
+	write_calls = seek_calls = 0;
 	console_reads = console_writes = 0;
 	io_result = 3;
 	console_read_result = 3;
@@ -641,17 +630,29 @@ static int test_files64(void)
 	CHECK64(call64(SYS_WRITE, 0, buffer, 8, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_READ, 1, buffer, 8, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_READ, 2, buffer, 8, 0, 0) == ERROR64);
-	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == 3);
+	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == 7);
+	/* A failed FAT read keeps the legacy zero count; other errors are -1. */
+	checked_error64 = -5;
+	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == 0);
+	checked_error64 = -22;
+	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == ERROR64);
+	checked_error64 = 0;
 	CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == 3);
 	io_result = 0;
 	/* A failed FAT write keeps the legacy zero-count result. */
 	CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == 0);
 	io_result = 3;
+	process.files[3].shared->handle.info.size = 100;
 	CHECK64(call64(SYS_SEEK, 3, (uint64_t) -17, 2, 0, 0) == 0);
 	CHECK64(last_offset == -17 && last_whence == 2 && seek_calls == 1);
+	/* Legacy seek failures stay -1; out-of-range offsets never reach FAT. */
+	CHECK64(call64(SYS_SEEK, 3, 101, 0, 0, 0) == ERROR64);
+	seek_result = -1;
+	CHECK64(call64(SYS_SEEK, 3, 1, 0, 0, 0) == ERROR64);
+	seek_result = 0;
 	CHECK64(call64(SYS_SEEK, 3, 0, (1ULL << 32) | 1, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_SEEK, 3, 0, 3, 0, 0) == ERROR64);
-	CHECK64(seek_calls == 1);
+	CHECK64(seek_calls == 2 && held_mutex64 == NULL);
 	for (i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
 		CHECK64(call64(SYS_SEEK, invalid[i], 0, 0, 0, 0) == ERROR64);
 		CHECK64(call64(SYS_CLOSE, invalid[i], 0, 0, 0, 0) == ERROR64);
@@ -660,15 +661,15 @@ static int test_files64(void)
 			CHECK64(call64(SYS_WRITE, invalid[i], buffer, 8, 0, 0) == ERROR64);
 		}
 	}
-	CHECK64(read_calls == 1 && write_calls == 2 && seek_calls == 1);
+	CHECK64(checked_calls64 == 3 && write_calls == 2 && seek_calls == 2);
 	CHECK64(call64(SYS_READ, 3, 0, 8, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_WRITE, 3, buffer, UINT64_MAX, 0, 0) == ERROR64);
-	CHECK64(read_calls == 1 && write_calls == 2);
+	CHECK64(checked_calls64 == 3 && write_calls == 2);
 	CHECK64(call64(SYS_CLOSE, 3, 0, 0, 0, 0) == 0);
 	CHECK64(call64(SYS_CLOSE, 3, 0, 0, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == ERROR64);
-	CHECK64(process.files[0].used == 1 && read_calls == 1 && write_calls == 2);
+	CHECK64(process.files[0].used == 1 && checked_calls64 == 3 && write_calls == 2);
 	return 0;
 }
 
@@ -851,7 +852,7 @@ static int test_copy_boundary64(void)
 	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, buffer, 8, 0) == -14);
 	CHECK64((int64_t) call64(SYS_FILE, FILE_FSTAT64, 3, buffer, 0, 0) == -14);
 	CHECK64((int64_t) call64(SYS_FILE, FILE_STAT64, buffer, buffer, 0, 0) == -14);
-	CHECK64(read_calls == 0 && console_reads == 0 && checked_calls64 == 0);
+	CHECK64(console_reads == 0 && checked_calls64 == 0);
 	CHECK64(call64(SYS_WRITE, 1, buffer, 8, 0, 0) == 8);
 	CHECK64(memcmp(snapshot64, user_buffer, 8) == 0);
 	readonly64 = 0;
@@ -859,7 +860,7 @@ static int test_copy_boundary64(void)
 	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == ERROR64);
 	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, buffer, 8, 0) == -12);
-	CHECK64(read_calls == 0 && write_calls == 0 && checked_calls64 == 0);
+	CHECK64(write_calls == 0 && checked_calls64 == 0);
 	io_failure64 = 0;
 	checked_error64 = -5;
 	CHECK64((int64_t) call64(SYS_FILE, FILE_READ64, 3, buffer, 8, 0) == -5);
@@ -1260,7 +1261,7 @@ static int test_unix_reservation64(void)
 	for (uint64_t number = 0x100; number <= 0x1ff; number++) {
 		CHECK64((int64_t) call64(number, 37, UINT64_MAX, UINT64_MAX, 0, 0) == -38);
 	}
-	CHECK64(process.exited == 0 && open_calls == 0 && read_calls == 0);
+	CHECK64(process.exited == 0 && open_calls == 0 && checked_calls64 == 0);
 	CHECK64(write_calls == 0 && console_writes == 0 && console_reads == 0);
 	CHECK64(call64(0xff, 0, 0, 0, 0, 0) == ERROR64);
 	CHECK64(call64(0x200, 0, 0, 0, 0, 0) == ERROR64);

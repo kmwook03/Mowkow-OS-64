@@ -119,14 +119,10 @@ static int64_t syscall_read64(struct PROCESS64 *process, uint64_t fd,
 		return checked ? -14 : -1;
 	}
 	if (fd == 0) { result = (int64_t) console64_read_con(process->console, snapshot, size); }
-	else if (checked) {
+	else {
 		result = process_file_read64(&process->files[fd], snapshot, (size_t) size);
-	} else {
-		result = process_file_lock64(&process->files[fd], &fh);
-		if (result == 0) {
-			result = (int64_t) fd64_read(fh, snapshot, (size_t) size);
-			process_file_unlock64(&process->files[fd]);
-		}
+		/* Legacy ABI: backend failure is a zero count; descriptor failure is -1. */
+		if (!checked && result < 0) { result = result == -5 ? 0 : -1; }
 	}
 	if (result >= 0) {
 		if ((uint64_t) result > size) { result = -5; }
@@ -155,16 +151,11 @@ static int syscall_stat64(struct PROCESS64_FILE *file, const char *name, void *b
 static int syscall_seek64(struct PROCESS64 *process, uint64_t fd,
 	int64_t offset, uint64_t whence)
 {
-	struct FDHANDLE64 *fh = syscall_file64(process, fd);
-
-	if (fh == NULL || whence > 2) {
+	if (syscall_file64(process, fd) == NULL || whence > 2) {
 		return -1;
 	}
-	if (process_file_lock64(&process->files[fd], &fh) != 0) { return -1; }
-	int status = fd64_seek(fh, offset, (int) whence);
-
-	process_file_unlock64(&process->files[fd]);
-	return status;
+	/* Legacy ABI: 0 or -1; a failed seek preserves the shared cursor. */
+	return process_file_seek64(&process->files[fd], offset, (int) whence) < 0 ? -1 : 0;
 }
 
 static int syscall_close64(struct PROCESS64 *process, uint64_t fd)
