@@ -102,6 +102,56 @@ int sys_open(const char *path, int flags, mode_t, int *fd)
 	return error;
 }
 
+/* dup3 flags are unsupported; the Linux option that passes them is disabled. */
+int sys_dup(int fd, int flags, int *newfd)
+{
+	if (flags & ~O_CLOEXEC) { return EINVAL; }
+	int64_t result = call(UNIX64_SYS_FCNTL, fd,
+		(flags & O_CLOEXEC) ? UNIX64_F_DUPFD_CLOEXEC : UNIX64_F_DUPFD, 0);
+	int error = unix64_result_errno(result);
+	if (!error) { *newfd = (int) result; }
+	return error;
+}
+
+int sys_dup2(int fd, int flags, int newfd)
+{
+	if (flags) { return EINVAL; }
+	return unix64_result_errno(call(UNIX64_SYS_DUP2, fd, newfd));
+}
+
+/* Translate libc F_* and FD_CLOEXEC explicitly; the wire is not a libc ABI. */
+int sys_fcntl(int fd, int request, va_list args, int *result)
+{
+	uint64_t command;
+	uint64_t argument = 0;
+
+	switch (request) {
+	case F_DUPFD:
+	case F_DUPFD_CLOEXEC: {
+		int minimum = va_arg(args, int);
+		if (minimum < 0) { return EINVAL; }
+		command = request == F_DUPFD ? UNIX64_F_DUPFD : UNIX64_F_DUPFD_CLOEXEC;
+		argument = (uint64_t) minimum;
+		break;
+	}
+	case F_GETFD: command = UNIX64_F_GETFD; break;
+	case F_SETFD: {
+		int flags = va_arg(args, int);
+		if (flags & ~FD_CLOEXEC) { return EINVAL; }
+		command = UNIX64_F_SETFD;
+		argument = (flags & FD_CLOEXEC) ? UNIX64_FD_CLOEXEC : 0;
+		break;
+	}
+	default: return EINVAL;
+	}
+	int64_t value = call(UNIX64_SYS_FCNTL, fd, command, argument);
+	int error = unix64_result_errno(value);
+	if (error) { return error; }
+	*result = request == F_GETFD ? ((value & UNIX64_FD_CLOEXEC) ? FD_CLOEXEC : 0) :
+		(int) value;
+	return 0;
+}
+
 int sys_close(int fd) { return unix64_result_errno(call(UNIX64_SYS_CLOSE, fd)); }
 int sys_isatty(int fd) { return unix64_result_errno(call(UNIX64_SYS_ISATTY, fd)); }
 

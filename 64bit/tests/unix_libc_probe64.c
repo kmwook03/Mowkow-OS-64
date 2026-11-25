@@ -240,6 +240,25 @@ int main(int argc, char **argv)
 	REQUIRE(fd >= 3);
 	REQUIRE(read(fd, buffer, sizeof(buffer)) == 11 && memcmp(buffer, "libc-input\n", 11) == 0);
 	REQUIRE(read(fd, buffer, sizeof(buffer)) == 0);
+	/* FAT duplicates share the offset; descriptor flags stay per FD. */
+	REQUIRE(fcntl(fd, F_GETFL) == -1 && errno == EINVAL);
+	REQUIRE(fcntl(fd, F_GETFD) == FD_CLOEXEC);
+	int copy = fcntl(fd, F_DUPFD, fd);
+
+	REQUIRE(copy > fd && fcntl(copy, F_GETFD) == 0);
+	REQUIRE(lseek(copy, 0, SEEK_CUR) == 11);
+	REQUIRE(fcntl(copy, F_SETFD, FD_CLOEXEC) == 0 && fcntl(copy, F_GETFD) == FD_CLOEXEC);
+	REQUIRE(dup2(fd, copy) == copy && fcntl(copy, F_GETFD) == 0);
+	REQUIRE(close(copy) == 0);
+	/* Stdio is an ordinary OFD: dup takes the lowest FD and stdin redirects. */
+	int saved = dup(0);
+
+	REQUIRE(saved == copy && isatty(saved));
+	REQUIRE(write(saved, "x", 1) == -1 && errno == EBADF);
+	REQUIRE(dup2(fd, 0) == 0 && !isatty(0) && errno == ENOTTY);
+	REQUIRE(lseek(0, 0, SEEK_SET) == 0 && read(0, buffer, 4) == 4);
+	REQUIRE(memcmp(buffer, "libc", 4) == 0 && lseek(fd, 0, SEEK_CUR) == 4);
+	REQUIRE(dup2(saved, 0) == 0 && isatty(0) && close(saved) == 0);
 	REQUIRE(lseek(fd, 5, SEEK_SET) == 5);
 	REQUIRE(read(fd, buffer, sizeof(buffer)) == 6 && memcmp(buffer, "input\n", 6) == 0);
 	REQUIRE(close(fd) == 0);

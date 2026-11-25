@@ -39,9 +39,9 @@
 #define UNIX64_SYS_SIGNAL_RETURN 0x114
 #define UNIX64_SYS_SIGNAL_SEND 0x115 /* positive PID; coalesced, deferred while active */
 #define UNIX64_SYS_FCNTL 0x116       /* fd, wire command, argument */
-/* FAT slots 3..7 only: oldfd, newfd -> newfd. Invalid source/range is EBADF;
- * stdio source/target is ENOTSUP. Replacement clears CLOEXEC; self-dup keeps it.
- * Failure preserves target. Stdio redirection awaits console FD unification.
+/* oldfd, newfd -> newfd over every slot, stdio included. Invalid source/range
+ * is EBADF. Replacement clears CLOEXEC; self-dup keeps it. Failure preserves
+ * the target.
  */
 #define UNIX64_SYS_DUP2 0x117
 /* Wire commands are independent of libc's F_* values. GETFD ignores argument;
@@ -49,8 +49,7 @@
  */
 #define UNIX64_F_GETFD 1
 #define UNIX64_F_SETFD 2
-/* Temporary FAT bridge: source and minimum must be in slots 3..7.
- * Stdio source or minimum 0..2 returns ENOTSUP; out-of-range minimum EINVAL.
+/* Any open source; out-of-range minimum is EINVAL.
  * Returns the lowest free FD >= minimum, or EMFILE when no slot remains.
  * DUPFD clears CLOEXEC; DUPFD_CLOEXEC sets it. Both share the source offset.
  */

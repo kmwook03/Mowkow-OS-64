@@ -29,7 +29,7 @@ struct PROCESS64_RANGE {
 struct PROCESS64_FILE {
 	int used;
 	int cloexec;
-	/* Every used file slot (3+) owns one OFD reference; stdio is separate. */
+	/* Every used slot, stdio included, owns one OFD reference. */
 	struct UNIX_FILE64 *shared;
 };
 
@@ -113,7 +113,6 @@ struct PROCESS64 {
 	int signal_active;
 	int signal_pending;
 	struct PROCESS64_FILE files[PROCESS64_MAX_FILES];
-	unsigned int closed_stdio;
 	/* stdin/stdout이 향할 콘솔. 앱을 띄운 콘솔이지 그때그때 활성인 콘솔이
 	   아니다 -- 콘솔 2에서 띄운 앱이 콘솔 1에 찍으면 안 된다. */
 	struct CONSOLE64 *console;

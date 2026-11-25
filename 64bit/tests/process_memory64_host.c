@@ -20,6 +20,17 @@
 #include "../src64/arch/x86_64/user_signal64.c"
 #endif
 
+void console64_write_con(struct CONSOLE64 *console, const char *text, uint64_t size)
+{
+	(void) console; (void) text; (void) size;
+	assert(!"process lifecycle fixture must not write the console");
+}
+uint64_t console64_read_con(struct CONSOLE64 *console, char *buffer, uint64_t size)
+{
+	(void) console; (void) buffer; (void) size;
+	assert(!"process lifecycle fixture must not read the console");
+	return 0;
+}
 int mutex64_lock(struct MUTEX64 *mutex) { assert(!mutex->locked); mutex->locked = 1; return 0; }
 int mutex64_unlock(struct MUTEX64 *mutex) { assert(mutex->locked); mutex->locked = 0; return 0; }
 static void install_file_fixture64(struct PROCESS64 *owner, int fd, uint32_t pos,

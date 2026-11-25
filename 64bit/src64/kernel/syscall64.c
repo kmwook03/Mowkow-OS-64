@@ -42,7 +42,9 @@ static int validate_filename_utf864(const char *name, size_t length)
 
 static struct FDHANDLE64 *syscall_file64(struct PROCESS64 *process, uint64_t fd)
 {
-	if (fd < 3 || fd >= PROCESS64_MAX_FILES || process->files[fd].used == 0) {
+	/* Legacy file-only calls never reach console streams, even duplicated. */
+	if (fd < 3 || fd >= PROCESS64_MAX_FILES || process->files[fd].used == 0 ||
+		process_file_tty64(&process->files[fd])) {
 		return NULL;
 	}
 	return process->files[fd].shared != NULL ? &process->files[fd].shared->handle : NULL;
@@ -74,20 +76,14 @@ static int syscall_open64(struct PROCESS64 *process, const char *path, uint64_t 
 static int64_t syscall_write64(struct PROCESS64 *process, uint64_t fd,
 	const void *buffer, uint64_t size)
 {
-	struct FDHANDLE64 *fh;
 	void *snapshot;
 
 	if (size > INT64_MAX ||
 		!process64_user_range_valid(buffer, (size_t) size)) { return -1; }
-	fh = syscall_file64(process, fd);
-	if (fh == NULL && !((fd == 1 || fd == 2) && process->console != NULL)) { return -1; }
+	if (fd >= PROCESS64_MAX_FILES || !process->files[fd].used) { return -1; }
 	snapshot = process64_io_buffer((size_t) size);
 	if (snapshot == NULL || copy_from_user64(snapshot, buffer, (size_t) size) != 0) {
 		return -1;
-	}
-	if (fd == 1 || fd == 2) {
-		console64_write_con(process->console, snapshot, size);
-		return (int64_t) size;
 	}
 	int64_t result = process_file_write64(&process->files[fd], snapshot, (size_t) size);
 
@@ -103,27 +99,23 @@ static int64_t syscall_write64(struct PROCESS64 *process, uint64_t fd,
 static int64_t syscall_read64(struct PROCESS64 *process, uint64_t fd,
 	void *buffer, uint64_t size, int checked)
 {
-	struct FDHANDLE64 *fh = syscall_file64(process, fd);
 	struct USER_ACCESS64 access = {0};
 	void *snapshot;
 	int64_t result;
 
-	if (fd == 0 && process->fork_task != NULL) { return -95; }
-	if (checked && fh == NULL) { return -9; }
+	/* Checked reads remain a FAT-file API; unchecked reads follow any FD. */
+	if (checked && syscall_file64(process, fd) == NULL) { return -9; }
 	if (size > INT64_MAX) { return checked ? -22 : -1; }
 	if (!process64_user_write_valid(buffer, (size_t) size)) { return checked ? -14 : -1; }
-	if (fh == NULL && !(fd == 0 && process->console != NULL)) { return -1; }
+	if (fd >= PROCESS64_MAX_FILES || !process->files[fd].used) { return -1; }
 	snapshot = process64_io_buffer((size_t) size);
 	if (snapshot == NULL) { return checked ? -12 : -1; }
 	if (user_access_begin64(&access, buffer, (size_t) size, USER_WRITE64) != 0) {
 		return checked ? -14 : -1;
 	}
-	if (fd == 0) { result = (int64_t) console64_read_con(process->console, snapshot, size); }
-	else {
-		result = process_file_read64(&process->files[fd], snapshot, (size_t) size);
-		/* Legacy ABI: backend failure is a zero count; descriptor failure is -1. */
-		if (!checked && result < 0) { result = result == -5 ? 0 : -1; }
-	}
+	result = process_file_read64(&process->files[fd], snapshot, (size_t) size);
+	/* Legacy ABI: backend failure is a zero count; descriptor failure is -1. */
+	if (!checked && result < 0) { result = result == -5 ? 0 : -1; }
 	if (result >= 0) {
 		if ((uint64_t) result > size) { result = -5; }
 		else if (copy_to_user_access64(&access, snapshot, (size_t) result) != 0) {

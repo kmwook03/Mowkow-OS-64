@@ -764,7 +764,8 @@ int process64_prepare_file(const char *path, const char *cmdline,
 	if (process == NULL) { return -11; }
 	*result = process;
 	process->console = console;
-	status = address_space_create64(&process->memory->space);
+	status = console != NULL ? process_file_stdio64(process, console) : 0;
+	if (status == 0) { status = address_space_create64(&process->memory->space); }
 	if (status == 0) { status = elf64_prepare_image(name, process); }
 	if (status != 0) { goto failed; }
 	status = user_backing_alloc64(&process->memory->stack_storage,

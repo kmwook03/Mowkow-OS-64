@@ -1,5 +1,4 @@
-/* Temporary v1 console/read-only FAT and libc-arena boundary until VFS/VM. */
-#include <console64.h>
+/* Temporary v1 read-only FAT and libc-arena boundary until VFS/VM. */
 #include <kstring64.h>
 #include <process64.h>
 #include <process_file64.h>
@@ -13,47 +12,36 @@ _Static_assert(UNIX_HEAP_SIZE64 / USER_PAGE_SIZE64 < UINT16_MAX,
 
 static int valid_fd64(const struct PROCESS64 *process, uint64_t fd)
 {
-	if (fd >= PROCESS64_MAX_FILES) { return 0; }
-	if (fd < 3) {
-		return process->console != NULL && !(process->closed_stdio & (1U << fd));
-	}
-	return process->files[fd].used;
+	return fd < PROCESS64_MAX_FILES && process->files[fd].used;
 }
 
 static int64_t unix_io64(struct PROCESS64 *process, uint64_t fd,
 	void *buffer, uint64_t size, int writing)
 {
 	struct USER_ACCESS64 access = {0};
+	struct PROCESS64_FILE *file;
 	void *snapshot;
 	int64_t result;
 
-	if (!valid_fd64(process, fd) || (writing && fd == 0) ||
-		(!writing && (fd == 1 || fd == 2))) { return -9; }
+	if (!valid_fd64(process, fd)) { return -9; }
+	file = &process->files[fd];
+	result = process_file_check64(file, writing);
+	if (result != 0) { return result; }
 	/* FAT's legacy unsigned write result cannot express a reliable errno. */
-	if (writing && fd >= 3) { return -30; }
+	if (writing && !process_file_tty64(file)) { return -30; }
 	if (size > INT64_MAX) { return -22; }
 	if (size == 0) { return 0; }
-	/* The temporary console has one owner task/FIFO reader. Shared TTY input
-	 * needs A3's reader queue; never sleep a fork child's parent task here.
-	 */
-	if (!writing && fd == 0 && process->fork_task != NULL) { return -95; }
 	if (writing ? !process64_user_range_valid(buffer, size) :
 		!process64_user_write_valid(buffer, size)) { return -14; }
 	snapshot = process64_io_buffer(size);
 	if (snapshot == NULL) { return -12; }
 	if (writing) {
 		if (copy_from_user64(snapshot, buffer, size) != 0) { return -14; }
-		console64_write_con(process->console, snapshot, size);
-		return (int64_t) size;
+		return process_file_write64(file, snapshot, size);
 	}
 	result = user_access_begin64(&access, buffer, size, USER_WRITE64);
 	if (result != 0) { return result; }
-	if (fd == 0) {
-		result = (int64_t) console64_read_con(process->console, snapshot, size);
-		if (result < 0) { result = -4; }
-	} else {
-		result = process_file_read64(&process->files[fd], snapshot, size);
-	}
+	result = process_file_read64(file, snapshot, size);
 	if (result >= 0) {
 		if ((uint64_t) result > size) { result = -5; }
 		else if (copy_to_user_access64(&access, snapshot, result) != 0) { result = -14; }
@@ -134,7 +122,6 @@ int64_t unix_bridge_call64(struct PROCESS64 *process, uint64_t number,
 	case UNIX64_SYS_OPEN: return unix_open64(process, (const char *) a0, a1);
 	case UNIX64_SYS_DUP2:
 		if (!valid_fd64(process, a0) || a1 >= PROCESS64_MAX_FILES) { return -9; }
-		if (a0 < 3 || a1 < 3) { return -95; }
 		status = process_file_dup264(process, (int) a0, (int) a1);
 		return status != 0 ? status : (int64_t) a1;
 	case UNIX64_SYS_FCNTL:
@@ -142,8 +129,6 @@ int64_t unix_bridge_call64(struct PROCESS64 *process, uint64_t number,
 		if (!valid_fd64(process, a0)) { return -9; }
 		if (a1 == UNIX64_F_DUPFD || a1 == UNIX64_F_DUPFD_CLOEXEC) {
 			if (a2 >= PROCESS64_MAX_FILES) { return -22; }
-			/* Do not skip a closed stdio slot and claim lowest-FD semantics. */
-			if (a0 < 3 || a2 < 3) { return -95; }
 			status = process_file_dup64(process, (int) a0, (int) a2,
 				a1 == UNIX64_F_DUPFD_CLOEXEC, &newfd);
 			return status != 0 ? status : newfd;
@@ -163,10 +148,9 @@ int64_t unix_bridge_call64(struct PROCESS64 *process, uint64_t number,
 		return process_fd_close64(process, (int) a0);
 	case UNIX64_SYS_ISATTY:
 		if (!valid_fd64(process, a0)) { return -9; }
-		return a0 < 3 ? 0 : -25;
+		return process_file_tty64(&process->files[a0]) ? 0 : -25;
 	case UNIX64_SYS_SEEK:
 		if (!valid_fd64(process, a0)) { return -9; }
-		if (a0 < 3) { return -29; }
 		if (a2 > 2) { return -22; }
 		return process_file_seek64(&process->files[a0], (int64_t) a1, (int) a2);
 	default: return -38;

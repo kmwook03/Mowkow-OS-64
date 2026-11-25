@@ -6,8 +6,11 @@
 
 struct UNIX_FILE64;
 
-/* Immutable for the OFD lifetime. Called in task context with its mutex held;
- * callbacks may sleep but must not reacquire that mutex or access user memory.
+/* Immutable for the OFD lifetime. Called in task context; callbacks may sleep
+ * but must not reacquire the OFD mutex or access user memory. Seekable OFDs
+ * hold that mutex around every callback. Streams (no seek) have no shared
+ * cursor and synchronize internally, so a blocked reader never stalls a writer.
+ * Missing read/write is EBADF (wrong direction); missing seek is ESPIPE.
  * Read/write/seek return signed count/offset or errno; stat returns 0 or
  * errno. Failed seek must preserve backend state. Stat writes only its snapshot.
  */
@@ -27,31 +30,42 @@ struct UNIX_FILE64 {
 	struct MUTEX64 mutex;
 	const struct PROCESS_FILE_OPS64 *ops;
 	struct FDHANDLE64 handle;
+	/* Console streams only; outlived by every process that can share the OFD. */
+	struct CONSOLE64 *console;
 };
 
 int process_file_inherit64(struct PROCESS64 *parent, struct PROCESS64 *child);
+/* Install console stdio in an unpublished process with an empty table:
+ * fd 0 is a read-only input OFD and fds 1/2 share one write-only output OFD.
+ * Returns 0 or -ENFILE, leaving the table empty on failure.
+ */
+int process_file_stdio64(struct PROCESS64 *process, struct CONSOLE64 *console);
+/* Nonzero when an open descriptor names a console stream. irq-safe snapshot. */
+int process_file_tty64(const struct PROCESS64_FILE *file);
+/* Validate an open descriptor for one direction without I/O: 0 or -EBADF. */
+int process_file_check64(const struct PROCESS64_FILE *file, int writing);
 /* name is a kernel-owned snapshot; flags use fd64_open_checked's contract.
  * Reserve an OFD before backend I/O, publish the FD/output only on success.
- * Task context, one execution flow per table; slots 3..MAX_FILES-1 only.
+ * Task context, one execution flow per table; takes the lowest free slot.
  */
 int process_file_open64(struct PROCESS64 *process, const char *name,
 	unsigned int flags, int cloexec, int *newfd);
 /* Legacy backend sequencing; flags are FILE_CREATE64/FILE_TRUNCATE64.
- * Returns errno-style failures; the syscall boundary maps legacy errors.
+ * Never returns a stdio slot. Returns errno-style failures; the syscall
+ * boundary maps legacy errors.
  */
 int process_file_open_legacy64(struct PROCESS64 *process, const char *name,
 	unsigned int flags, int *newfd);
-/* Internal FAT FD operations, limited to slots 3..MAX_FILES-1. Task context
- * only, under the single-execution-flow ownership above; no user ABI yet.
- * Both return 0 or negative errno. dup chooses the lowest free slot >= minimum
- * and writes a kernel-owned newfd only on success. dup2 atomically replaces its
- * target and clears CLOEXEC; self-dup preserves it. Failure preserves target.
+/* Descriptor duplication over every slot, including stdio. Task context only,
+ * under the single-execution-flow ownership above. Both return 0 or errno.
+ * dup chooses the lowest free slot >= minimum and writes a kernel-owned newfd
+ * only on success. dup2 atomically replaces its target and clears CLOEXEC;
+ * self-dup preserves it. Failure preserves target.
  */
 int process_file_dup64(struct PROCESS64 *process, int oldfd, int minimum,
 	int cloexec, int *newfd);
 int process_file_dup264(struct PROCESS64 *process, int oldfd, int newfd);
-/* Same task/table ownership as dup; includes open console descriptors 0..2.
- * CLOEXEC is 0 or 1. Stdio stores only this flag in its file-table slot.
+/* Same task/table ownership as dup. CLOEXEC is 0 or 1 per descriptor.
  * Get writes its kernel-owned output only on success; set preserves aliases.
  */
 int process_file_get_cloexec64(struct PROCESS64 *process, int fd, int *cloexec);
@@ -63,7 +77,7 @@ int process_file_set_cloexec64(struct PROCESS64 *process, int fd, int cloexec);
 int process_fd_close64(struct PROCESS64 *process, int fd);
 void process_file_close64(struct PROCESS64_FILE *file);
 void process_files_close64(struct PROCESS64 *process, int cloexec_only);
-/* Read once into a kernel-owned buffer while holding the OFD cursor mutex.
+/* Read once into a kernel-owned buffer, holding a seekable OFD's cursor mutex.
  * Task context; caller retains the descriptor through sleeping I/O and owns
  * buffer capacity. Returns signed byte count/errno. Errors may advance offset;
  * caller must discard buffer contents on error. No user-memory access here.

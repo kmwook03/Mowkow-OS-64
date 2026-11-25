@@ -92,7 +92,8 @@ static void fork_transaction64(void)
 	unix_fixture64(); assert(exec_fixture64(parent) == 0);
 	install_file_fixture64(parent, 3, 7, 0);
 	install_file_fixture64(parent, 4, 0, 1);
-	parent->closed_stdio = 4;
+	assert(process_file_stdio64(parent, (struct CONSOLE64 *) &console_tokens64[0]) == 0);
+	assert(process_fd_close64(parent, 2) == 0);
 	parent->memory->anon_pages[0] = 1;
 	*(uint64_t *) parent->memory->heap_backing = 0x12345678;
 	size_t base = live_pages64;
@@ -107,7 +108,8 @@ static void fork_transaction64(void)
 	assert(child->thread.fork_context.tls == context.tls);
 	assert(child->files[3].shared == parent->files[3].shared);
 	assert(child->files[3].shared->references == 2 && child->files[4].cloexec);
-	assert(child->closed_stdio == 4 && child->memory->anon_pages[0] == 1);
+	assert(child->files[1].shared == parent->files[1].shared && !child->files[2].used);
+	assert(child->files[1].shared->references == 2 && child->memory->anon_pages[0] == 1);
 	assert(child->memory->heap_backing != parent->memory->heap_backing);
 	assert(*(uint64_t *) child->memory->heap_backing == 0x12345678);
 	*(uint64_t *) child->memory->heap_backing = 9;

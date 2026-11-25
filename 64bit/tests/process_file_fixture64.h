@@ -55,7 +55,7 @@ static void file_duplicates64(void)
 	assert(process_file_dup264(&process, 3, 3) == -9);
 	fd = 99;
 	assert(process_file_dup64(&process, 3, 3, 0, &fd) == -9 && fd == 99);
-	assert(process_file_dup64(&process, 3, 2, 0, &fd) == -22);
+	assert(process_file_dup64(&process, 3, -1, 0, &fd) == -22);
 	assert(process_file_dup64(&process, 3, 3, 2, &fd) == -22);
 	assert(process_file_dup64(&process, 3, 3, 0, NULL) == -22);
 	assert(process_file_dup264(NULL, 3, 4) == -22);
@@ -110,37 +110,53 @@ static void file_cloexec64(void)
 static void stdio_cloexec64(void)
 {
 	struct PROCESS64 parent = {0}, child = {0};
-	int value = 99;
+	struct CONSOLE64 *console = (struct CONSOLE64 *) &console_tokens64[0];
+	int value = 99, fd = -1;
 
 	assert(process_file_get_cloexec64(&parent, 0, &value) == -9 && value == 99);
 	assert(process_file_set_cloexec64(&parent, 0, 1) == -9);
-	parent.console = (struct CONSOLE64 *) &console_tokens64[0];
-	child.console = parent.console;
-	for (int fd = 0; fd < 3; fd++) {
+	assert(process_file_stdio64(NULL, console) == -22);
+	assert(process_file_stdio64(&parent, NULL) == -22 && !parent.files[0].used);
+	assert(process_file_stdio64(&parent, console) == 0);
+	struct UNIX_FILE64 *input = parent.files[0].shared, *output = parent.files[1].shared;
+
+	/* One read-only input OFD; stdout and stderr share one write-only OFD. */
+	assert(input != NULL && output != NULL && input != output);
+	assert(parent.files[2].shared == output && input->console == console);
+	assert(input->references == 1 && output->references == 2);
+	assert(process_file_check64(&parent.files[0], 0) == 0);
+	assert(process_file_check64(&parent.files[0], 1) == -9);
+	assert(process_file_check64(&parent.files[2], 1) == 0);
+	assert(process_file_check64(&parent.files[2], 0) == -9);
+	for (fd = 0; fd < 3; fd++) {
+		assert(process_file_tty64(&parent.files[fd]));
 		assert(process_file_get_cloexec64(&parent, fd, &value) == 0 && value == 0);
 		assert(process_file_set_cloexec64(&parent, fd, 1) == 0);
 	}
 	assert(process_file_set_cloexec64(&parent, 1, 0) == 0);
-	parent.closed_stdio = 4;
+	assert(process_fd_close64(&parent, 2) == 0 && output->references == 1);
+	assert(!process_file_tty64(&parent.files[2]));
+	assert(process_file_check64(&parent.files[2], 1) == -9);
 	assert(process_file_inherit64(&parent, &child) == 0);
-	assert(child.closed_stdio == 4);
+	assert(input->references == 2 && output->references == 2 && !child.files[2].used);
 	assert(process_file_get_cloexec64(&child, 0, &value) == 0 && value == 1);
 	assert(process_file_set_cloexec64(&child, 0, 0) == 0);
 	assert(process_file_set_cloexec64(&child, 1, 1) == 0);
 	value = 99;
 	assert(process_file_get_cloexec64(&child, 2, &value) == -9 && value == 99);
 	assert(process_file_set_cloexec64(&child, 2, 0) == -9);
+	/* Stdio is an ordinary slot: dup takes the lowest free FD, even below 3. */
+	assert(process_file_dup64(&child, 1, 0, 0, &fd) == 0 && fd == 2);
+	assert(child.files[2].shared == output && output->references == 3);
 	process_files_close64(&parent, 1);
 	process_files_close64(&child, 1);
-	assert(parent.closed_stdio == 5 && child.closed_stdio == 6);
-	assert(process_file_get_cloexec64(&parent, 1, &value) == 0 && value == 0);
-	assert(process_file_get_cloexec64(&child, 0, &value) == 0 && value == 0);
-	process_files_close64(&child, 1);
-	assert(child.closed_stdio == 6);
+	assert(!parent.files[0].used && parent.files[1].used);
+	assert(child.files[0].used && !child.files[1].used && child.files[2].used);
+	assert(input->references == 1 && output->references == 2);
 	process_files_close64(&parent, 0);
 	process_files_close64(&child, 0);
-	assert(parent.closed_stdio == 7 && child.closed_stdio == 7);
-	for (int fd = 0; fd < 3; fd++) {
+	assert(input->references == 0 && output->references == 0);
+	for (fd = 0; fd < 3; fd++) {
 		assert(!child.files[fd].cloexec && child.files[fd].shared == NULL);
 	}
 	assert(!irq_off64);
@@ -149,7 +165,8 @@ static void stdio_cloexec64(void)
 static void file_pool_exhaustion64(void)
 {
 	struct PROCESS64 process = {0};
-	struct PROCESS64_FILE held[PROCESS64_MAX * (PROCESS64_MAX_FILES - 3)] = {0};
+	struct PROCESS64 other = {0};
+	struct PROCESS64_FILE held[sizeof(open_files64) / sizeof(open_files64[0])] = {0};
 	int fd = 99;
 
 	/* Fill the actual fixed OFD pool, keeping each reference for cleanup. */
@@ -178,6 +195,16 @@ static void file_pool_exhaustion64(void)
 	irq = platform_irq_save64();
 	held[0].shared = allocate_file64();
 	assert(held[0].shared != NULL && held[0].shared->handle.pos == 0);
+	platform_irq_restore64(irq);
+	/* Stdio needs two OFDs; a partial reservation is returned to the pool. */
+	struct CONSOLE64 *console = (struct CONSOLE64 *) &console_tokens64[0];
+
+	assert(process_file_stdio64(&other, console) == -23 && !other.files[0].used);
+	process_file_close64(&held[2]);
+	assert(process_file_stdio64(&other, console) == -23 && !other.files[0].used);
+	irq = platform_irq_save64();
+	held[2].shared = allocate_file64();
+	assert(held[2].shared != NULL);
 	platform_irq_restore64(irq);
 	process_files_close64(&process, 0);
 	for (size_t i = 0; i < sizeof(held) / sizeof(held[0]); i++) {
