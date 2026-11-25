@@ -300,6 +300,7 @@ size_t fd64_read(struct FDHANDLE64 *fh, void *dst, size_t size)
 
 size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
 {
+	assert(held_mutex64 != NULL);
 	(void) fh;
 	if ((const void *) src != snapshot64) { abi_error = 1; }
 	write_calls++;
@@ -642,6 +643,10 @@ static int test_files64(void)
 	CHECK64(call64(SYS_READ, 2, buffer, 8, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == 3);
 	CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == 3);
+	io_result = 0;
+	/* A failed FAT write keeps the legacy zero-count result. */
+	CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == 0);
+	io_result = 3;
 	CHECK64(call64(SYS_SEEK, 3, (uint64_t) -17, 2, 0, 0) == 0);
 	CHECK64(last_offset == -17 && last_whence == 2 && seek_calls == 1);
 	CHECK64(call64(SYS_SEEK, 3, 0, (1ULL << 32) | 1, 0, 0) == ERROR64);
@@ -655,15 +660,15 @@ static int test_files64(void)
 			CHECK64(call64(SYS_WRITE, invalid[i], buffer, 8, 0, 0) == ERROR64);
 		}
 	}
-	CHECK64(read_calls == 1 && write_calls == 1 && seek_calls == 1);
+	CHECK64(read_calls == 1 && write_calls == 2 && seek_calls == 1);
 	CHECK64(call64(SYS_READ, 3, 0, 8, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_WRITE, 3, buffer, UINT64_MAX, 0, 0) == ERROR64);
-	CHECK64(read_calls == 1 && write_calls == 1);
+	CHECK64(read_calls == 1 && write_calls == 2);
 	CHECK64(call64(SYS_CLOSE, 3, 0, 0, 0, 0) == 0);
 	CHECK64(call64(SYS_CLOSE, 3, 0, 0, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == ERROR64);
-	CHECK64(process.files[0].used == 1 && read_calls == 1 && write_calls == 1);
+	CHECK64(process.files[0].used == 1 && read_calls == 1 && write_calls == 2);
 	return 0;
 }
 
@@ -1183,6 +1188,13 @@ static int64_t backend_read64(struct UNIX_FILE64 *file, void *buffer, size_t siz
 	return 2;
 }
 
+static int64_t backend_write64(struct UNIX_FILE64 *file, const void *buffer,
+	size_t size)
+{
+	assert(held_mutex64 == &file->mutex && size == 8);
+	return memcmp(buffer, "ok", 2) == 0 ? 3 : -5;
+}
+
 static int64_t backend_seek64(struct UNIX_FILE64 *file, int64_t offset, int whence)
 {
 	assert(held_mutex64 == &file->mutex && offset == 7 && whence == 1);
@@ -1201,7 +1213,7 @@ static int backend_stat64(struct UNIX_FILE64 *file, struct FILE_INFO64 *info)
 static int test_file_ops64(void)
 {
 	static const struct PROCESS_FILE_OPS64 ops = {
-		.read = backend_read64, .seek = backend_seek64,
+		.read = backend_read64, .write = backend_write64, .seek = backend_seek64,
 		.stat = backend_stat64,
 	};
 	static const struct PROCESS_FILE_OPS64 missing_ops = {0};
@@ -1215,8 +1227,13 @@ static int test_file_ops64(void)
 
 	CHECK64(process_file_read64(&file, buffer, sizeof(buffer)) == 2);
 	CHECK64(buffer[0] == 'o' && buffer[1] == 'k' && buffer[2] == 0);
+	CHECK64(process_file_write64(&file, buffer, sizeof(buffer)) == 3);
 	CHECK64(process_file_seek64(&file, 7, 1) == -29);
 	CHECK64(process_file_read64(&missing, buffer, sizeof(buffer)) == -95);
+	CHECK64(process_file_write64(&missing, buffer, sizeof(buffer)) == -95);
+	CHECK64(process_file_write64(NULL, buffer, sizeof(buffer)) == -9);
+	CHECK64(process_file_write64(&file, NULL, sizeof(buffer)) == -22);
+	CHECK64(process_file_write64(&file, buffer, SIZE_MAX) == -22);
 	CHECK64(process_file_seek64(&missing, 7, 1) == -95);
 	struct FILE_INFO64 info;
 

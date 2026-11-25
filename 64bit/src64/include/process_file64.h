@@ -8,11 +8,12 @@ struct UNIX_FILE64;
 
 /* Immutable for the OFD lifetime. Called in task context with its mutex held;
  * callbacks may sleep but must not reacquire that mutex or access user memory.
- * Read/seek return signed count/offset or errno; stat returns 0 or errno.
- * Failed seek must preserve backend state. Stat writes only its snapshot.
+ * Read/write/seek return signed count/offset or errno; stat returns 0 or
+ * errno. Failed seek must preserve backend state. Stat writes only its snapshot.
  */
 struct PROCESS_FILE_OPS64 {
 	int64_t (*read)(struct UNIX_FILE64 *file, void *buffer, size_t size);
+	int64_t (*write)(struct UNIX_FILE64 *file, const void *buffer, size_t size);
 	int64_t (*seek)(struct UNIX_FILE64 *file, int64_t offset, int whence);
 	int (*stat)(struct UNIX_FILE64 *file, struct FILE_INFO64 *info);
 };
@@ -68,6 +69,11 @@ void process_files_close64(struct PROCESS64 *process, int cloexec_only);
  * caller must discard buffer contents on error. No user-memory access here.
  */
 int64_t process_file_read64(struct PROCESS64_FILE *file, void *buffer, size_t size);
+/* Same task/descriptor ownership as read, from a kernel-owned buffer. Returns a
+ * partial count or errno. FAT reports every failed nonempty write as EIO.
+ */
+int64_t process_file_write64(struct PROCESS64_FILE *file, const void *buffer,
+	size_t size);
 /* Same task/descriptor ownership as read. whence: 0=start, 1=current, 2=end.
  * Returns new offset/errno; errors preserve the entire shared cursor state.
  * Negative positions are EINVAL; positions beyond EOF remain ENOTSUP.

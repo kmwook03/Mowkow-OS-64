@@ -89,10 +89,10 @@ static int64_t syscall_write64(struct PROCESS64 *process, uint64_t fd,
 		console64_write_con(process->console, snapshot, size);
 		return (int64_t) size;
 	}
-	if (process_file_lock64(&process->files[fd], &fh) != 0) { return -1; }
-	int64_t result = (int64_t) fd64_write(fh, snapshot, (size_t) size);
+	int64_t result = process_file_write64(&process->files[fd], snapshot, (size_t) size);
 
-	process_file_unlock64(&process->files[fd]);
+	/* Legacy ABI: backend failure is a zero count; descriptor failure is -1. */
+	if (result < 0) { return result == -5 ? 0 : -1; }
 	return result;
 }
 

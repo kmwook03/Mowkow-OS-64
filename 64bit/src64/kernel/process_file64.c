@@ -3,10 +3,12 @@
 #include <process_file64.h>
 
 static int64_t fat_read64(struct UNIX_FILE64 *file, void *buffer, size_t size);
+static int64_t fat_write64(struct UNIX_FILE64 *file, const void *buffer, size_t size);
 static int64_t fat_seek64(struct UNIX_FILE64 *file, int64_t offset, int whence);
 static int fat_stat64(struct UNIX_FILE64 *file, struct FILE_INFO64 *info);
 static const struct PROCESS_FILE_OPS64 fat_ops64 = {
 	.read = fat_read64,
+	.write = fat_write64,
 	.seek = fat_seek64,
 	.stat = fat_stat64,
 };
@@ -265,6 +267,14 @@ static int64_t fat_read64(struct UNIX_FILE64 *file, void *buffer, size_t size)
 	return fd64_read_checked(&file->handle, buffer, size);
 }
 
+static int64_t fat_write64(struct UNIX_FILE64 *file, const void *buffer, size_t size)
+{
+	/* Legacy FAT returns 0 for every failure, including read-only media. */
+	size_t written = fd64_write(&file->handle, buffer, size);
+
+	return size != 0 && written == 0 ? -5 : (int64_t) written;
+}
+
 static int64_t fat_seek64(struct UNIX_FILE64 *file, int64_t offset, int whence)
 {
 	struct FDHANDLE64 *handle = &file->handle;
@@ -301,6 +311,22 @@ int64_t process_file_read64(struct PROCESS64_FILE *file, void *buffer, size_t si
 	struct UNIX_FILE64 *shared = file->shared;
 	int64_t result = shared->ops && shared->ops->read ?
 		shared->ops->read(shared, buffer, size) : -95;
+
+	process_file_unlock64(file);
+	return result;
+}
+
+int64_t process_file_write64(struct PROCESS64_FILE *file, const void *buffer,
+	size_t size)
+{
+	if (file == NULL) { return -9; }
+	if (buffer == NULL || size > INT64_MAX) { return -22; }
+	int status = lock_file64(file);
+
+	if (status != 0) { return status; }
+	struct UNIX_FILE64 *shared = file->shared;
+	int64_t result = shared->ops && shared->ops->write ?
+		shared->ops->write(shared, buffer, size) : -95;
 
 	process_file_unlock64(file);
 	return result;
