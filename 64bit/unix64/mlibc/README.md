@@ -37,7 +37,7 @@ bare-metal GCC의 fast integer types와 libc 정의를 맞춘다. 버전·패치
 갱신하거나 최신 mlibc sysdeps 인터페이스를 이 6.3.1 포트에 섞지 않는다.
 
 지원 범위는 단일 실행 흐름의 startup/exit, TLS/errno, allocation, console stdio,
-read-only FAT root file, fork/exec/wait, 공유 OFD offset, stdio·FAT FD의
+FAT root file 읽기·쓰기(O_CREAT·O_TRUNC·O_APPEND, O_EXCL 미지원), fork/exec/wait, 공유 OFD offset, stdio·FAT FD의
 fcntl(F_DUPFD·F_DUPFD_CLOEXEC·F_GETFD·F_SETFD·F_GETFL·F_SETFL)·dup·dup2, PID, private futex와
 monotonic clock이다. syscall 실패는 positive errno와 성공 out parameter라는
 mlibc 계약으로 변환한다.

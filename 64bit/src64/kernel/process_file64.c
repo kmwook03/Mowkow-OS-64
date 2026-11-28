@@ -83,12 +83,13 @@ static int open_file64(struct PROCESS64 *process, const char *name,
 }
 
 int process_file_open64(struct PROCESS64 *process, const char *name,
-	unsigned int flags, int cloexec, int *newfd)
+	unsigned int flags, unsigned int mode, int cloexec, int *newfd)
 {
-	unsigned int access = PROCESS_FILE_READ64 |
-		(flags & FILE_WRITING64 ? PROCESS_FILE_WRITE64 : 0);
+	unsigned int access = mode & (PROCESS_FILE_READ64 | PROCESS_FILE_WRITE64);
 
-	return open_file64(process, name, flags, access, cloexec, 0, newfd,
+	if (access == 0 || (mode & ~(access | PROCESS_FILE_APPEND64)) ||
+		!(flags & FILE_WRITING64) != !(access & PROCESS_FILE_WRITE64)) { return -22; }
+	return open_file64(process, name, flags, mode, cloexec, 0, newfd,
 		fd64_open_checked);
 }
 
@@ -298,10 +299,7 @@ static int64_t fat_read64(struct UNIX_FILE64 *file, void *buffer, size_t size)
 
 static int64_t fat_write64(struct UNIX_FILE64 *file, const void *buffer, size_t size)
 {
-	/* Legacy FAT returns 0 for every failure, including read-only media. */
-	size_t written = fd64_write(&file->handle, buffer, size);
-
-	return size != 0 && written == 0 ? -5 : (int64_t) written;
+	return fd64_write_checked(&file->handle, buffer, size);
 }
 
 static int64_t fat_seek64(struct UNIX_FILE64 *file, int64_t offset, int whence)

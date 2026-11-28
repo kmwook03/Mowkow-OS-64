@@ -278,6 +278,19 @@ int main(int argc, char **argv)
 	REQUIRE(strcmp(buffer, "libc-input\n") == 0);
 	REQUIRE(fgetc(stream) == EOF && feof(stream) && !ferror(stream));
 	REQUIRE(fclose(stream) == 0);
+	/* Checked FAT writes: create/truncate, append across OFDs, then readback. */
+	REQUIRE(open("libc.out", O_RDONLY | O_CREAT) == -1 && errno == EINVAL);
+	REQUIRE(open("libc.out", O_WRONLY | O_CREAT | O_EXCL) == -1 && errno == ENOTSUP);
+	fd = open("libc.out", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+	REQUIRE(fd >= 0 && fcntl(fd, F_GETFL) == O_WRONLY);
+	REQUIRE(write(fd, "abc", 3) == 3 && read(fd, buffer, 1) == -1 && errno == EBADF);
+	REQUIRE(close(fd) == 0);
+	fd = open("libc.out", O_RDWR | O_APPEND);
+	REQUIRE(fd >= 0 && fcntl(fd, F_GETFL) == (O_RDWR | O_APPEND));
+	REQUIRE(lseek(fd, 0, SEEK_SET) == 0 && write(fd, "de", 2) == 2);
+	REQUIRE(lseek(fd, 0, SEEK_CUR) == 5 && lseek(fd, 0, SEEK_SET) == 0);
+	REQUIRE(read(fd, buffer, sizeof(buffer)) == 5 && memcmp(buffer, "abcde", 5) == 0);
+	REQUIRE(close(fd) == 0);
 	if (round > 0) {
 		char next[8];
 		char *args[] = {"libcprobe", argv[1], next, NULL};

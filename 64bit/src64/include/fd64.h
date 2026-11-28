@@ -77,6 +77,10 @@ int fd64_seek(struct FDHANDLE64 *fh, int64_t offset, int whence);
 uint32_t fd64_next_cluster(uint32_t cluster);
 int fd64_create(struct FDHANDLE64 *fh, const char *name);
 size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size);
+/* Task context. Returns a signed count or -EINVAL/-EIO/-EROFS/-EFBIG/-ENOSPC;
+ * fd64_write maps every failure to 0 for legacy callers.
+ */
+int64_t fd64_write_checked(struct FDHANDLE64 *fh, const void *src, size_t size);
 int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size);
 /* dirty 섹터만 내보낸다. 내보낸 섹터 수를 돌려주고, 입출력 오류면 -1. */
 int fd64_sync(void);

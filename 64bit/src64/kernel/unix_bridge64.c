@@ -1,4 +1,4 @@
-/* Temporary v1 read-only FAT and libc-arena boundary until VFS/VM. */
+/* Temporary v1 FAT-root file and libc-arena boundary until VFS/VM. */
 #include <kstring64.h>
 #include <process64.h>
 #include <process_file64.h>
@@ -27,8 +27,6 @@ static int64_t unix_io64(struct PROCESS64 *process, uint64_t fd,
 	file = &process->files[fd];
 	result = process_file_check64(file, writing);
 	if (result != 0) { return result; }
-	/* FAT's legacy unsigned write result cannot express a reliable errno. */
-	if (writing && !process_file_tty64(file)) { return -30; }
 	if (size > INT64_MAX) { return -22; }
 	if (size == 0) { return 0; }
 	if (writing ? !process64_user_range_valid(buffer, size) :
@@ -79,13 +77,26 @@ static int64_t unix_open64(struct PROCESS64 *process, const char *path, uint64_t
 	int64_t length;
 	int status;
 	int fd;
+	const uint64_t known = UNIX64_OPEN_CLOEXEC | UNIX64_OPEN_WRONLY | UNIX64_OPEN_RDWR |
+		UNIX64_OPEN_CREAT | UNIX64_OPEN_TRUNC | UNIX64_OPEN_APPEND;
+	const uint64_t writing = flags & (UNIX64_OPEN_WRONLY | UNIX64_OPEN_RDWR);
+	unsigned int backend = 0;
+	unsigned int mode;
 
-	if (flags & ~(uint64_t) UNIX64_OPEN_CLOEXEC) { return -22; }
+	if ((flags & ~known) || writing == (UNIX64_OPEN_WRONLY | UNIX64_OPEN_RDWR) ||
+		(!writing && (flags & (UNIX64_OPEN_CREAT | UNIX64_OPEN_TRUNC)))) { return -22; }
+	mode = writing == UNIX64_OPEN_WRONLY ? PROCESS_FILE_WRITE64 :
+		(writing ? PROCESS_FILE_READ64 | PROCESS_FILE_WRITE64 : PROCESS_FILE_READ64);
+	if (flags & UNIX64_OPEN_APPEND) { mode |= PROCESS_FILE_APPEND64; }
+	if (writing) { backend |= FILE_WRITING64; }
+	if (flags & UNIX64_OPEN_CREAT) { backend |= FILE_CREATE64; }
+	if (flags & UNIX64_OPEN_TRUNC) { backend |= FILE_TRUNCATE64; }
 	length = copy_string_from_user64(name, sizeof(name), path);
 	if (length < 0) { return length; }
 	if (length == 0) { return -2; }
 	/* fd64_open_checked validates UTF-8 and the bounded FAT root name. */
-	status = process_file_open64(process, name, 0, !!(flags & UNIX64_OPEN_CLOEXEC), &fd);
+	status = process_file_open64(process, name, backend, mode,
+		!!(flags & UNIX64_OPEN_CLOEXEC), &fd);
 	return status != 0 ? status : fd;
 }
 

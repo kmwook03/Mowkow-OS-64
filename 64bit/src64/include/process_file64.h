@@ -58,12 +58,13 @@ int process_file_tty64(const struct PROCESS64_FILE *file);
  */
 int process_file_check64(const struct PROCESS64_FILE *file, int writing);
 /* name is a kernel-owned snapshot; flags use fd64_open_checked's contract.
- * FILE_WRITING64 opens read/write, otherwise read-only.
+ * mode is the initial OFD access plus optional APPEND; FILE_WRITING64 must be
+ * set exactly when mode grants write access, otherwise EINVAL.
  * Reserve an OFD before backend I/O, publish the FD/output only on success.
  * Task context, one execution flow per table; takes the lowest free slot.
  */
 int process_file_open64(struct PROCESS64 *process, const char *name,
-	unsigned int flags, int cloexec, int *newfd);
+	unsigned int flags, unsigned int mode, int cloexec, int *newfd);
 /* Legacy backend sequencing; flags are FILE_CREATE64/FILE_TRUNCATE64.
  * Always read/write.
  * Never returns a stdio slot. Returns errno-style failures; the syscall
@@ -106,7 +107,7 @@ void process_files_close64(struct PROCESS64 *process, int cloexec_only);
 int64_t process_file_read64(struct PROCESS64_FILE *file, void *buffer, size_t size);
 /* Same task/descriptor ownership as read, from a kernel-owned buffer. Returns a
  * partial count or errno. APPEND moves a seekable cursor to EOF first under the
- * same mutex. FAT reports every failed nonempty write as EIO.
+ * same mutex. FAT failures are EIO/EROFS/EFBIG/ENOSPC.
  */
 int64_t process_file_write64(struct PROCESS64_FILE *file, const void *buffer,
 	size_t size);

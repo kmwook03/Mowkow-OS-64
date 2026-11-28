@@ -312,11 +312,12 @@ static int test_file_size_and_seek_bounds(void)
 	fh.pos = UINT32_MAX;
 	fh.cluster = 0;
 	before = fh;
+	CHECK64(fd64_write_checked(&fh, &byte, 1) == -27);
 	CHECK64(fd64_write(&fh, &byte, 1) == 0);
 	CHECK64(fh.pos == before.pos && fh.info.size == before.info.size);
 	if (SIZE_MAX > UINT32_MAX) {
 		fh.pos = 0;
-		CHECK64(fd64_write(&fh, &byte, (size_t) UINT32_MAX + 1) == 0);
+		CHECK64(fd64_write_checked(&fh, &byte, (size_t) UINT32_MAX + 1) == -27);
 	}
 	fh.pos = 0;
 	CHECK64(fd64_seek(&fh, INT64_MIN, 1) == -1);
@@ -366,6 +367,7 @@ static int test_success_and_read_only(void)
 	CHECK64(fh.info.name[0] == 'N');
 	fd64_read_only = 1;
 	CHECK64(fd64_dir_create(&fh, "blocked.txt") == 0);
+	CHECK64(fd64_write_checked(&fh, "x", 1) == -30);
 	return 0;
 }
 
@@ -385,12 +387,23 @@ static int test_write_allocation_rollback(void)
 	fh.cluster = 0;
 	before = fh;
 	fail_data_lba = fd64_data_lba + 1;
-	CHECK64(fd64_write(&fh, &byte, 1) == 0);
+	CHECK64(fd64_write_checked(&fh, &byte, 1) == -5);
 	CHECK64(fat_get(3) == 0);
 	CHECK64(fd64_info_cluster(&fh.info) ==
 		fd64_info_cluster(&before.info));
 	CHECK64(fh.pos == before.pos);
 	CHECK64(fd64_read_only == 0);
+	/* A full FAT is ENOSPC; an unreadable FAT may hide space and is EIO. */
+	for (uint32_t cluster = 3; cluster <= TEST_MAX_CLUSTER; cluster++) {
+		fat_set(cluster, FD64_FAT_LAST);
+	}
+	CHECK64(fd64_write_checked(&fh, &byte, 1) == -28);
+	fat_set(TEST_MAX_CLUSTER, 0);
+	fail_read_lba64 = fd64_reserved_sectors;
+	CHECK64(fd64_write_checked(&fh, &byte, 1) == -5);
+	fail_read_lba64 = UINT32_MAX;
+	CHECK64(fd64_info_cluster(&fh.info) == 0 && fh.pos == before.pos);
+	CHECK64(fd64_read_only == 0 && fat_get(TEST_MAX_CLUSTER) == 0);
 	return 0;
 }
 

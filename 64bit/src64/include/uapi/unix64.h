@@ -23,7 +23,7 @@
 #define UNIX64_SYS_TCB_SET 0x108     /* aligned writable user thread pointer */
 #define UNIX64_SYS_ANON_ALLOC 0x109  /* page-multiple size -> zeroed RW address */
 #define UNIX64_SYS_ANON_FREE 0x10a   /* exact address, size; internal libc arena */
-#define UNIX64_SYS_OPEN 0x10b        /* root filename, flags; read-only bridge */
+#define UNIX64_SYS_OPEN 0x10b        /* root filename, UNIX64_OPEN_* flags -> fd */
 #define UNIX64_SYS_CLOSE 0x10c       /* fd */
 #define UNIX64_SYS_SEEK 0x10d        /* fd, signed offset, whence -> offset */
 #define UNIX64_SYS_ISATTY 0x10e      /* fd -> 0 or negative errno */
@@ -69,7 +69,17 @@
 #define UNIX64_FL_APPEND 4
 #define UNIX64_FL_NONBLOCK 8
 #define UNIX64_FD_CLOEXEC 1
+/* OPEN flags: no access bit is read-only; WRONLY and RDWR are exclusive.
+ * CREAT/TRUNC need write access and act on the bounded FAT root only;
+ * CREAT never fails on an existing file (no EXCL). APPEND sets UNIX64_FL_APPEND.
+ * Other bits are EINVAL.
+ */
 #define UNIX64_OPEN_CLOEXEC 1
+#define UNIX64_OPEN_WRONLY 2
+#define UNIX64_OPEN_RDWR 4
+#define UNIX64_OPEN_CREAT 8
+#define UNIX64_OPEN_TRUNC 16
+#define UNIX64_OPEN_APPEND 32
 #define UNIX64_WAIT_NOHANG 1
 
 #define UNIX64_ENOEXEC 8

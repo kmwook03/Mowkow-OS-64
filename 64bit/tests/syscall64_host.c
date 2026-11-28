@@ -41,7 +41,7 @@ static uint32_t write_calls;
 static uint32_t seek_calls;
 static int64_t last_offset;
 static int last_whence;
-static size_t io_result;
+static int64_t io_result;
 static int64_t console_read_result;
 static uint32_t console_reads;
 static uint32_t console_writes;
@@ -287,13 +287,13 @@ int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size)
 	return truncate_result;
 }
 
-size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
+int64_t fd64_write_checked(struct FDHANDLE64 *fh, const void *src, size_t size)
 {
 	assert(held_mutex64 != NULL);
 	(void) fh;
 	if ((const void *) src != snapshot64) { abi_error = 1; }
 	write_calls++;
-	return io_result < size ? io_result : size;
+	return io_result < 0 || (uint64_t) io_result < size ? io_result : (int64_t) size;
 }
 
 int fd64_seek(struct FDHANDLE64 *fh, int64_t offset, int whence)
@@ -322,9 +322,10 @@ int fd64_stat_checked(struct FDHANDLE64 *fh, const char *name, struct FILE_INFO6
 	memset(info, 0, sizeof(*info)); info->size64 = 123; info->identity64 = 0x200000040UL;
 	return 0;
 }
+static unsigned int opened_flags64;
 int fd64_open_checked(struct FDHANDLE64 *fh, const char *name, unsigned int flags)
 {
-	(void) flags;
+	opened_flags64 = flags;
 	assert(!irq_off64);
 	if (opening_process64 != NULL) {
 		assert(!opening_process64->files[opening_fd64].used);
@@ -638,9 +639,13 @@ static int test_files64(void)
 	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == ERROR64);
 	checked_error64 = 0;
 	CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == 3);
-	io_result = 0;
-	/* A failed FAT write keeps the legacy zero-count result. */
-	CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == 0);
+	/* Checked FAT failures keep the legacy zero-count result. */
+	const int64_t backend_errors[] = {-5, -27, -28, -30};
+
+	for (i = 0; i < sizeof backend_errors / sizeof backend_errors[0]; i++) {
+		io_result = backend_errors[i];
+		CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == 0);
+	}
 	io_result = 3;
 	process.files[3].shared->handle.info.size = 100;
 	CHECK64(call64(SYS_SEEK, 3, (uint64_t) -17, 2, 0, 0) == 0);
@@ -661,15 +666,15 @@ static int test_files64(void)
 			CHECK64(call64(SYS_WRITE, invalid[i], buffer, 8, 0, 0) == ERROR64);
 		}
 	}
-	CHECK64(checked_calls64 == 3 && write_calls == 2 && seek_calls == 2);
+	CHECK64(checked_calls64 == 3 && write_calls == 5 && seek_calls == 2);
 	CHECK64(call64(SYS_READ, 3, 0, 8, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_WRITE, 3, buffer, UINT64_MAX, 0, 0) == ERROR64);
-	CHECK64(checked_calls64 == 3 && write_calls == 2);
+	CHECK64(checked_calls64 == 3 && write_calls == 5);
 	CHECK64(call64(SYS_CLOSE, 3, 0, 0, 0, 0) == 0);
 	CHECK64(call64(SYS_CLOSE, 3, 0, 0, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_READ, 3, buffer, 8, 0, 0) == ERROR64);
 	CHECK64(call64(SYS_WRITE, 3, buffer, 8, 0, 0) == ERROR64);
-	CHECK64(process.files[0].used == 1 && checked_calls64 == 3 && write_calls == 2);
+	CHECK64(process.files[0].used == 1 && checked_calls64 == 3 && write_calls == 5);
 	return 0;
 }
 
@@ -1076,12 +1081,13 @@ static int test_unix_fcntl64(void)
 	int fd;
 
 	CHECK64(process_file_open_legacy64(&process, "app.txt", 0, &fd) == 0 && fd == 5);
-	CHECK64(process_file_open64(&process, "app.txt", FILE_WRITING64, 0, &fd) == 0);
+	CHECK64(process_file_open64(&process, "app.txt", FILE_WRITING64,
+		PROCESS_FILE_READ64 | PROCESS_FILE_WRITE64, 0, &fd) == 0);
 	CHECK64(fd == 6 && call64(UNIX64_SYS_FCNTL, 5, UNIX64_F_GETFL, 0, 0, 0) ==
 		UNIX64_FL_RDWR);
 	CHECK64(call64(UNIX64_SYS_FCNTL, 6, UNIX64_F_GETFL, 0, 0, 0) == UNIX64_FL_RDWR);
-	/* An inherited legacy read/write FAT FD still awaits checked UNIX write. */
-	CHECK64((int64_t) call64(UNIX64_SYS_WRITE, 5, (uintptr_t) user_buffer, 1, 0, 0) == -30);
+	/* An inherited legacy read/write FAT FD uses the same checked UNIX write. */
+	CHECK64(call64(UNIX64_SYS_WRITE, 5, (uintptr_t) user_buffer, 1, 0, 0) == 1);
 	CHECK64(call64(UNIX64_SYS_CLOSE, 5, 0, 0, 0, 0) == 0);
 	CHECK64(call64(UNIX64_SYS_CLOSE, 6, 0, 0, 0, 0) == 0);
 	CHECK64((int64_t) call64(UNIX64_SYS_CLOSE, (1ULL << 32) | 4, 0, 0, 0, 0) == -9);
@@ -1374,6 +1380,51 @@ static int test_file_ops64(void)
 	return 0;
 }
 
+static int test_unix_open_write64(void)
+{
+	const uint64_t invalid[] = {
+		UNIX64_OPEN_WRONLY | UNIX64_OPEN_RDWR, UNIX64_OPEN_CREAT, UNIX64_OPEN_TRUNC,
+		UNIX64_OPEN_RDWR | 64, UNIX64_OPEN_WRONLY | (1ULL << 32),
+	};
+	uintptr_t path = (uintptr_t) user_buffer;
+	uintptr_t data = (uintptr_t) user_buffer + 16;
+
+	reset64();
+	process.state = PROCESS_RUNNING64;
+	process.memory->abi = UNIX64_ABI_VERSION;
+	for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+		CHECK64((int64_t) call64(UNIX64_SYS_OPEN, path, invalid[i], 0, 0, 0) == -22);
+	}
+	CHECK64(checked_calls64 == 0 && !process.files[3].used);
+	/* Write access selects the checked backend's writing mode and OFD access. */
+	CHECK64(call64(UNIX64_SYS_OPEN, path, UNIX64_OPEN_WRONLY | UNIX64_OPEN_CREAT |
+		UNIX64_OPEN_TRUNC | UNIX64_OPEN_APPEND, 0, 0, 0) == 3);
+	CHECK64(opened_flags64 == (FILE_WRITING64 | FILE_CREATE64 | FILE_TRUNCATE64));
+	CHECK64(call64(UNIX64_SYS_FCNTL, 3, UNIX64_F_GETFL, 0, 0, 0) ==
+		(UNIX64_FL_WRONLY | UNIX64_FL_APPEND));
+	CHECK64((int64_t) call64(UNIX64_SYS_READ, 3, data, 8, 0, 0) == -9);
+	/* APPEND seeks to EOF before the checked write under the OFD mutex. */
+	CHECK64(call64(UNIX64_SYS_WRITE, 3, data, 8, 0, 0) == 3);
+	CHECK64(seek_calls == 1 && last_offset == 0 && last_whence == 2 && write_calls == 1);
+	CHECK64(call64(UNIX64_SYS_OPEN, path, UNIX64_OPEN_RDWR, 0, 0, 0) == 4);
+	CHECK64(opened_flags64 == FILE_WRITING64);
+	CHECK64(call64(UNIX64_SYS_FCNTL, 4, UNIX64_F_GETFL, 0, 0, 0) == UNIX64_FL_RDWR);
+	CHECK64(call64(UNIX64_SYS_READ, 4, data, 8, 0, 0) == 7);
+	CHECK64(call64(UNIX64_SYS_OPEN, path, UNIX64_OPEN_APPEND, 0, 0, 0) == 5);
+	CHECK64(opened_flags64 == 0 && call64(UNIX64_SYS_FCNTL, 5, UNIX64_F_GETFL, 0, 0, 0) ==
+		(UNIX64_FL_RDONLY | UNIX64_FL_APPEND));
+	/* Checked FAT errors reach UNIX callers unchanged. */
+	const int64_t errors[] = {-5, -27, -28, -30};
+
+	for (size_t i = 0; i < sizeof(errors) / sizeof(errors[0]); i++) {
+		io_result = errors[i];
+		CHECK64((int64_t) call64(UNIX64_SYS_WRITE, 4, data, 8, 0, 0) == errors[i]);
+	}
+	CHECK64(write_calls == 5 && seek_calls == 1 && held_mutex64 == NULL);
+	CHECK64(!irq_off64 && abi_error == 0 && pins64 == 0);
+	return 0;
+}
+
 static int test_unix_reservation64(void)
 {
 	reset64();
@@ -1413,11 +1464,11 @@ static int test_open_ownership64(void)
 	/* More failures than pool slots must still leave room for a later open. */
 	checked_error64 = -5;
 	for (unsigned int i = 0; i <= capacity; i++) {
-		CHECK64(process_file_open64(&process, "app.txt", 0, 1, &fd) == -5);
+		CHECK64(process_file_open64(&process, "app.txt", 0, PROCESS_FILE_READ64, 1, &fd) == -5);
 		CHECK64(fd == 99 && !process.files[3].used && !process.files[3].shared);
 	}
 	checked_error64 = 0;
-	CHECK64(process_file_open64(&process, "app.txt", 0, 1, &fd) == 0 && fd == 3);
+	CHECK64(process_file_open64(&process, "app.txt", 0, PROCESS_FILE_READ64, 1, &fd) == 0 && fd == 3);
 	struct UNIX_FILE64 *shared = process.files[3].shared;
 
 	CHECK64(shared->references == 1 && shared->handle.pos == 11);
@@ -1434,18 +1485,18 @@ static int test_open_ownership64(void)
 		opening_process64 = &owners[i];
 		for (int slot = 0; slot < PROCESS64_MAX_FILES; slot++) {
 			opening_fd64 = slot;
-			CHECK64(process_file_open64(&owners[i], "app.txt", 0, 0, &fd) == 0);
+			CHECK64(process_file_open64(&owners[i], "app.txt", 0, PROCESS_FILE_READ64, 0, &fd) == 0);
 			CHECK64(fd == slot && owners[i].files[slot].shared->references == 1);
 		}
 	}
 	int calls = checked_calls64;
 
 	opening_process64 = &process; opening_fd64 = 0; fd = 99;
-	CHECK64(process_file_open64(&process, "app.txt", 0, 0, &fd) == -23);
+	CHECK64(process_file_open64(&process, "app.txt", 0, PROCESS_FILE_READ64, 0, &fd) == -23);
 	CHECK64(fd == 99 && !process.files[0].used && checked_calls64 == calls);
 	CHECK64(process_file_stdio64(&process, process.console) == -23);
 	CHECK64(!process.files[0].used && !process.files[1].used);
-	CHECK64(process_file_open64(&owners[0], "app.txt", 0, 0, &fd) == -24);
+	CHECK64(process_file_open64(&owners[0], "app.txt", 0, PROCESS_FILE_READ64, 0, &fd) == -24);
 	CHECK64(fd == 99 && checked_calls64 == calls);
 	uint32_t legacy_calls = open_calls + create_calls + truncate_calls;
 
@@ -1453,7 +1504,7 @@ static int test_open_ownership64(void)
 	CHECK64(!process.files[3].used && !process.files[3].shared);
 	CHECK64(open_calls + create_calls + truncate_calls == legacy_calls);
 	process_file_close64(&owners[0].files[3]);
-	CHECK64(process_file_open64(&process, "app.txt", 0, 0, &fd) == 0 && fd == 0);
+	CHECK64(process_file_open64(&process, "app.txt", 0, PROCESS_FILE_READ64, 0, &fd) == 0 && fd == 0);
 	CHECK64(process.files[0].shared->references == 1);
 	opening_process64 = NULL;
 	process_files_close64(&process, 0);
@@ -1468,6 +1519,7 @@ int main(void)
 {
 	CHECK64(test_unix_reservation64() == 0);
 	CHECK64(test_unix_bridge64() == 0);
+	CHECK64(test_unix_open_write64() == 0);
 	CHECK64(test_unix_fcntl64() == 0);
 	CHECK64(test_unix_dupfd64() == 0);
 	CHECK64(test_unix_dup264() == 0);

@@ -279,11 +279,11 @@ int fd64_seek(struct FDHANDLE64 *file, int64_t offset, int whence)
 	return -95;
 }
 
-size_t fd64_write(struct FDHANDLE64 *file, const void *buffer, size_t size)
+int64_t fd64_write_checked(struct FDHANDLE64 *file, const void *buffer, size_t size)
 {
 	(void) file; (void) buffer; (void) size;
 	assert(!"process lifecycle fixture must not write FAT files");
-	return 0;
+	return -95;
 }
 
 int fd64_stat_checked(struct FDHANDLE64 *file, const char *name, struct FILE_INFO64 *info)

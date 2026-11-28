@@ -91,12 +91,21 @@ int sys_clock_get(int clock, time_t *seconds, long *nanoseconds)
  */
 int sys_sigaction(int, const struct sigaction *, struct sigaction *) { return ENOSYS; }
 
+/* FAT has no permission bits, so mode is ignored. O_EXCL and other flags are
+ * unsupported until the VFS; O_RDONLY with O_CREAT/O_TRUNC is EINVAL.
+ */
 int sys_open(const char *path, int flags, mode_t, int *fd)
 {
-	if (flags & ~(O_CLOEXEC | O_ACCMODE)) { return ENOTSUP; }
-	if ((flags & O_ACCMODE) != O_RDONLY) { return EROFS; }
-	int64_t result = call(UNIX64_SYS_OPEN, (uintptr_t) path,
-		(flags & O_CLOEXEC) ? UNIX64_OPEN_CLOEXEC : 0);
+	if (flags & ~(O_CLOEXEC | O_ACCMODE | O_CREAT | O_TRUNC | O_APPEND)) { return ENOTSUP; }
+	int access = flags & O_ACCMODE;
+	if (access != O_RDONLY && access != O_WRONLY && access != O_RDWR) { return EINVAL; }
+	uint64_t wire = (access == O_WRONLY ? UNIX64_OPEN_WRONLY : 0) |
+		(access == O_RDWR ? UNIX64_OPEN_RDWR : 0) |
+		((flags & O_CLOEXEC) ? UNIX64_OPEN_CLOEXEC : 0) |
+		((flags & O_CREAT) ? UNIX64_OPEN_CREAT : 0) |
+		((flags & O_TRUNC) ? UNIX64_OPEN_TRUNC : 0) |
+		((flags & O_APPEND) ? UNIX64_OPEN_APPEND : 0);
+	int64_t result = call(UNIX64_SYS_OPEN, (uintptr_t) path, wire);
 	int error = unix64_result_errno(result);
 	if (!error) { *fd = (int) result; }
 	return error;

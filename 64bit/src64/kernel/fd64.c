@@ -377,20 +377,22 @@ struct FDWRITE_GROW64 {
 	uint32_t old_parent;
 };
 
+/* Returns 0 or a negative errno from fd64_alloc_cluster_checked/-EIO. */
 static int fd64_write_grow(uint32_t parent, uint32_t old_parent,
 	struct FDWRITE_GROW64 *growth, uint32_t *cluster)
 {
 	uint32_t next;
+	int status;
 
-	next = fd64_alloc_cluster();
-	if (next == 0) {
-		return -1;
+	status = fd64_alloc_cluster_checked(&next);
+	if (status != 0) {
+		return status;
 	}
 	if (parent != 0 && fd64_fat_set(parent, next) != 0) {
 		if (fd64_free_chain(next) != 0) {
 			fd64_mark_read_only();
 		}
-		return -1;
+		return -5;
 	}
 	if (growth->first == 0) {
 		growth->parent = parent;
@@ -419,7 +421,12 @@ static int fd64_write_growth_rollback(struct FDWRITE_GROW64 *growth)
 	return 0;
 }
 
-static size_t fd64_write_unlocked(struct FDHANDLE64 *fh, const void *src,
+/* Returns bytes written or -EINVAL/-EIO/-EROFS/-EFBIG/-ENOSPC. A failure
+ * before any byte restores the handle and rolls back new clusters; a later
+ * failure commits the written prefix. Sync failure keeps dirty cache data and
+ * reports -EIO although the directory entry already names the new size.
+ */
+static int64_t fd64_write_unlocked(struct FDHANDLE64 *fh, const void *src,
 	size_t size)
 {
 	struct FDHANDLE64 original;
@@ -436,20 +443,25 @@ static size_t fd64_write_unlocked(struct FDHANDLE64 *fh, const void *src,
 	uint32_t next;
 	int write_error;
 
-	if (fh == NULL || fh->dir.cluster == 0 || src == NULL ||
-			fd64_initialized == 0 || size == 0) {
+	if (fh == NULL || fh->dir.cluster == 0 || src == NULL) {
+		return -22;
+	}
+	if (size == 0) {
 		return 0;
 	}
+	if (fd64_initialized == 0) {
+		return -5;
+	}
 	if (fd64_read_only != 0) {
-		return 0;
+		return -30;
 	}
 	/* FAT directory의 파일 크기는 uint32_t다. 끝 위치를 계산하기 전에
 	   검사해 4 GiB 경계에서 fh->pos가 되감기지 않게 한다. */
 	if (size > (size_t) (UINT32_MAX - fh->pos)) {
-		return 0;
+		return -27;
 	}
 	if (fd64_file_chain_valid(&fh->info) == 0) {
-		return 0;
+		return -5;
 	}
 	original = *fh;
 	growth.parent = 0;
@@ -458,8 +470,9 @@ static size_t fd64_write_unlocked(struct FDHANDLE64 *fh, const void *src,
 	write_error = 0;
 	cb = fd64_cluster_bytes();
 	if (fd64_info_cluster(&fh->info) == 0) {
-		if (fd64_write_grow(0, 0, &growth, &cluster) != 0) {
-			return 0;
+		write_error = fd64_write_grow(0, 0, &growth, &cluster);
+		if (write_error != 0) {
+			return write_error;
 		}
 		fd64_info_set_cluster(&fh->info, cluster);
 	}
@@ -469,10 +482,11 @@ static size_t fd64_write_unlocked(struct FDHANDLE64 *fh, const void *src,
 	for (index = fh->pos / cb; index > 0; index--) {
 		next = fd64_next_cluster_unlocked(cluster);
 		if (fd64_cluster_valid(next) == 0) {
-			if (fd64_write_grow(cluster, next, &growth, &next) != 0) {
+			write_error = fd64_write_grow(cluster, next, &growth, &next);
+			if (write_error != 0) {
 				fd64_write_growth_rollback(&growth);
 				*fh = original;
-				return 0;
+				return write_error;
 			}
 		}
 		cluster = next;
@@ -488,7 +502,7 @@ static size_t fd64_write_unlocked(struct FDHANDLE64 *fh, const void *src,
 		}
 		dst = fd64_cluster_sector(fh->cluster, offset, CACHE64_WRITE);
 		if (dst == NULL) {
-			write_error = 1;
+			write_error = -5;
 			break;
 		}
 		for (i = 0; i < chunk; i++) {
@@ -504,9 +518,9 @@ static size_t fd64_write_unlocked(struct FDHANDLE64 *fh, const void *src,
 		if (size > 0 && offset + chunk == cb) {
 			next = fd64_next_cluster_unlocked(fh->cluster);
 			if (fd64_cluster_valid(next) == 0) {
-				if (fd64_write_grow(fh->cluster, next, &growth,
-						&next) != 0) {
-					write_error = 1;
+				write_error = fd64_write_grow(fh->cluster, next,
+					&growth, &next);
+				if (write_error != 0) {
 					break;
 				}
 			}
@@ -516,20 +530,20 @@ static size_t fd64_write_unlocked(struct FDHANDLE64 *fh, const void *src,
 	if (write_error != 0 && written == 0) {
 		fd64_write_growth_rollback(&growth);
 		*fh = original;
-		return 0;
+		return write_error;
 	}
 	fh->info.date = FD64_FIXED_DATE;
 	fh->info.time = FD64_FIXED_TIME;
 	if (fd64_dir_write(fh) != 0) {
 		fd64_write_growth_rollback(&growth);
 		*fh = original;
-		return 0;
+		return -5;
 	}
 	/* 공개 flush 호출이 없어, 쓰기는 디렉터리 갱신까지 즉시 동기화한다. */
 	if (fd64_sync_unlocked() < 0) {
-		return 0;
+		return -5;
 	}
-	return written;
+	return (int64_t) written;
 }
 
 static int fd64_truncate_unlocked(struct FDHANDLE64 *fh, uint32_t size)
@@ -727,16 +741,26 @@ int fd64_create(struct FDHANDLE64 *fh, const char *name)
 	return status;
 }
 
-size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
+int64_t fd64_write_checked(struct FDHANDLE64 *fh, const void *src, size_t size)
 {
-	size_t written;
+	int64_t written;
 
+	if (size > INT64_MAX) {
+		return -22;
+	}
 	if (mutex64_lock(&fd64_mutex) != 0) {
-		return 0;
+		return -5;
 	}
 	written = fd64_write_unlocked(fh, src, size);
 	mutex64_unlock(&fd64_mutex);
 	return written;
+}
+
+size_t fd64_write(struct FDHANDLE64 *fh, const void *src, size_t size)
+{
+	int64_t written = fd64_write_checked(fh, src, size);
+
+	return written < 0 ? 0 : (size_t) written;
 }
 
 int fd64_truncate(struct FDHANDLE64 *fh, uint32_t size)

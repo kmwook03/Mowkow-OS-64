@@ -88,7 +88,9 @@ static int64_t syscall_write64(struct PROCESS64 *process, uint64_t fd,
 	int64_t result = process_file_write64(&process->files[fd], snapshot, (size_t) size);
 
 	/* Legacy ABI: backend failure is a zero count; descriptor failure is -1. */
-	if (result < 0) { return result == -5 ? 0 : -1; }
+	if (result < 0) {
+		return result == -5 || result == -27 || result == -28 || result == -30 ? 0 : -1;
+	}
 	return result;
 }
 
@@ -181,7 +183,9 @@ static int64_t syscall_file_call64(struct PROCESS64 *process,
 		}
 		int fd;
 
-		status = process_file_open64(process, name, (unsigned int) arg1, 0, &fd);
+		status = process_file_open64(process, name, (unsigned int) arg1,
+			PROCESS_FILE_READ64 | (arg1 & FILE_WRITING64 ? PROCESS_FILE_WRITE64 : 0),
+			0, &fd);
 		return status != 0 ? status : fd;
 	}
 	if (operation != FILE_READ64 && operation != FILE_SYNC64 &&

@@ -239,31 +239,44 @@ int fd64_fat_set(uint32_t cluster, uint32_t value)
 	return 0;
 }
 
-uint32_t fd64_alloc_cluster(void)
+int fd64_alloc_cluster_checked(uint32_t *cluster)
 {
+	const uint8_t *p;
 	uint32_t c;
 	uint32_t scanned;
+	int unreadable = 0;
 
 	if (fd64_read_only != 0) {
-		return 0;
+		return -30;
 	}
 	/* 지난번 할당 위치부터 이어서 찾아 여러 클러스터 쓰기의 제곱 탐색을
-	   피한다. */
+	   피한다. 읽지 못한 항목은 사용 중으로 보고 계속 찾는다. */
 	c = fd64_alloc_hint;
 	for (scanned = 0; scanned <= fd64_max_cluster - 2; scanned++) {
 		if (c > fd64_max_cluster) {
 			c = 2;
 		}
-		if (fd64_next_cluster_unlocked(c) == 0) {
+		p = fd64_fat_entry(0, c, CACHE64_READ);
+		if (p == NULL) {
+			unreadable = 1;
+		} else if ((fd64_read32(p) & FD64_FAT_MASK) == 0) {
 			if (fd64_fat_set(c, FD64_FAT_LAST) != 0) {
-				return 0;
+				return -5;
 			}
 			fd64_alloc_hint = c + 1;
-			return c;
+			*cluster = c;
+			return 0;
 		}
 		c++;
 	}
-	return 0;
+	return unreadable ? -5 : -28;
+}
+
+uint32_t fd64_alloc_cluster(void)
+{
+	uint32_t cluster;
+
+	return fd64_alloc_cluster_checked(&cluster) == 0 ? cluster : 0;
 }
 
 int fd64_free_chain(uint32_t cluster)

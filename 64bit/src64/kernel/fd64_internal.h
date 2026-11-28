@@ -50,6 +50,11 @@ struct FDINFO64 *fd64_dir_at(const struct FDPOS64 *pos, int mode);
 uint8_t *fd64_cluster_sector(uint32_t cluster, uint32_t offset, int mode);
 int fd64_fat_set(uint32_t cluster, uint32_t value);
 uint32_t fd64_alloc_cluster(void);
+/* Same scan as fd64_alloc_cluster. Returns 0 with *cluster, -EROFS, -ENOSPC
+ * when every readable entry is used, or -EIO if an unreadable entry or the
+ * FAT update may have hidden a free cluster.
+ */
+int fd64_alloc_cluster_checked(uint32_t *cluster);
 int fd64_free_chain(uint32_t cluster);
 int fd64_zero_cluster(uint32_t cluster);
 
