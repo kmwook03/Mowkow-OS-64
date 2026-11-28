@@ -37,7 +37,7 @@ static void install_file_fixture64(struct PROCESS64 *owner, int fd, uint32_t pos
 	int cloexec)
 {
 	uint64_t irq = platform_irq_save64();
-	struct UNIX_FILE64 *shared = allocate_file64();
+	struct UNIX_FILE64 *shared = allocate_file64(PROCESS_FILE_READ64 | PROCESS_FILE_WRITE64);
 
 	assert(!owner->files[fd].used && shared != NULL);
 	shared->handle.pos = pos;

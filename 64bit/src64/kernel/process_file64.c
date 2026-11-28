@@ -19,13 +19,18 @@ static int64_t console_write64(struct UNIX_FILE64 *file, const void *buffer, siz
 static const struct PROCESS_FILE_OPS64 console_input_ops64 = {.read = console_read64};
 static const struct PROCESS_FILE_OPS64 console_output_ops64 = {.write = console_write64};
 
+static int seekable64(const struct UNIX_FILE64 *shared)
+{
+	return shared->ops != NULL && shared->ops->seek != NULL;
+}
+
 /* OFDs are referenced only by file tables, so every process filling its whole
  * table with distinct OFDs still fits; -ENFILE is defensive.
  */
 static struct UNIX_FILE64 open_files64[PROCESS64_MAX * PROCESS64_MAX_FILES];
 
 /* Caller holds irq-save. A reserved reference prevents reuse during open. */
-static struct UNIX_FILE64 *allocate_file64(void)
+static struct UNIX_FILE64 *allocate_file64(unsigned int access)
 {
 	for (size_t i = 0; i < sizeof(open_files64) / sizeof(open_files64[0]); i++) {
 		struct UNIX_FILE64 *shared = &open_files64[i];
@@ -33,6 +38,7 @@ static struct UNIX_FILE64 *allocate_file64(void)
 		if (shared->references != 0) { continue; }
 		memset(shared, 0, sizeof(*shared));
 		shared->references = 1;
+		shared->flags = access;
 		shared->ops = &fat_ops64;
 		return shared;
 	}
@@ -40,7 +46,7 @@ static struct UNIX_FILE64 *allocate_file64(void)
 }
 
 static int open_file64(struct PROCESS64 *process, const char *name,
-	unsigned int flags, int cloexec, int first, int *newfd,
+	unsigned int flags, unsigned int access, int cloexec, int first, int *newfd,
 	int (*open_backend)(struct FDHANDLE64 *, const char *, unsigned int))
 {
 	if (process == NULL || name == NULL || newfd == NULL ||
@@ -55,7 +61,7 @@ static int open_file64(struct PROCESS64 *process, const char *name,
 		platform_irq_restore64(irq);
 		return -24;
 	}
-	struct PROCESS64_FILE prepared = {.cloexec = cloexec, .shared = allocate_file64()};
+	struct PROCESS64_FILE prepared = {.cloexec = cloexec, .shared = allocate_file64(access)};
 
 	platform_irq_restore64(irq);
 	if (prepared.shared == NULL) { return -23; }
@@ -79,7 +85,11 @@ static int open_file64(struct PROCESS64 *process, const char *name,
 int process_file_open64(struct PROCESS64 *process, const char *name,
 	unsigned int flags, int cloexec, int *newfd)
 {
-	return open_file64(process, name, flags, cloexec, 0, newfd, fd64_open_checked);
+	unsigned int access = PROCESS_FILE_READ64 |
+		(flags & FILE_WRITING64 ? PROCESS_FILE_WRITE64 : 0);
+
+	return open_file64(process, name, flags, access, cloexec, 0, newfd,
+		fd64_open_checked);
 }
 
 static int legacy_open_backend64(struct FDHANDLE64 *handle, const char *name,
@@ -98,7 +108,8 @@ int process_file_open_legacy64(struct PROCESS64 *process, const char *name,
 	unsigned int flags, int *newfd)
 {
 	if (flags & ~(unsigned int) (FILE_CREATE64 | FILE_TRUNCATE64)) { return -22; }
-	return open_file64(process, name, flags, 0, 3, newfd, legacy_open_backend64);
+	return open_file64(process, name, flags,
+		PROCESS_FILE_READ64 | PROCESS_FILE_WRITE64, 0, 3, newfd, legacy_open_backend64);
 }
 
 /* Caller holds irq-save through reference acquisition and FD publication. */
@@ -193,6 +204,35 @@ int process_file_set_cloexec64(struct PROCESS64 *process, int fd, int cloexec)
 		process->files[fd].cloexec = cloexec;
 		status = 0;
 	}
+	platform_irq_restore64(irq);
+	return status;
+}
+
+int process_file_get_status64(struct PROCESS64 *process, int fd, unsigned int *flags)
+{
+	if (process == NULL || flags == NULL) { return -22; }
+	if (fd < 0 || fd >= PROCESS64_MAX_FILES) { return -9; }
+	uint64_t irq = platform_irq_save64();
+	struct UNIX_FILE64 *shared = process->files[fd].used ? process->files[fd].shared : NULL;
+
+	if (shared != NULL) { *flags = shared->flags; }
+	platform_irq_restore64(irq);
+	return shared != NULL ? 0 : -9;
+}
+
+int process_file_set_status64(struct PROCESS64 *process, int fd, unsigned int flags)
+{
+	if (process == NULL || (flags & ~PROCESS_FILE_STATUS64)) { return -22; }
+	if (fd < 0 || fd >= PROCESS64_MAX_FILES) { return -9; }
+	uint64_t irq = platform_irq_save64();
+	struct UNIX_FILE64 *shared = process->files[fd].used ? process->files[fd].shared : NULL;
+	int status = -9;
+
+	if (shared != NULL) {
+		/* ponytail: streams block in console reads; A3's TTY adds EAGAIN. */
+		status = (flags & PROCESS_FILE_NONBLOCK64) && !seekable64(shared) ? -95 : 0;
+	}
+	if (status == 0) { shared->flags = (shared->flags & ~PROCESS_FILE_STATUS64) | flags; }
 	platform_irq_restore64(irq);
 	return status;
 }
@@ -307,8 +347,8 @@ int process_file_stdio64(struct PROCESS64 *process, struct CONSOLE64 *console)
 {
 	if (process == NULL || console == NULL) { return -22; }
 	uint64_t irq = platform_irq_save64();
-	struct UNIX_FILE64 *input = allocate_file64();
-	struct UNIX_FILE64 *output = allocate_file64();
+	struct UNIX_FILE64 *input = allocate_file64(PROCESS_FILE_READ64);
+	struct UNIX_FILE64 *output = allocate_file64(PROCESS_FILE_WRITE64);
 	int status = -23;
 
 	if (input != NULL && output != NULL) {
@@ -339,20 +379,22 @@ int process_file_tty64(const struct PROCESS64_FILE *file)
 	return tty;
 }
 
+/* Access bits are immutable, so callers may test them without irq-save. */
+static int can_access64(const struct UNIX_FILE64 *shared, int writing)
+{
+	if (shared->ops == NULL) { return 0; }
+	return writing ? (shared->flags & PROCESS_FILE_WRITE64) && shared->ops->write :
+		(shared->flags & PROCESS_FILE_READ64) && shared->ops->read;
+}
+
 int process_file_check64(const struct PROCESS64_FILE *file, int writing)
 {
 	uint64_t irq = platform_irq_save64();
 	const struct UNIX_FILE64 *shared = file != NULL && file->used ? file->shared : NULL;
-	int open = shared != NULL && shared->ops != NULL &&
-		(writing ? shared->ops->write != NULL : shared->ops->read != NULL);
+	int open = shared != NULL && can_access64(shared, writing);
 
 	platform_irq_restore64(irq);
 	return open ? 0 : -9;
-}
-
-static int seekable64(const struct UNIX_FILE64 *shared)
-{
-	return shared->ops != NULL && shared->ops->seek != NULL;
 }
 
 /* Only seekable OFDs take the cursor mutex; streams synchronize internally. */
@@ -377,7 +419,7 @@ int64_t process_file_read64(struct PROCESS64_FILE *file, void *buffer, size_t si
 
 	if (status != 0) { return status; }
 	struct UNIX_FILE64 *shared = file->shared;
-	int64_t result = shared->ops && shared->ops->read ?
+	int64_t result = can_access64(shared, 0) ?
 		shared->ops->read(shared, buffer, size) : -9;
 
 	process_file_unlock64(file);
@@ -393,8 +435,12 @@ int64_t process_file_write64(struct PROCESS64_FILE *file, const void *buffer,
 
 	if (status != 0) { return status; }
 	struct UNIX_FILE64 *shared = file->shared;
-	int64_t result = shared->ops && shared->ops->write ?
-		shared->ops->write(shared, buffer, size) : -9;
+	int64_t result = can_access64(shared, 1) ? 0 : -9;
+
+	if (result == 0 && (shared->flags & PROCESS_FILE_APPEND64) && seekable64(shared)) {
+		result = shared->ops->seek(shared, 0, 2);
+	}
+	if (result >= 0) { result = shared->ops->write(shared, buffer, size); }
 
 	process_file_unlock64(file);
 	return result;

@@ -174,7 +174,7 @@ static void file_pool_exhaustion64(void)
 
 	for (size_t i = 0; i < sizeof(held) / sizeof(held[0]); i++) {
 		held[i].used = 1;
-		held[i].shared = allocate_file64();
+		held[i].shared = allocate_file64(PROCESS_FILE_READ64 | PROCESS_FILE_WRITE64);
 		assert(held[i].shared != NULL);
 	}
 	process.files[3] = held[0]; process.files[4] = held[1];
@@ -186,14 +186,14 @@ static void file_pool_exhaustion64(void)
 	/* Dup needs no new OFD, even with every pool entry reserved. */
 	assert(process_file_dup64(&process, 3, 5, 0, &fd) == 0 && fd == 5);
 	irq = platform_irq_save64();
-	assert(allocate_file64() == NULL);
+	assert(allocate_file64(PROCESS_FILE_READ64 | PROCESS_FILE_WRITE64) == NULL);
 	platform_irq_restore64(irq);
 	assert(process_file_dup264(&process, 3, 4) == 0);
 	assert(process.files[4].shared->handle.pos == 17 && !process.files[4].cloexec);
 	assert(process.files[3].shared->references == 3);
 	/* Replacing the last reference to the old target makes one slot reusable. */
 	irq = platform_irq_save64();
-	held[0].shared = allocate_file64();
+	held[0].shared = allocate_file64(PROCESS_FILE_READ64 | PROCESS_FILE_WRITE64);
 	assert(held[0].shared != NULL && held[0].shared->handle.pos == 0);
 	platform_irq_restore64(irq);
 	/* Stdio needs two OFDs; a partial reservation is returned to the pool. */
@@ -203,7 +203,7 @@ static void file_pool_exhaustion64(void)
 	process_file_close64(&held[2]);
 	assert(process_file_stdio64(&other, console) == -23 && !other.files[0].used);
 	irq = platform_irq_save64();
-	held[2].shared = allocate_file64();
+	held[2].shared = allocate_file64(PROCESS_FILE_READ64 | PROCESS_FILE_WRITE64);
 	assert(held[2].shared != NULL);
 	platform_irq_restore64(irq);
 	process_files_close64(&process, 0);

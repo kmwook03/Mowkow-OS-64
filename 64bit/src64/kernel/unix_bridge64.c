@@ -50,6 +50,29 @@ static int64_t unix_io64(struct PROCESS64 *process, uint64_t fd,
 	return result;
 }
 
+/* Translate internal PROCESS_FILE_* bits to the wire status word. */
+static int64_t unix_getfl64(struct PROCESS64 *process, int fd)
+{
+	unsigned int flags = 0;
+	int status = process_file_get_status64(process, fd, &flags);
+	unsigned int access = flags & (PROCESS_FILE_READ64 | PROCESS_FILE_WRITE64);
+
+	if (status != 0) { return status; }
+	return (access == PROCESS_FILE_WRITE64 ? UNIX64_FL_WRONLY :
+		access == PROCESS_FILE_READ64 ? UNIX64_FL_RDONLY : UNIX64_FL_RDWR) |
+		(flags & PROCESS_FILE_APPEND64 ? UNIX64_FL_APPEND : 0) |
+		(flags & PROCESS_FILE_NONBLOCK64 ? UNIX64_FL_NONBLOCK : 0);
+}
+
+static int64_t unix_setfl64(struct PROCESS64 *process, int fd, uint64_t wire)
+{
+	if (wire & ~(uint64_t) (UNIX64_FL_ACCMODE | UNIX64_FL_APPEND |
+		UNIX64_FL_NONBLOCK)) { return -22; }
+	return process_file_set_status64(process, fd,
+		(wire & UNIX64_FL_APPEND ? PROCESS_FILE_APPEND64 : 0) |
+		(wire & UNIX64_FL_NONBLOCK ? PROCESS_FILE_NONBLOCK64 : 0));
+}
+
 static int64_t unix_open64(struct PROCESS64 *process, const char *path, uint64_t flags)
 {
 	char name[FD64_NAME_MAX];
@@ -133,6 +156,8 @@ int64_t unix_bridge_call64(struct PROCESS64 *process, uint64_t number,
 				a1 == UNIX64_F_DUPFD_CLOEXEC, &newfd);
 			return status != 0 ? status : newfd;
 		}
+		if (a1 == UNIX64_F_GETFL) { return unix_getfl64(process, (int) a0); }
+		if (a1 == UNIX64_F_SETFL) { return unix_setfl64(process, (int) a0, a2); }
 		if (a1 == UNIX64_F_GETFD) {
 			status = process_file_get_cloexec64(process, (int) a0, &cloexec);
 			return status != 0 ? status : (cloexec ? UNIX64_FD_CLOEXEC : 0);

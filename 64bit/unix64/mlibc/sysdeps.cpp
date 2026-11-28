@@ -135,6 +135,15 @@ int sys_fcntl(int fd, int request, va_list args, int *result)
 		break;
 	}
 	case F_GETFD: command = UNIX64_F_GETFD; break;
+	case F_GETFL: command = UNIX64_F_GETFL; break;
+	case F_SETFL: {
+		int flags = va_arg(args, int);
+		if (flags & ~(O_ACCMODE | O_APPEND | O_NONBLOCK)) { return EINVAL; }
+		command = UNIX64_F_SETFL;
+		argument = ((flags & O_APPEND) ? UNIX64_FL_APPEND : 0) |
+			((flags & O_NONBLOCK) ? UNIX64_FL_NONBLOCK : 0);
+		break;
+	}
 	case F_SETFD: {
 		int flags = va_arg(args, int);
 		if (flags & ~FD_CLOEXEC) { return EINVAL; }
@@ -147,8 +156,17 @@ int sys_fcntl(int fd, int request, va_list args, int *result)
 	int64_t value = call(UNIX64_SYS_FCNTL, fd, command, argument);
 	int error = unix64_result_errno(value);
 	if (error) { return error; }
-	*result = request == F_GETFD ? ((value & UNIX64_FD_CLOEXEC) ? FD_CLOEXEC : 0) :
-		(int) value;
+	if (request == F_GETFD) {
+		*result = (value & UNIX64_FD_CLOEXEC) ? FD_CLOEXEC : 0;
+	} else if (request == F_GETFL) {
+		uint64_t access = value & UNIX64_FL_ACCMODE;
+		*result = (access == UNIX64_FL_WRONLY ? O_WRONLY :
+			access == UNIX64_FL_RDWR ? O_RDWR : O_RDONLY) |
+			((value & UNIX64_FL_APPEND) ? O_APPEND : 0) |
+			((value & UNIX64_FL_NONBLOCK) ? O_NONBLOCK : 0);
+	} else {
+		*result = (int) value;
+	}
 	return 0;
 }
 

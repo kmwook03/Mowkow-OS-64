@@ -55,6 +55,19 @@
  */
 #define UNIX64_F_DUPFD 3
 #define UNIX64_F_DUPFD_CLOEXEC 4
+/* Per-OFD status word, shared by dup/fork aliases. GETFL ignores argument and
+ * returns an FL access mode plus APPEND/NONBLOCK. SETFL ignores access-mode
+ * bits, replaces APPEND/NONBLOCK and rejects other bits with EINVAL.
+ * NONBLOCK on a stream (console) is ENOTSUP. FL values are not open flags.
+ */
+#define UNIX64_F_GETFL 5
+#define UNIX64_F_SETFL 6
+#define UNIX64_FL_RDONLY 0
+#define UNIX64_FL_WRONLY 1
+#define UNIX64_FL_RDWR 2
+#define UNIX64_FL_ACCMODE 3
+#define UNIX64_FL_APPEND 4
+#define UNIX64_FL_NONBLOCK 8
 #define UNIX64_FD_CLOEXEC 1
 #define UNIX64_OPEN_CLOEXEC 1
 #define UNIX64_WAIT_NOHANG 1
