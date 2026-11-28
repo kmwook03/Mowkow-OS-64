@@ -39,8 +39,8 @@ the real CRT wrappers. It checks short I/O, EOF/error separation, element counts
 overflow, stream exhaustion before truncation, close ownership/retry and strict
 UTF conversion. Display widths follow the current OS renderer, including its
 one-cell fallback for unsupported Unicode glyphs. The separate recipe audit
-checks the shared inventory, direct header audit and strict flags for both
-architectures. `make nano64-compat` performs the actual cross-compilation and
+checks the shared inventory and strict flags for both architectures; the direct
+header audit belongs to `test_nano_upstream64.py`. `make nano64-compat` performs the actual cross-compilation and
 is included in `check64`. These archives are not upstream nano executables;
 the tests do not validate the upstream editing loop, OS TTY or storage hardware.
 

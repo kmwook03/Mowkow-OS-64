@@ -37,10 +37,7 @@ class NanoCompat64Test(unittest.TestCase):
             subprocess.run([str(executable)], check=True, cwd=ROOT, timeout=30,
                            env={**os.environ, "ASAN_OPTIONS": "detect_leaks=0"})
 
-    def test_headers_and_architecture_recipes(self) -> None:
-        audit = (PORT / "headers64.c").read_text()
-        for header in (PORT / "include").glob("*.h"):
-            self.assertIn(f'#include "include/{header.name}"', audit)
+    def test_architecture_recipes(self) -> None:
         result = subprocess.run(["make", "-n", "-B", "nano64-compat"], cwd=ROOT,
                                 text=True, capture_output=True, check=True, timeout=30)
         # Join make's continued recipe lines before examining compiler flags.

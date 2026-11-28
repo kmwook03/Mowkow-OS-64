@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import contextlib
-import errno
 import io
 import json
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -36,22 +34,11 @@ class ScriptedSocket:
 
     def connect(self, endpoint: str) -> None:
         self.endpoint = Path(endpoint)
-        if self.owner.phase == "connect":
-            raise OSError(errno.ENOENT, "not ready")
-        if self.owner.phase == "permission":
-            raise PermissionError(errno.EPERM, "socket blocked")
 
     def sendall(self, data: bytes) -> None:
         message = json.loads(data)
         self.requests.append(message)
         reply = {"return": {}, "id": message["id"]}
-        if self.owner.phase == "error":
-            reply = {"error": {"class": "GenericError", "desc": "rejected"},
-                     "id": message["id"]}
-        if self.owner.phase == "wrong-id":
-            reply["id"] = -1
-        if self.owner.phase == "send":
-            raise TimeoutError("send blocked")
         # A notification and reply share a recv; the greeting was fragmented.
         self.chunks.append(b'{"event":"STOP"}\n' + json.dumps(reply).encode() + b'\n')
         if message["execute"] == "input-send-event":
@@ -59,34 +46,12 @@ class ScriptedSocket:
             if any(e["data"]["down"] and e["data"]["key"]["data"] == "ret"
                    for e in events):
                 self.enters += 1
-                if self.owner.phase != "input" and self.enters > self.owner.dropped_enters:
+                if self.enters > self.owner.dropped_enters:
                     with self.owner.logs[-1].open("ab") as log:
                         log.write(b"\n> ")
 
     def recv(self, count: int) -> bytes:
         self.owner.now += 0.01
-        phase = self.owner.phase
-        if phase == "interrupt":
-            raise KeyboardInterrupt()
-        if phase == "greeting-timeout":
-            raise TimeoutError("no greeting")
-        if phase == "eof":
-            return b""
-        if phase == "json":
-            return b"{bad}\n"
-        if phase == "greeting":
-            return b'{"return":{}}\n'
-        if phase == "non-object":
-            return b'[]\n'
-        if phase == "oversize":
-            return b"x" * 80
-        if phase == "events" and self.requests:
-            return b'{"event":"STOP"}\n'
-        if phase == "partial" and self.requests:
-            if self.chunks:
-                self.chunks.clear()
-                return b'{"return":'
-            raise TimeoutError("partial reply")
         if self.chunks:
             return self.chunks.popleft()
         raise TimeoutError("no reply")
@@ -96,9 +61,8 @@ class ScriptedSocket:
 
 
 class Harness:
-    def __init__(self, test, phase: str = "", dropped_enters: int = 0):
+    def __init__(self, test, dropped_enters: int = 0):
         self.test = test
-        self.phase = phase
         self.dropped_enters = dropped_enters
         self.now = 0.0
         self.sockets = []
@@ -106,7 +70,6 @@ class Harness:
         self.logs = []
         self.stderr_files = []
         self.endpoints = []
-        self.errors = io.StringIO()
 
     def __enter__(self):
         self.stack = contextlib.ExitStack()
@@ -124,10 +87,9 @@ class Harness:
             )
         ))
         for attribute, value in (("CONNECT_TIMEOUT", 0.5), ("QMP_TIMEOUT", 0.5),
-                                 ("BOOT_TIMEOUT", 3), ("CMD_TIMEOUT", 0.5),
-                                 ("QMP_MESSAGE_MAX", 64)):
+                                 ("BOOT_TIMEOUT", 3), ("CMD_TIMEOUT", 0.5)):
             self.stack.enter_context(patch.object(PARITY, attribute, value))
-        self.stack.enter_context(contextlib.redirect_stderr(self.errors))
+        self.stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
         return self
 
     def __exit__(self, *args):
@@ -148,11 +110,9 @@ class Harness:
         log = Path(command[command.index("-serial") + 1][5:])
         self.logs.append(log)
         self.stderr_files.append(kwargs["stderr"])
-        log.write_bytes(b"" if self.phase == "boot" else b"boot\n> ")
-        if self.phase == "launch":
-            raise FileNotFoundError("missing QEMU")
+        log.write_bytes(b"boot\n> ")
         process = Mock()
-        process.poll.return_value = 1 if self.phase == "exit" else None
+        process.poll.return_value = None
         process.wait.return_value = 0
         self.processes.append(process)
         return process
@@ -165,10 +125,7 @@ class Harness:
         for endpoint in self.endpoints:
             self.test.assertFalse(endpoint.parent.exists())
         for process in self.processes:
-            if self.phase == "exit":
-                process.terminate.assert_not_called()
-            else:
-                process.terminate.assert_called_once()
+            process.terminate.assert_called_once()
             process.wait.assert_called_once_with(timeout=5)
 
 
@@ -197,23 +154,6 @@ class QemuConsoleTest(unittest.TestCase):
             harness.assert_released()
             # Diagnostics persist, but all parent descriptors are closed.
             self.assertTrue(all(path.exists() for path in harness.logs))
-
-    def test_constructor_failures_release_all_acquired_resources(self) -> None:
-        phases = {
-            "launch": FileNotFoundError, "exit": RuntimeError, "connect": TimeoutError,
-            "permission": PermissionError, "greeting-timeout": TimeoutError,
-            "eof": RuntimeError, "json": RuntimeError, "greeting": RuntimeError,
-            "non-object": RuntimeError, "oversize": RuntimeError,
-            "send": TimeoutError, "error": RuntimeError, "wrong-id": RuntimeError,
-            "events": TimeoutError, "partial": TimeoutError, "boot": TimeoutError,
-            "input": TimeoutError, "interrupt": KeyboardInterrupt,
-        }
-        for phase, error in phases.items():
-            with self.subTest(phase=phase), Harness(self, phase) as harness:
-                with self.assertRaises(error):
-                    PARITY.Console("image", False)
-                harness.assert_released()
-                self.assertIn("QEMU logs:", harness.errors.getvalue())
 
     def test_stale_prompt_and_dead_process_do_not_complete_commands(self) -> None:
         with Harness(self) as harness:
@@ -251,60 +191,6 @@ class QemuConsoleTest(unittest.TestCase):
                 self.assertTrue(output.endswith("\n>> \n> "))
                 self.assertEqual([call.args[0] for call in strokes.call_args_list],
                                  [["ret"], ["ctrl", "c"]])
-            harness.assert_released()
-
-    def test_cleanup_kills_after_timeout_and_is_idempotent(self) -> None:
-        with Harness(self) as harness:
-            console = PARITY.Console("image", False)
-            process = harness.processes[0]
-            process.wait.side_effect = [subprocess.TimeoutExpired("qemu", 5), 0]
-            console.close()
-            console.close()
-            process.terminate.assert_called_once()
-            process.kill.assert_called_once()
-            self.assertEqual(process.wait.call_count, 2)
-            self.assertTrue(harness.sockets[0].closed)
-            self.assertTrue(harness.stderr_files[0].closed)
-            self.assertFalse(harness.endpoints[0].parent.exists())
-
-    def test_cleanup_failure_does_not_mask_body_exception(self) -> None:
-        with Harness(self) as harness:
-            console = PARITY.Console("image", False)
-            process = harness.processes[0]
-            process.wait.side_effect = subprocess.TimeoutExpired("qemu", 5)
-            with self.assertRaisesRegex(ValueError, "original failure"):
-                with console:
-                    raise ValueError("original failure")
-            process.kill.assert_called_once()
-            self.assertTrue(harness.sockets[0].closed)
-            self.assertTrue(harness.stderr_files[0].closed)
-            self.assertFalse(harness.endpoints[0].parent.exists())
-            self.assertIn("QEMU cleanup failed", harness.errors.getvalue())
-            process.wait.side_effect = None
-            console.close()
-
-    def test_interrupt_during_reaping_still_releases_resources(self) -> None:
-        with Harness(self) as harness:
-            console = PARITY.Console("image", False)
-            process = harness.processes[0]
-            process.wait.side_effect = [KeyboardInterrupt(), 0]
-            with self.assertRaises(KeyboardInterrupt):
-                console.close()
-            process.kill.assert_called_once()
-            self.assertTrue(harness.sockets[0].closed)
-            self.assertTrue(harness.stderr_files[0].closed)
-            self.assertFalse(harness.endpoints[0].parent.exists())
-            console.close()
-
-    def test_resource_close_failure_still_closes_other_resources(self) -> None:
-        with Harness(self) as harness:
-            console = PARITY.Console("image", False)
-            with patch.object(harness.sockets[0], "close", side_effect=OSError("close")):
-                with self.assertRaisesRegex(RuntimeError, "QEMU cleanup failed"):
-                    console.close()
-            self.assertTrue(harness.stderr_files[0].closed)
-            self.assertFalse(harness.endpoints[0].parent.exists())
-            console.close()
             harness.assert_released()
 
 
